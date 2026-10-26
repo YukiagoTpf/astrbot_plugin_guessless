@@ -53,7 +53,7 @@ POKEMON_QUERY = """query {
     }
   }
 }"""
-MAX_SHOTS, MAX_BACKDROPS = 12, 8
+MAX_SHOTS = 12
 
 
 class HttpError(Exception):
@@ -153,9 +153,9 @@ def _bili_pick(results: list, s: dict, media_id: str | None) -> dict | None:
 
     B 站的上线时间可能比日本首播晚好几年（老番后来才引进），所以标题完全一致时不看年份。
     """
-    if media_id and (mid := re.sub(r"\D", "", media_id)):
-        if hit := next((r for r in results if str(r.get("media_id")) == mid), None):
-            return hit
+    mid = re.sub(r"\D", "", media_id or "")
+    if mid and (hit := next((r for r in results if str(r.get("media_id")) == mid), None)):
+        return hit
     want = {w for w in (norm(s["name_cn"]), norm(s["name"])) if w}
     year = _year(s)
     prefixed = None

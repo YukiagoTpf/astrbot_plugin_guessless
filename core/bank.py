@@ -1,423 +1,64 @@
-"""题库：动画取 Bangumi 最热门的作品，游戏从 Metacritic 高分游戏里按热度和评分分大众 / 小众两档，用 Bangumi 补中文名和制作信息；
-宝可梦取 PokeAPI 全图鉴，前几个世代算大众题；地点是 Google 街景随机取景（见 geo.py）。
+"""题库：各题型的构建、定期刷新和出题。题目条目怎么拼见 entries.py，数据源见 sources.py 和 geo.py。
 
-题图用不带字的截图：动画是 B 站分集封面，没有就用 AniList 横幅；游戏要配 IGDB 的 key，没配就用封面。
-找不到图的作品不进题库。译名另外从 Wikidata、AniList、IGDB 补。题库、匹配结果和图片都缓存在插件数据目录，出题时只有首次用到的图片需要联网。
+动画取 Bangumi 最热门的作品，游戏从 Metacritic 高分游戏里按热度和评分分大众 / 小众两档，宝可梦取 PokeAPI 全图鉴，
+地点和日本地点是 Google 街景随机取景，国家是 Natural Earth 轮廓。找不到图的作品不进题库。
+题库、各数据源的查询结果和图片都缓存在插件数据目录，出题时只有首次用到的图片和街景需要联网。
 """
 
 import asyncio
 import hashlib
-import json
-import os
 import random
 import re
 import time
 from pathlib import Path
 
 import aiohttp
-from zhconv import convert
 
 from astrbot.api import logger
 
-from . import geo, hint_data
-from .answer import candidates, norm
-from .media import (
-    POKEMON_ART,
-    POKEMON_LANGS,
+from . import geo
+from .answer import norm
+from .entries import (
+    ANIME_KINDS,
+    GAME_INFO,
+    aliases,
+    anime_entry,
+    clean_mc_title,
+    clip,
+    country_basics,
+    country_entry,
+    game_entry,
+    geo_entry,
+    infobox,
+    pokemon_entry,
+    popularity,
+    pref_entry,
+    split_tiers,
+)
+from .sources import (
     Anilist,
     Bilibili,
     HttpError,
     Igdb,
     anilist_names,
-    dedupe,
     igdb_media,
     pokemon_species,
     steam_shots,
     wikidata,
     year_close,
 )
+from .store import load_json, save_json
 
 BANK_VERSION = 4  # 题目格式或选题规则变了就加一，旧题库会自动重建
 BGM_API = "https://api.bgm.tv/v0"
 BGM_UA = "YukiagoTpf/astrbot_plugin_guessless"
-# Metacritic 评分榜是网页前端用的非官方接口，要带网页里内嵌的 apiKey，每次构建从 MC_PAGE 的源码里现找
+# Metacritic 评分榜是网页前端用的非官方接口，目前不用 key
 MC_FINDER = "https://backend.metacritic.com/finder/metacritic/web"
-MC_PAGE = "https://www.metacritic.com/game/the-legend-of-zelda-breath-of-the-wild/"
-MC_IMG = "https://www.metacritic.com/a/img/catalog"
 WEB_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 )
-
-ANIME_KINDS = {"TV": "TV 动画", "剧场版": "剧场版", "WEB": "网络动画"}
-ANIME_STAFF = ("动画制作", "导演", "原作", "系列构成", "人物设定", "音乐")
-GENERIC_TAGS = {"TV", "日本", "剧场版", "WEB", "OVA"}
-GAME_INFO = ("游戏类型", "开发", "开发商", "发行", "发行商", "导演", "制作人", "音乐")
-PLATFORMS = {
-    "PlayStation": "PS1", "PlayStation 2": "PS2", "PlayStation 3": "PS3", "PlayStation 4": "PS4",
-    "PlayStation 5": "PS5", "PlayStation Vita": "PSV", "Xbox One": "XB1", "Xbox Series X": "XSX",
-    "Nintendo Switch": "Switch", "Nintendo Switch 2": "Switch 2", "Nintendo 64": "N64",
-    "GameCube": "NGC", "Game Boy Advance": "GBA",
-}
-GENERATIONS = {1: "一（关都）", 2: "二（城都）", 3: "三（丰缘）", 4: "四（神奥）", 5: "五（合众）",
-               6: "六（卡洛斯）", 7: "七（阿罗拉）", 8: "八（伽勒尔）", 9: "九（帕底亚）"}
 MIN_POOL = 20
-_BRACKETED = re.compile(r"[（(「『【\[][^（(「『【\[）)」』】\]]*[）)」』】\]]")
-
-
-def load_json(path: Path):
-    return json.loads(path.read_text("utf-8")) if path.exists() else None
-
-
-def save_json(path: Path, data) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False), "utf-8")
-    os.replace(tmp, path)
-
-
-def infobox(subject: dict) -> dict:
-    return {i["key"]: i["value"] for i in subject.get("infobox") or []}
-
-
-def aliases(info: dict) -> list[str]:
-    out = [info["中文名"]] if isinstance(info.get("中文名"), str) else []
-    raw = info.get("别名") or []
-    for a in [raw] if isinstance(raw, str) else raw:
-        v = a.get("v") if isinstance(a, dict) else a
-        if isinstance(v, str):
-            out.append(v)
-    return out
-
-
-def clip(value, limit: int = 40) -> str:
-    if isinstance(value, list):
-        value = "、".join(v.get("v", "") if isinstance(v, dict) else str(v) for v in value)
-    # 括号里常是作品名（如 原作：某某（文库「作品名」系列）），会直接泄露答案；括号可能嵌套，从最内层剥
-    value = str(value)
-    while True:
-        stripped = _BRACKETED.sub("", value)
-        if stripped == value:
-            break
-        value = stripped
-    value = re.sub(r"\s+", " ", re.sub(r"[（(「『【\[）)」』】\]]", "", value)).strip(" 、，,")
-    return value if len(value) <= limit else value[:limit] + "…"
-
-
-def popularity(subject: dict) -> int:
-    c = subject.get("collection") or {}
-    return c.get("collect", 0) + c.get("doing", 0)
-
-
-def clean_mc_title(title: str) -> str:
-    # Metacritic 用「标题 (1998)」区分同名作品
-    return re.sub(r"\s*\(\d{4}\)$", "", title)
-
-
-def shape_hint(title: str) -> list[str]:
-    chars = norm(title)
-    if chars.isascii():
-        words = len(re.findall(r"[A-Za-z0-9]+", title))
-        return ["首字母", f"{chars[:1].upper()}，{words} 个单词"]
-    return ["首字", f"「{chars[:1]}」，{len(chars)} 个字"]
-
-
-def finish_entry(entry: dict) -> dict:
-    """去掉会泄露答案的提示，最多 8 条，最后补一条首字提示，凑满 9 格。"""
-    leaks = {c for c in candidates(entry["names"]) if len(c) >= 3}
-    hints = [h for h in entry["hints"] if h[1] and not any(c in norm(h[1]) for c in leaks)]
-    entry["hints"] = hints[:8] + [shape_hint(entry["title"])]
-    return entry
-
-
-def anime_entry(s: dict, media: dict | None = None, wd: dict | None = None) -> dict:
-    info = infobox(s)
-    cn, name = s["name_cn"], s["name"]
-    hints = []
-    date = s.get("date") or ""
-    if re.match(r"\d{4}-\d{2}", date):
-        hints.append(["放送时间", f"{date[:4]} 年 {int(date[5:7])} 月"])
-    kind = ANIME_KINDS[s["platform"]]
-    eps = s.get("eps") or s.get("total_episodes")
-    hints.append(["类型", f"{kind}，共 {eps} 话" if eps and s["platform"] != "剧场版" else kind])
-    tags = list(dict.fromkeys(t for t in s.get("meta_tags") or [] if t not in GENERIC_TAGS))[:4]
-    if tags:
-        hints.append(["标签", " / ".join(tags)])
-    rating = s.get("rating") or {}
-    if rating.get("score"):
-        hints.append(["Bangumi", f"{rating['score']} 分（排名 #{rating.get('rank')}）"])
-    for key in ANIME_STAFF:
-        if info.get(key):
-            hints.append([key, clip(info[key])])
-    return finish_entry({
-        "id": f"bgm-{s['id']}",
-        "title": cn,
-        "original": name,
-        "answer": f"{cn}（{name}）" if cn != name else cn,
-        "names": dedupe([name, cn, *aliases(info), *(wd or {}).get("names", []), *(media or {}).get("names", [])]),
-        "images": (media or {}).get("images") or [s["images"]["large"]],
-        "hints": hints,
-    })
-
-
-def game_entry(item: dict, bgm: dict | None, wd: dict | None = None, media: dict | None = None) -> dict:
-    en = clean_mc_title(item["title"])
-    bgm, wd = bgm or {}, wd or {}
-    cn = bgm.get("name_cn") or wd.get("zh") or ""
-    if norm(cn) == norm(en):  # Wikidata 的中文 label 有时就是英文原名
-        cn = ""
-    info = bgm.get("info") or {}
-    platforms = [PLATFORMS.get(p["name"], p["name"]) for p in item.get("platforms") or [] if p.get("name")]
-    genres = [g["name"] for g in item.get("genres") or [] if g.get("name")]
-    hints = [["发售年份", str(item.get("premiereYear") or (item.get("releaseDate") or "")[:4])]]
-    if platforms:
-        hints.append(["平台", " / ".join(platforms[:4]) + (" 等" if len(platforms) > 4 else "")])
-    if info.get("游戏类型") or genres:
-        hints.append(["类型", info.get("游戏类型") or " / ".join(genres)])
-    hints.append(["Metacritic", f"{item['criticScoreSummary']['score']} 分"])
-    dev = info.get("开发") or info.get("开发商")
-    pub = info.get("发行") or info.get("发行商")
-    if dev:
-        hints.append(["开发", dev])
-    if pub and pub != dev:
-        hints.append(["发行", pub])
-    for key in ("导演", "制作人", "音乐"):
-        if info.get(key):
-            hints.append([key, info[key]])
-    names = [en, cn, bgm.get("name", ""), *bgm.get("aliases", []), *wd.get("names", []), *(media or {}).get("names", [])]
-    return finish_entry({
-        "id": f"mc-{item['slug']}",
-        "title": cn or en,
-        "original": en,
-        "answer": f"{cn}（{en}）" if cn else en,
-        "names": dedupe(names),
-        "images": (media or {}).get("images") or [MC_IMG + item["image"]["bucketPath"]],
-        "hints": hints,
-    })
-
-
-def split_tiers(items: list, media: dict, size: int, niche_size: int) -> list[tuple[dict, str]]:
-    """items 按 MC 分从高到低排。大众题按热度取前 size 款；小众题从剩下的里按「MC 分排名 + 热度排名」取前 niche_size 款，
-    即高分又不至于完全没人听过的，免得全是二十年前的美式体育年货。
-
-    没截图的、DLC 之类的、本体也在候选里的重制 / 加强版不要；Metacritic 偶尔把同一款游戏拆成两个条目，按 IGDB ID 去重。
-    """
-    ids = {m["id"] for it in items if (m := media.get(it["slug"])) and m.get("id")}
-    usable, seen = [], set()
-    for it in items:
-        m = media.get(it["slug"])
-        if not m or not m["images"] or m.get("skip") or m.get("parent") in ids:
-            continue
-        if m.get("id"):
-            if m["id"] in seen:
-                continue
-            seen.add(m["id"])
-        usable.append(it)
-    pop = lambda it: media[it["slug"]]["pop"]  # noqa: E731
-    main = sorted(usable, key=lambda it: -pop(it))[:size]  # sorted 是稳定的，同热度保持 MC 分顺序
-    taken = {it["slug"] for it in main}
-    rest = [it for it in usable if it["slug"] not in taken]
-    pop_rank = {it["slug"]: r for r, it in enumerate(sorted(rest, key=lambda it: -pop(it)))}
-    niche = sorted(range(len(rest)), key=lambda r: r + pop_rank[rest[r]["slug"]])[:niche_size]
-    return [(it, "main") for it in main] + [(rest[r], "niche") for r in niche]
-
-
-def pokemon_entry(s: dict, by_id: dict, wd: dict | None) -> dict | None:
-    """提示从泛到具体：世代、属性、颜色、身高体重、分类、特性、进化、图鉴编号。"""
-    names = {POKEMON_LANGS[n["language_id"]]: n for n in s["pokemon_v2_pokemonspeciesnames"]}
-    zh = names.get("zh-hans") or {}
-    hant = names.get("zh-hant") or {}
-    cn = zh.get("name") or convert(hant.get("name") or "", "zh-cn")
-    en = (names.get("en") or {}).get("name") or ""
-    if not cn:
-        return None
-    zh_name = lambda rows: (rows[0]["name"] if rows else "")  # noqa: E731
-    poke = (s["pokemon_v2_pokemons"] or [{}])[0]
-    types = [zh_name(t["pokemon_v2_type"]["pokemon_v2_typenames"]) for t in poke.get("pokemon_v2_pokemontypes") or []]
-    abilities = [
-        zh_name(a["pokemon_v2_ability"]["pokemon_v2_abilitynames"]) + ("（隐藏）" if a["is_hidden"] else "")
-        for a in poke.get("pokemon_v2_pokemonabilities") or []
-    ]
-    color = zh_name((s.get("pokemon_v2_pokemoncolor") or {}).get("pokemon_v2_pokemoncolornames") or [])
-    genus = zh.get("genus") or convert(hant.get("genus") or "", "zh-cn")
-    if s["is_legendary"] or s["is_mythical"]:
-        genus = "，".join(x for x in (genus, "传说的宝可梦" if s["is_legendary"] else "幻之宝可梦") if x)
-    stage, prev = 1, by_id.get(s["evolves_from_species_id"])
-    while prev:
-        stage += 1
-        prev = by_id.get(prev["evolves_from_species_id"])
-    evolves = any(x["evolves_from_species_id"] == s["id"] for x in by_id.values())
-    if stage > 1:
-        parent = by_id[s["evolves_from_species_id"]]
-        parent_name = next((n["name"] for n in parent["pokemon_v2_pokemonspeciesnames"] if n["language_id"] == 12), "")
-        evolution = f"第 {stage} 阶段，由{parent_name}进化" + ("，还能进化" if evolves else "")
-    else:
-        evolution = "基础形态，能进化" if evolves else "不会进化"
-    height, weight = poke.get("height"), poke.get("weight")
-    hints = [
-        ["世代", f"第{GENERATIONS.get(s['generation_id'], s['generation_id'])}"],
-        ["属性", " / ".join(t for t in types if t)],
-        ["颜色", color],
-        ["身高体重", f"{height / 10:g} 米，{weight / 10:g} 公斤" if height and weight else ""],
-        ["分类", genus],
-        ["特性", " / ".join(a for a in abilities if a)],
-        ["进化", evolution],
-        ["图鉴编号", f"#{s['id']:04d}"],
-    ]
-    other = [(names.get(k) or {}).get("name") for k in ("zh-hant", "ja", "ja-hrkt", "ja-roma")]
-    return finish_entry({
-        "id": f"pm-{s['id']}",
-        "title": cn,
-        "original": en,
-        "answer": f"{cn}（{en}）" if en else cn,
-        "names": dedupe([cn, en, *other, *(wd or {}).get("names", [])]),
-        "images": [POKEMON_ART.format(s["id"])],
-        "fit": "contain",  # 透明底立绘，整张缩进正方形，不裁
-        "hints": hints,
-    })
-
-
-def fmt_pop(pop: float) -> str:
-    return f"约 {pop / 1e8:.1f} 亿" if pop >= 1e8 else f"约 {pop / 1e4:.0f} 万" if pop >= 1e4 else ""
-
-
-def fmt_area(area: float) -> str:
-    return f"约 {area / 1e4:.1f} 万平方公里" if area >= 1e4 else f"约 {area:.0f} 平方公里" if area else ""
-
-
-def usable_names(names) -> list[str]:
-    """Wikidata 别名里有「日」「米」「佛」这种单字和 us、jp 这种代码，群里随口一句就算答对了，去掉。"""
-    return [n for n in dedupe(names) if len(norm(n)) > (2 if norm(n).isascii() else 1)]
-
-
-def scrub(value: str, words: list[str], title: str) -> str:
-    """提示里不能带答案的地名：整词换成 □，「法式」「日元」「泰语」这种用国名 / 县名首字的也盖掉；
-    盖在开头结尾的直接删（「巴西雷亚尔」→「雷亚尔」），删完中间还有窟窿（「现代□□语」）或者
-    大半都被盖掉的提示没意义，直接不要。"""
-    for w in sorted({w for w in words if len(w) >= 2 and not w.isascii()}, key=len, reverse=True):
-        value = value.replace(w, "□" * len(w))
-    value = re.sub(f"{re.escape(title[:1])}(?=[式语元])", "□", value)
-    if value.count("□") * 2 >= len(value):
-        return ""
-    value = value.strip("□·/ ")
-    return "" if "□" in value else value
-
-
-def place_words(names: list[str], capital: str) -> list[str]:
-    """要从提示里盖掉的地名：答案的各种叫法，加上首都 / 县厅所在地（去掉市、区、都之类的后缀也算）。"""
-    words = [n for n in names if not n.isascii()]
-    if capital:
-        words += [capital, re.sub("[市区都县府]$", "", capital)]
-    return words
-
-
-def country_basics(cc: str, facts: dict, wd: dict, info: dict, languages: dict) -> dict | None:
-    """猜地点、猜国家共用的国名和国家层面的提示（不含半球，半球看具体位置）。
-
-    提示按有用程度排：大洲、行驶方向、货币、名胜（次出名的）、主要语言、美食、名胜（最出名的）。
-    人口、面积不太有用，只在没手写美食名胜的小国才用。
-    """
-    zh, en = geo.TITLES.get(cc) or wd.get("zh") or "", facts.get("en") or ""
-    if not zh:
-        return None
-    capital = facts.get("capital") or ""
-    names = usable_names([zh, wd.get("zh"), en, *wd.get("names", [])])
-    words = place_words(names, capital)
-    foods, sights = hint_data.COUNTRY.get(cc, ([], []))
-    foods = [x for f in foods if (x := scrub(f, words, zh))]
-    sights = [x for f in sights if (x := scrub(f, words, zh))]
-    # GeoNames 按使用人数排
-    lang = next((languages[c] for c in info.get("languages", []) if c in languages), "")
-    hints = [
-        ["大洲", facts.get("continent") or geo.CONTINENTS.get(info.get("continent"), "")],
-        ["行驶方向", facts.get("driving") or ""],
-        ["货币", scrub(facts.get("currency") or "", words, zh)],
-        ["名胜", sights[1] if len(sights) > 1 else ""],
-        ["主要语言", scrub(lang, words, zh)],
-        ["美食", " / ".join(foods[:2])],
-        ["名胜", sights[0] if sights else ""],
-    ]
-    if not sights:
-        hints += [
-            ["人口", fmt_pop(facts.get("population") or 0)],
-            ["面积", fmt_area(facts.get("area") or 0)],
-            ["首都", f"「{capital[0]}」开头" if capital else ""],
-        ]
-    return {"zh": zh, "en": en, "names": names, "hints": hints, "big": (
-        (facts.get("population") or 0) >= 1e7 or (facts.get("area") or 0) >= 5e5
-    )}
-
-
-def hemisphere(lat: float, lng: float) -> str:
-    return f"{'北' if lat >= 0 else '南'}半球 · {'东' if lng >= 0 else '西'}半球"
-
-
-def geo_entry(cc: str, pano: dict, basics: dict) -> dict:
-    """一个全景一道题，同一国家的几道题 group 相同，出过的国家短期内不再出。提示从泛到具体。"""
-    hints = [["半球", hemisphere(pano["lat"], pano["lng"])], *basics["hints"]]
-    zh, en = basics["zh"], basics["en"]
-    return finish_entry({
-        "id": f"geo-{pano['id']}",
-        "group": cc,
-        "title": zh,
-        "original": " · ".join(x for x in (en, pano.get("near")) if x),
-        "answer": f"{zh}（{en}）" if en else zh,
-        "names": basics["names"],
-        "pano": {"id": pano["id"], "heading": pano["heading"]},
-        "fit": "panels",
-        "hints": hints,
-    })
-
-
-def country_entry(cc: str, rings: list, basics: dict) -> dict:
-    """看轮廓猜国家。人口过千万或面积过 50 万平方公里的算大众题。"""
-    outer = [pt for hole, ring in rings if not hole for pt in ring]
-    lng = (min(p[0] for p in outer) + max(p[0] for p in outer)) / 2
-    lat = (min(p[1] for p in outer) + max(p[1] for p in outer)) / 2
-    hints = [["半球", hemisphere(lat, lng - 360 if lng > 180 else lng)], *basics["hints"]]
-    zh, en = basics["zh"], basics["en"]
-    return finish_entry({
-        "id": f"ct-{cc}",
-        "group": cc,
-        "title": zh,
-        "original": en,
-        "answer": f"{zh}（{en}）" if en else zh,
-        "names": basics["names"],
-        "iso": cc,
-        "fit": "outline",
-        "tier": "main" if basics["big"] else "niche",
-        "hints": hints,
-    })
-
-
-def pref_entry(code: str, pano: dict, pref: dict, wd: dict) -> dict | None:
-    """日本街景猜都道府县。「东京都」「大阪府」「冲绳县」只说「东京」「大阪」「冲绳」也算（北海道的「道」不能省）。"""
-    zh, en = wd.get("zh") or "", pref.get("en") or ""
-    if not zh:
-        return None
-    labels = [zh, *wd.get("names", [])]
-    bases = [n[:-1] for n in labels if n[-1:] in "都府县県" and len(n) > 2 and not n.startswith("北海")]
-    jis = pref.get("jis") or 0
-    capital = pref.get("capital") or ""
-    # 特产、名胜从不那么出名的开始给
-    words = place_words([*labels, *bases], capital)
-    foods, sights = (
-        [x for f in items if (x := scrub(f, words, zh))] for items in hint_data.JP.get(jis, ([], []))
-    )
-    hints = [["地方", next((name for last, name in geo.JP_REGIONS if jis <= last), "")]]
-    for i in (2, 1, 0):
-        hints += [["特产", foods[i] if i < len(foods) else ""], ["名胜", sights[i] if i < len(sights) else ""]]
-    hints.append(["县厅所在地", f"「{capital[0]}」开头" if capital else ""])
-    return finish_entry({
-        "id": f"jp-{pano['id']}",
-        "group": code,
-        "title": zh,
-        "original": " · ".join(x for x in (en, pano.get("near")) if x),
-        "answer": f"{zh}（{en}）" if en else zh,
-        "names": usable_names([*labels, *bases, en]),
-        "pano": {"id": pano["id"], "heading": pano["heading"]},
-        "fit": "panels",
-        "hints": hints,
-    })
 
 
 class Bank:
@@ -459,7 +100,7 @@ class Bank:
 
     async def image(self, entry: dict) -> bytes:
         """每次从这道题的几张截图里随机挑一张。"""
-        url = random.choice(entry.get("images") or [entry["image"]])
+        url = random.choice(entry["images"])
         path = self.img_dir / f"{entry['id']}-{hashlib.sha1(url.encode()).hexdigest()[:10]}.jpg"
         if path.exists():
             return path.read_bytes()
@@ -478,12 +119,10 @@ class Bank:
             sv.image(entry["pano"]["id"], (heading + 120 * i) % 360, size) for i, size in enumerate(geo.PANELS)
         )))
 
-    def outline(self, entry: dict) -> tuple[list, dict | None, str]:
-        """(国家轮廓, 邻国底图, 题目国家在底图里的组名)，参数顺序同 grid.load_outline。"""
+    def outline(self, entry: dict) -> tuple[list, dict, str]:
+        """(国家轮廓, 邻国底图, 题目国家在底图里的组名)，参数顺序同 cards.load_outline。"""
         if not self._shapes:
             self._shapes = load_json(self.dir / "country_shapes.json") or {}
-        if "groups" not in self._shapes:  # 升级前的旧格式，只有轮廓、没有底图，重建完就没了
-            return self._shapes[entry["iso"]], None, ""
         group = self._shapes["iso"][entry["iso"]]
         return geo.outline(self._shapes["groups"][group]), self._shapes["groups"], group
 
@@ -525,10 +164,10 @@ class Bank:
             return True
         return time.time() - meta.get("built_at", 0) > self.config.get("refresh_days", 7) * 86400
 
-    def _commit(self, cat: str, entries: list, size: int, media: bool, complete: bool = True) -> None:
+    def _commit(self, cat: str, entries: list, media: bool = True, complete: bool = True) -> None:
         self.entries[cat] = entries
         self.meta[cat] = {
-            "built_at": time.time(), "size": size, "version": BANK_VERSION, "media": media, "complete": complete,
+            "built_at": time.time(), "version": BANK_VERSION, "media": media, "complete": complete,
             "settings": self._settings(cat),
         }
         save_json(self.dir / f"bank_{cat}.json", {**self.meta[cat], "entries": entries})
@@ -637,7 +276,7 @@ class Bank:
                 save_json(cache_path, cache)
         finally:
             save_json(cache_path, cache)
-        self._commit("anime", entries, size, True, complete)
+        self._commit("anime", entries, complete=complete)
 
     async def _build_games(self) -> None:
         """大众题：MC 分过线的游戏里按热度（IGDB 评分人数）取前 N；小众题：剩下的按 MC 分取前 M。
@@ -649,13 +288,12 @@ class Bank:
         min_score = self.config.get("game_min_score", 75)
         min_reviews = self.config.get("game_min_reviews", 10)
         use_media = self._media_on("game")
-        mc_key = await self._mc_key()
         items, offset = [], 0
         while use_media or len(items) < size:
             self.status["game"] = f"正在拉取 Metacritic 评分榜（已拉 {len(items)} 款）"
             params = {
                 "sortBy": "-metaScore", "productType": "games", "releaseYearMin": 1958,
-                "releaseYearMax": time.localtime().tm_year, "offset": offset, "limit": 50, "apiKey": mc_key,
+                "releaseYearMax": time.localtime().tm_year, "offset": offset, "limit": 50,
             }
             page = (await self._get(MC_FINDER, params=params, ua=WEB_UA))["data"]["items"]
             items += [
@@ -697,7 +335,7 @@ class Bank:
                 await asyncio.sleep(1)
             entries.append({**game_entry(it, matches.get(slug), wd.get(slug), media.get(slug)), "tier": tier})
         save_json(match_path, matches)
-        self._commit("game", entries, size, use_media)
+        self._commit("game", entries, use_media)
 
     async def _build_pokemon(self) -> None:
         """前 pokemon_main_gen 个世代算大众题，之后的算小众题。"""
@@ -711,20 +349,19 @@ class Bank:
         for s in species:
             if entry := pokemon_entry(s, by_id, wd.get(f"{s['id']:03d}")):
                 entries.append({**entry, "tier": "main" if s["generation_id"] <= main_gen else "niche"})
-        self._commit("pokemon", entries, len(entries), True)
+        self._commit("pokemon", entries)
 
     async def _cities(self, cat: str) -> dict:
         path = self.dir / "geo_cities.json"
         cities = load_json(path)
-        # 旧版城市表没有一级行政区代码（猜日本地点要用），重新下载
-        if not cities or len(next(iter(cities.values()))[0]) < 5:
+        if not cities:
             self.status[cat] = "正在下载 GeoNames 城市表（一两分钟）"
             cities = await geo.fetch_cities(self._http())
             save_json(path, cities)
         return cities
 
-    async def _countries(self, cat: str, candidates) -> tuple[list[str], dict, dict]:
-        """猜地点、猜国家共用：只出主权国家（格陵兰、泽西这类属地不出），返回 (国家代码, country_basics, facts)。"""
+    async def _countries(self, cat: str, candidates) -> tuple[list[str], dict]:
+        """猜地点、猜国家共用：只出主权国家（格陵兰、泽西这类属地不出），返回 (国家代码, country_basics)。"""
         session = self._http()
         self.status[cat] = "正在查各国资料"
         info = await geo.fetch_country_info(session)
@@ -736,7 +373,7 @@ class Bank:
         for cc in codes:
             if b := country_basics(cc, facts.get(cc, {}), wd.get(cc, {}), info.get(cc, {}), languages):
                 basics[cc] = b
-        return [cc for cc in codes if cc in basics], basics, facts
+        return [cc for cc in codes if cc in basics], basics
 
     async def _sample_all(self, cat: str, cache_name: str, targets: list, make_entries) -> None:
         """猜地点、猜日本地点共用：targets 是 [(键, 候选城镇, accept, 个数)]，全景缓存在 cache_name，
@@ -767,14 +404,14 @@ class Bank:
                     entries.extend(make_entries(k, cache[k]))
         finally:
             save_json(cache_path, cache)
-        self._commit(cat, entries, len(entries), True)
+        self._commit(cat, entries)
 
     async def _build_geo(self) -> None:
         if not self._media_on("geo"):
             self.status["geo"] = "还没配 Google 街景的 key"
             return
         cities = await self._cities("geo")
-        codes, basics, _ = await self._countries("geo", cities)
+        codes, basics = await self._countries("geo", cities)
         targets = [(cc, cities[cc], lambda near, cc=cc: near[0] == cc, geo.PANOS_PER_COUNTRY) for cc in codes]
         await self._sample_all(
             "geo", "geo_panos.json", targets, lambda cc, panos: [geo_entry(cc, p, basics[cc]) for p in panos]
@@ -813,16 +450,16 @@ class Bank:
             save_json(path, shapes)
         self._shapes = shapes
         groups, iso = shapes["groups"], shapes["iso"]
-        codes, basics, _ = await self._countries("country", list(iso))
+        codes, basics = await self._countries("country", list(iso))
         # 很小的岛国抽稀后一个环都不剩，不出题
         entries = [country_entry(cc, geo.outline(groups[iso[cc]]), basics[cc]) for cc in codes if groups[iso[cc]]]
-        self._commit("country", entries, len(entries), True)
+        self._commit("country", entries)
 
     async def _game_media(self, items: list, wd: dict) -> dict:
-        """IGDB 截图优先，IGDB 上没截图再用 Steam 的。结果缓存，只查新进榜的（没有热度数据的旧缓存也重查）。"""
+        """IGDB 截图优先，IGDB 上没截图再用 Steam 的。结果缓存，只查新进榜的。"""
         path = self.dir / "media_game.json"
         cache = load_json(path) or {}
-        todo = [it for it in items if "pop" not in cache.get(it["slug"], {})]
+        todo = [it for it in items if it["slug"] not in cache]
         if not todo:
             return cache
         igdb = Igdb(self._http(), self.config.get("igdb_client_id", ""), self.config.get("igdb_client_secret", ""))
@@ -902,14 +539,6 @@ class Bank:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
         return self._session
-
-    async def _mc_key(self) -> str:
-        async with self._http().get(MC_PAGE, headers={"User-Agent": WEB_UA}) as r:
-            r.raise_for_status()
-            found = re.search(r"apiKey=(\w+)", await r.text())
-        if not found:
-            raise RuntimeError("Metacritic 页面里没找到 apiKey，接口可能改版了")
-        return found.group(1)
 
     async def _get(self, url: str, *, params=None, ua: str = BGM_UA):
         return await self._request("GET", url, params=params, headers={"User-Agent": ua})

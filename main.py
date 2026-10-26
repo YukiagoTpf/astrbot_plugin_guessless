@@ -1,6 +1,5 @@
 import asyncio
 import math
-import random
 import re
 import time
 from collections import deque
@@ -11,10 +10,11 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, StarTools
 
-from . import grid
-from .answer import candidates, is_correct
-from .bank import Bank, load_json, save_json
-from .lines import LINES, say
+from .core import cards
+from .core.answer import candidates, is_correct
+from .core.bank import Bank
+from .core.lines import LINES, say
+from .core.store import load_json, save_json
 
 LABELS = {"game": "游戏", "anime": "动画", "pokemon": "宝可梦", "geo": "地点", "country": "国家", "jpgeo": "日本地点"}
 GEO_ALIASES = {"猜街景"}
@@ -33,7 +33,7 @@ class Round:
     entry: dict | None = None
     image: object = None
     cands: set = field(default_factory=set)
-    order: list = field(default_factory=lambda: random.sample(range(9), 9))
+    order: list = field(default_factory=list)  # 九宫格揭开顺序，开题时按图片排（cards.reveal_order）
     shown: int = 1
     deadline: float = 0.0
     last_hint: float = 0.0
@@ -255,7 +255,7 @@ class GuessPlugin(Star):
             return event.plain_result(say("paused"))
 
         seconds = self.config.get("round_seconds", 120)
-        rnd.order = grid.reveal_order(rnd.image)
+        rnd.order = cards.reveal_order(rnd.image)
         rnd.cands = candidates(rnd.entry["names"])
         rnd.deadline = time.monotonic() + seconds
         rnd.timer = asyncio.create_task(self._expire(gid, rnd, seconds))
@@ -267,11 +267,11 @@ class GuessPlugin(Star):
             entry = self.bank.pick(cat, self.recent[cat])
             try:
                 if entry.get("fit") == "panels":
-                    image = grid.load_panels(await self.bank.panels(entry))
+                    image = cards.load_panels(await self.bank.panels(entry))
                 elif entry.get("fit") == "outline":
-                    image = grid.load_outline(*self.bank.outline(entry))
+                    image = cards.load_outline(*self.bank.outline(entry))
                 else:
-                    image = grid.load(await self.bank.image(entry), contain=entry.get("fit") == "contain")
+                    image = cards.load(await self.bank.image(entry), contain=entry.get("fit") == "contain")
             except Exception as e:
                 logger.warning(f"[guess] image of {entry['id']} failed: {e}")
                 continue
@@ -355,7 +355,7 @@ class GuessPlugin(Star):
 
     def _question(self, rnd: Round) -> list:
         """出题和提示只发一张卡片，标题、进度和提示都画在图上。"""
-        image = grid.render(
+        image = cards.render(
             rnd.image,
             set(rnd.order[: rnd.shown]),
             f"猜{LABELS[rnd.category]}",
@@ -383,7 +383,7 @@ class GuessPlugin(Star):
             text = say(f"timeout_{rnd.category}") + "\n" + say("answer", answer=answer)
         # 答案卡：整图公开，标题写答案，右上角写原名
         original = entry.get("original", "")
-        card = grid.render(
+        card = cards.render(
             rnd.image, None, entry["title"], original if original != entry["title"] else "答案", entry["hints"]
         )
         return [Comp.Plain(text), Comp.Image.fromBase64(card)]

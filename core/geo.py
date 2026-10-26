@@ -17,7 +17,7 @@ import zipfile
 import aiohttp
 import shapefile
 
-from .media import WIKIDATA, UA, HttpError
+from .sources import UA, WIKIDATA, HttpError
 
 GEONAMES = "https://download.geonames.org/export/dump/"
 STREETVIEW = "https://maps.googleapis.com/maps/api/streetview"
@@ -43,15 +43,15 @@ PANOS_PER_PREF = 4
 # 日本都道府县按 JIS 编号分八地方（冲绳归九州地方）
 JP_REGIONS = [(1, "北海道"), (7, "东北"), (14, "关东"), (23, "中部"), (30, "近畿"), (35, "中国地方"), (39, "四国"), (47, "九州")]
 MIN_PANOS = 3  # 只找到一两个的多半是边境误差，不出题
-# 三张图的请求尺寸：左边一张大图，右边上下两张小图（grid.load_panels 再缩放拼版）
+# 三张图的请求尺寸：左边一张大图，右边上下两张小图（cards.load_panels 再缩放拼版）
 PANELS = ((640, 540), (356, 302), (356, 302))
 
 
-async def _download(session: aiohttp.ClientSession, url: str) -> bytes:
+async def _download(session: aiohttp.ClientSession, url: str, source: str = "GeoNames") -> bytes:
     timeout = aiohttp.ClientTimeout(total=300)  # GeoNames 很慢，城市表 3MB 要一两分钟
     async with session.get(url, headers={"User-Agent": UA}, timeout=timeout) as r:
         if r.status >= 400:
-            raise HttpError("GeoNames", r.status)
+            raise HttpError(source, r.status)
         return await r.read()
 
 
@@ -127,26 +127,19 @@ async def fetch_facts(session: aiohttp.ClientSession, codes: list[str]) -> dict[
 
 
 async def fetch_prefectures(session: aiohttp.ClientSession, geonames: list[str]) -> dict[str, dict]:
-    """按 GeoNames ID 查日本都道府县：JIS 编号、人口、面积、县厅所在地、英文名。"""
+    """按 GeoNames ID 查日本都道府县：JIS 编号、县厅所在地、英文名。"""
     values = " ".join(json.dumps(g) for g in geonames)
-    rows = await _sparql(session, f"""SELECT ?gn (SAMPLE(?code) AS ?iso) (SAMPLE(?label) AS ?en) (MAX(?pop) AS ?population)
-      (MAX(?area) AS ?size) (SAMPLE(?cap) AS ?capital) WHERE {{
+    rows = await _sparql(session, f"""SELECT ?gn (SAMPLE(?code) AS ?iso) (SAMPLE(?label) AS ?en) (SAMPLE(?cap) AS ?capital)
+      WHERE {{
       VALUES ?gn {{ {values} }} ?item wdt:P1566 ?gn ; wdt:P31 wd:Q50337 ; wdt:P300 ?code .
       OPTIONAL {{ ?item rdfs:label ?label FILTER(LANG(?label) = "en") }}
-      OPTIONAL {{ ?item wdt:P1082 ?pop }} OPTIONAL {{ ?item wdt:P2046 ?area }}
       OPTIONAL {{ ?item wdt:P36 ?c . ?c rdfs:label ?cap FILTER(LANG(?cap) = "zh-cn") }}
     }} GROUP BY ?gn""")
     out = {}
     for r in rows:
         v = {k: x["value"] for k, x in r.items()}
         jis = int(v["iso"].split("-")[-1]) if v["iso"].split("-")[-1].isdigit() else 0
-        out[v["gn"]] = {
-            "jis": jis,
-            "en": v.get("en", ""),
-            "population": float(v["population"]) if v.get("population") else 0,
-            "area": float(v["size"]) if v.get("size") else 0,
-            "capital": v.get("capital", ""),
-        }
+        out[v["gn"]] = {"jis": jis, "en": v.get("en", ""), "capital": v.get("capital", "")}
     return out
 
 
@@ -246,7 +239,7 @@ async def fetch_outlines(session: aiohttp.ClientSession) -> dict:
     要素按国家归组，FCLASS_CN 标成一级行政区或不单列的并进所属国家，画邻国底图时不在中间画边界；
     同一国家代码有本土 + 属地好几条要素的，对到点最多的那条所在的组。
     """
-    shp, dbf = await asyncio.gather(_download(session, NE_CHN + "shp"), _download(session, NE_CHN + "dbf"))
+    shp, dbf = await asyncio.gather(*(_download(session, NE_CHN + ext, "Natural Earth") for ext in ("shp", "dbf")))
     reader = shapefile.Reader(shp=io.BytesIO(shp), dbf=io.BytesIO(dbf))
     fields = [f[0] for f in reader.fields[1:]]
     groups: dict[str, list] = {}

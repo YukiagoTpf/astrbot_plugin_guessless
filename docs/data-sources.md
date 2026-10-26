@@ -5,7 +5,7 @@
 | 来源 | 用途 | 说明 |
 |---|---|---|
 | [Bangumi](https://bgm.tv) API | 动画榜单、中文名、游戏中文名 | 免 key |
-| Metacritic | 游戏评分榜、无 IGDB 时的封面 | 网页前端用的非官方接口，要带网页里内嵌的 apiKey，每次构建从游戏页面源码里现找；改版了可能失效 |
+| Metacritic | 游戏评分榜、无 IGDB 时的封面 | 网页前端用的非官方接口，目前不用 key；改版了可能失效 |
 | [IGDB](https://www.igdb.com) | 游戏截图、热度、别名、去重 | 需要 Twitch 开发者应用，见[配置](configuration.md#igdb) |
 | Steam | IGDB 上没有截图时的游戏截图 | 商店公开接口 |
 | 哔哩哔哩 | 动画分集封面 | 网页搜索接口，非官方；要先访问首页拿 cookie，搜太快会被限流 |

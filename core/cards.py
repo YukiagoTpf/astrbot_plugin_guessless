@@ -54,7 +54,7 @@ def load(data: bytes, contain: bool = False) -> Image.Image:
 
 
 def load_panels(images: list[bytes]) -> Image.Image:
-    """猜地点：左边一张大图，右边上下两张小图，三张都直接给看，不画九宫格。"""
+    """猜地点：左边一张大图，右边上下两张小图，三张都直接给看，不画九宫格。尺寸见 geo.PANELS。"""
     out = Image.new("RGB", (SIZE, PIC_H), BG)
     big_w = round(SIZE * 2 / 3) - GAP // 2
     small_w, small_h = SIZE - big_w - GAP, (PIC_H - GAP) // 2
@@ -69,12 +69,11 @@ def load_panels(images: list[bytes]) -> Image.Image:
     return out
 
 
-def load_outline(rings: list, world: dict | None = None, target: str = "") -> Image.Image:
+def load_outline(rings: list, world: dict, target: str) -> Image.Image:
     """猜国家：国家剪影居中，不画九宫格。rings 见 geo.outline()；按中心纬度压缩经度，近似等积，不至于高纬国家变胖。
 
-    world 是邻国底图 {组名: 轮廓}（geo.fetch_outlines 的 "_world"），target 是题目国家的组名：
+    world 是邻国底图 {组名: 轮廓}（geo.fetch_outlines 的 "groups"），target 是题目国家的组名：
     四周留出一圈，邻国画成灰色，国与国之间留一道深色缝，题目国家整组（含图里的属地）画成剪影色。
-    没有底图就只画剪影、铺满图区。
     """
     outer = [pt for hole, ring in rings if not hole for pt in ring]
     lat0 = (min(p[1] for p in outer) + max(p[1] for p in outer)) / 2
@@ -82,27 +81,17 @@ def load_outline(rings: list, world: dict | None = None, target: str = "") -> Im
     xs, ys = [p[0] * k for p in outer], [-p[1] for p in outer]
     w, h = max(max(xs) - min(xs), 1e-6), max(max(ys) - min(ys), 1e-6)
     ss = 2  # 2 倍大小画再缩小，边缘平滑
-    if world and target in world:
-        pad = max(w, h) * MAP_PAD
-        scale = min(SIZE / (w + pad * 2), PIC_H / (h + pad * 2))
-    else:
-        world, scale = None, min((SIZE - 72) / w, (PIC_H - 72) / h)
+    pad = max(w, h) * MAP_PAD
+    scale = min(SIZE / (w + pad * 2), PIC_H / (h + pad * 2))
     ox = (SIZE - w * scale) / 2 - min(xs) * scale
     oy = (PIC_H - h * scale) / 2 - min(ys) * scale
 
     def project(ring, shift=0.0):
         return [(((x + shift) * k * scale + ox) * ss, (-y * scale + oy) * ss) for x, y in ring]
 
-    if not world:
-        big = Image.new("RGB", (SIZE * ss, PIC_H * ss), MAP_BG)
-        draw = ImageDraw.Draw(big)
-        for hole, ring in sorted(rings, key=lambda r: r[0]):  # 先画外环再挖内洞
-            color = MAP_BG if hole else MAP_FILL
-            draw.polygon(project(ring), fill=color, outline=color, width=ss)
-    else:
-        big = _neighbors(world, target, project, (-ox / scale / k, (SIZE - ox) / scale / k),
-                         ((oy - PIC_H) / scale, oy / scale), ss)
-    out = big.resize((SIZE, PIC_H), Image.Resampling.LANCZOS)
+    lons = (-ox / scale / k, (SIZE - ox) / scale / k)
+    lats = ((oy - PIC_H) / scale, oy / scale)
+    out = _neighbors(world, target, project, lons, lats, ss).resize((SIZE, PIC_H), Image.Resampling.LANCZOS)
     out.info["grid"] = None
     return out
 
