@@ -269,7 +269,7 @@ class GuessPlugin(Star):
                 if entry.get("fit") == "panels":
                     image = grid.load_panels(await self.bank.panels(entry))
                 elif entry.get("fit") == "outline":
-                    image = grid.load_outline(self.bank.outline(entry))
+                    image = grid.load_outline(*self.bank.outline(entry))
                 else:
                     image = grid.load(await self.bank.image(entry), contain=entry.get("fit") == "contain")
             except Exception as e:

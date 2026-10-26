@@ -22,7 +22,11 @@ from .media import WIKIDATA, UA, HttpError
 GEONAMES = "https://download.geonames.org/export/dump/"
 STREETVIEW = "https://maps.googleapis.com/maps/api/streetview"
 NE_CHN = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/10m_cultural/ne_10m_admin_0_countries_chn."
-OUTLINE_VERSION = "chn-10m-v1"  # 轮廓处理规则的版本，改了就重新生成 country_shapes.json
+OUTLINE_VERSION = "chn-10m-v2"  # 轮廓处理规则的版本，改了就重新生成 country_shapes.json
+# 邻国底图里不画的要素：单独成块的礁石，图上只是一个点
+SKIP_FEATURES = {"SCR"}
+# FCLASS_CN 是这两类的要素并进所属国家，不单独画边界
+MERGED_FCLASS = {"Admin-1 region", "Unrecognized"}
 # 不出题的地区代码
 EXCLUDE = {"TW", "HK", "MO", "XK", "CN"}
 # 主权国家按联合国会员国或 Wikidata 标了主权国家的算；丹麦的会员资格挂在「丹麦王国」条目上，ISO 代码那条没有，手动补
@@ -236,49 +240,66 @@ async def sample(sv: StreetView, cities: list, nearest: Nearest, accept, count: 
     return list(panos.values())
 
 
-async def fetch_outlines(session: aiohttp.ClientSession) -> dict[str, list]:
-    """Natural Earth 10m 国界 → {国家代码: 轮廓}，轮廓格式见 outline()。同一代码有多条（本土 + 属地）取点最多的。"""
+async def fetch_outlines(session: aiohttp.ClientSession) -> dict:
+    """Natural Earth 10m 国界 → {"groups": {组名: 轮廓}, "iso": {国家代码: 组名}}，轮廓格式见 outline()。
+
+    要素按国家归组，FCLASS_CN 标成一级行政区或不单列的并进所属国家，画邻国底图时不在中间画边界；
+    同一国家代码有本土 + 属地好几条要素的，对到点最多的那条所在的组。
+    """
     shp, dbf = await asyncio.gather(_download(session, NE_CHN + "shp"), _download(session, NE_CHN + "dbf"))
     reader = shapefile.Reader(shp=io.BytesIO(shp), dbf=io.BytesIO(dbf))
     fields = [f[0] for f in reader.fields[1:]]
-    best: dict[str, shapefile.Shape] = {}
+    groups: dict[str, list] = {}
+    iso: dict[str, str] = {}
+    size: dict[str, int] = {}
     for sr in reader.iterShapeRecords():
-        cc = dict(zip(fields, sr.record)).get("ISO_A2_EH") or ""
-        if len(cc) == 2 and cc.isalpha() and len(sr.shape.points) > len(getattr(best.get(cc), "points", [])):
-            best[cc] = sr.shape
-    return {cc: outline(shape) for cc, shape in best.items()}
+        rec = dict(zip(fields, sr.record))
+        if rec["ADM0_A3"] in SKIP_FEATURES:
+            continue
+        group = rec["SOVEREIGNT"] if rec["FCLASS_CN"] in MERGED_FCLASS else rec["ADMIN"]
+        groups.setdefault(group, []).extend(
+            [hole, thin] for hole, ring in _rings(sr.shape) if (thin := _thin(ring))
+        )
+        cc = rec.get("ISO_A2_EH") or ""
+        if len(cc) == 2 and cc.isalpha() and len(sr.shape.points) > size.get(cc, 0):
+            size[cc], iso[cc] = len(sr.shape.points), group
+    return {"groups": groups, "iso": iso}
 
 
-def outline(shape) -> list:
-    """[[是否内洞, [[经度, 纬度], ...]], ...]。
+def _signed_area(ring) -> float:
+    return sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1])) / 2
 
-    只留本土附近的部分（离最大那块 20° 以内），不然法国带上南美的圭亚那、美国带上夏威夷，轮廓缩成一个点；
-    跨 180° 经线的（俄罗斯、斐济）把西经挪到东边接上；点按 0.02° 抽稀。
-    """
+
+def _rings(shape) -> list:
+    """[(是否内洞, 点列), ...]；Shapefile 外环顺时针、内洞逆时针。"""
     bounds = list(shape.parts) + [len(shape.points)]
-    rings = [shape.points[a:b] for a, b in zip(bounds, bounds[1:])]
-    if shape.bbox[2] - shape.bbox[0] > 180:
-        rings = [[(x + 360 if x < 0 else x, y) for x, y in ring] for ring in rings]
+    return [(_signed_area(r) > 0, r) for r in (shape.points[a:b] for a, b in zip(bounds, bounds[1:]))]
 
-    def signed_area(ring):
-        return sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1])) / 2
+
+def _thin(ring) -> list:
+    """点按 0.02° 抽稀，剩不到 3 个点的（很小的岛）返回空列表。"""
+    kept = [ring[0]]
+    for x, y in ring[1:]:
+        if abs(x - kept[-1][0]) + abs(y - kept[-1][1]) >= 0.02:
+            kept.append((x, y))
+    return [[round(x, 3), round(y, 3)] for x, y in kept] if len(kept) >= 3 else []
+
+
+def outline(rings: list) -> list:
+    """一个国家的轮廓 [[是否内洞, [[经度, 纬度], ...]], ...] 里只留本土附近的部分（离最大那块 20° 以内），
+    不然法国带上南美的圭亚那、美国带上夏威夷，轮廓缩成一个点；跨 180° 经线的（俄罗斯、斐济）把西经挪到东边接上。
+    """
+    if max(x for _, r in rings for x, _ in r) - min(x for _, r in rings for x, _ in r) > 180:
+        rings = [[hole, [[x + 360 if x < 0 else x, y] for x, y in ring]] for hole, ring in rings]
 
     def center(ring):
         xs, ys = [p[0] for p in ring], [p[1] for p in ring]
         return (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
 
-    main = max(rings, key=lambda r: abs(signed_area(r)))
-    mx, my = center(main)
+    mx, my = center(max((r for _, r in rings), key=lambda r: abs(_signed_area(r))))
     out = []
-    for ring in rings:
+    for hole, ring in rings:
         cx, cy = center(ring)
-        if math.hypot((cx - mx) * math.cos(math.radians(my)), cy - my) > 20:
-            continue
-        kept = [ring[0]]
-        for x, y in ring[1:]:
-            if abs(x - kept[-1][0]) + abs(y - kept[-1][1]) >= 0.02:
-                kept.append((x, y))
-        if len(kept) >= 3:
-            # Shapefile 外环顺时针、内洞逆时针
-            out.append([signed_area(ring) > 0, [[round(x, 3), round(y, 3)] for x, y in kept]])
+        if math.hypot((cx - mx) * math.cos(math.radians(my)), cy - my) <= 20:
+            out.append([hole, ring])
     return out

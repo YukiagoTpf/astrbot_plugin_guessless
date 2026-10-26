@@ -478,10 +478,14 @@ class Bank:
             sv.image(entry["pano"]["id"], (heading + 120 * i) % 360, size) for i, size in enumerate(geo.PANELS)
         )))
 
-    def outline(self, entry: dict) -> list:
+    def outline(self, entry: dict) -> tuple[list, dict | None, str]:
+        """(国家轮廓, 邻国底图, 题目国家在底图里的组名)，参数顺序同 grid.load_outline。"""
         if not self._shapes:
             self._shapes = load_json(self.dir / "country_shapes.json") or {}
-        return self._shapes[entry["iso"]]
+        if "groups" not in self._shapes:  # 升级前的旧格式，只有轮廓、没有底图，重建完就没了
+            return self._shapes[entry["iso"]], None, ""
+        group = self._shapes["iso"][entry["iso"]]
+        return geo.outline(self._shapes["groups"][group]), self._shapes["groups"], group
 
     def _size(self, cat: str) -> int:
         return self.config.get(f"{cat}_pool_size", 1000 if cat == "anime" else 500)
@@ -808,8 +812,10 @@ class Bank:
             shapes = {"_version": geo.OUTLINE_VERSION, **await geo.fetch_outlines(self._http())}
             save_json(path, shapes)
         self._shapes = shapes
-        codes, basics, _ = await self._countries("country", [cc for cc in shapes if cc != "_version"])
-        entries = [country_entry(cc, shapes[cc], basics[cc]) for cc in codes if shapes.get(cc)]
+        groups, iso = shapes["groups"], shapes["iso"]
+        codes, basics, _ = await self._countries("country", list(iso))
+        # 很小的岛国抽稀后一个环都不剩，不出题
+        entries = [country_entry(cc, geo.outline(groups[iso[cc]]), basics[cc]) for cc in codes if groups[iso[cc]]]
         self._commit("country", entries, len(entries), True)
 
     async def _game_media(self, items: list, wd: dict) -> dict:

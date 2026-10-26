@@ -6,7 +6,7 @@ import math
 import random
 from functools import cache
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 SIZE = 1080
 PIC_H = 608  # 16:9
@@ -25,8 +25,10 @@ TEXT = (238, 238, 238)
 DIM = (140, 144, 152)
 ART_BG = (236, 238, 242)  # 透明底立绘的底色
 ART_PAD = 28
-MAP_BG = (28, 31, 38)  # 国家轮廓：深色底、浅色剪影
+MAP_BG = (28, 31, 38)  # 国家轮廓：深色海、浅色剪影、灰色邻国
 MAP_FILL = (236, 238, 242)
+MAP_LAND = (74, 80, 94)
+MAP_PAD = 0.35  # 有邻国底图时，题目国家四周各留出它自身尺寸的这么多
 # AstrBot 镜像自带 Noto Sans CJK；ttc 里按名字找简中字形
 FONT_DIR = "/usr/share/fonts/opentype/noto"
 
@@ -67,24 +69,81 @@ def load_panels(images: list[bytes]) -> Image.Image:
     return out
 
 
-def load_outline(rings: list) -> Image.Image:
-    """猜国家：国家剪影铺满图区，不画九宫格。rings 见 geo.outline()；按中心纬度压缩经度，近似等积，不至于高纬国家变胖。"""
+def load_outline(rings: list, world: dict | None = None, target: str = "") -> Image.Image:
+    """猜国家：国家剪影居中，不画九宫格。rings 见 geo.outline()；按中心纬度压缩经度，近似等积，不至于高纬国家变胖。
+
+    world 是邻国底图 {组名: 轮廓}（geo.fetch_outlines 的 "_world"），target 是题目国家的组名：
+    四周留出一圈，邻国画成灰色，国与国之间留一道深色缝，题目国家整组（含图里的属地）画成剪影色。
+    没有底图就只画剪影、铺满图区。
+    """
     outer = [pt for hole, ring in rings if not hole for pt in ring]
     lat0 = (min(p[1] for p in outer) + max(p[1] for p in outer)) / 2
     k = math.cos(math.radians(lat0))
     xs, ys = [p[0] * k for p in outer], [-p[1] for p in outer]
-    pad, ss = 36, 2  # 2 倍大小画再缩小，边缘平滑
-    scale = min((SIZE - pad * 2) / max(max(xs) - min(xs), 1e-6), (PIC_H - pad * 2) / max(max(ys) - min(ys), 1e-6))
-    ox = (SIZE - (max(xs) - min(xs)) * scale) / 2 - min(xs) * scale
-    oy = (PIC_H - (max(ys) - min(ys)) * scale) / 2 - min(ys) * scale
-    big = Image.new("RGB", (SIZE * ss, PIC_H * ss), MAP_BG)
-    draw = ImageDraw.Draw(big)
-    for hole, ring in sorted(rings, key=lambda r: r[0]):  # 先画外环再挖内洞
-        pts = [((x * k * scale + ox) * ss, (-y * scale + oy) * ss) for x, y in ring]
-        draw.polygon(pts, fill=MAP_BG if hole else MAP_FILL, outline=MAP_BG if hole else MAP_FILL, width=ss)
+    w, h = max(max(xs) - min(xs), 1e-6), max(max(ys) - min(ys), 1e-6)
+    ss = 2  # 2 倍大小画再缩小，边缘平滑
+    if world and target in world:
+        pad = max(w, h) * MAP_PAD
+        scale = min(SIZE / (w + pad * 2), PIC_H / (h + pad * 2))
+    else:
+        world, scale = None, min((SIZE - 72) / w, (PIC_H - 72) / h)
+    ox = (SIZE - w * scale) / 2 - min(xs) * scale
+    oy = (PIC_H - h * scale) / 2 - min(ys) * scale
+
+    def project(ring, shift=0.0):
+        return [(((x + shift) * k * scale + ox) * ss, (-y * scale + oy) * ss) for x, y in ring]
+
+    if not world:
+        big = Image.new("RGB", (SIZE * ss, PIC_H * ss), MAP_BG)
+        draw = ImageDraw.Draw(big)
+        for hole, ring in sorted(rings, key=lambda r: r[0]):  # 先画外环再挖内洞
+            color = MAP_BG if hole else MAP_FILL
+            draw.polygon(project(ring), fill=color, outline=color, width=ss)
+    else:
+        big = _neighbors(world, target, project, (-ox / scale / k, (SIZE - ox) / scale / k),
+                         ((oy - PIC_H) / scale, oy / scale), ss)
     out = big.resize((SIZE, PIC_H), Image.Resampling.LANCZOS)
     out.info["grid"] = None
     return out
+
+
+def _neighbors(world: dict, target: str, project, lons: tuple, lats: tuple, ss: int) -> Image.Image:
+    """先在灰度图上按国家编号填色（0 是海、1 是题目国家），编号变化的地方就是国界和海岸线。"""
+    center = (lons[0] + lons[1]) / 2
+    visible = []
+    for name, grings in world.items():
+        parts, area = [], 0.0
+        for hole, ring in grings:
+            rx, ry = [p[0] for p in ring], [p[1] for p in ring]
+            if not hole:
+                area += (max(rx) - min(rx)) * (max(ry) - min(ry))
+            # 跨 180° 经线时把整个环平移 360°，挪到离画面中心近的一边
+            shift = 360 * round((center - (min(rx) + max(rx)) / 2) / 360)
+            if max(rx) + shift >= lons[0] and min(rx) + shift <= lons[1] and max(ry) >= lats[0] and min(ry) <= lats[1]:
+                parts.append((hole, ring, shift))
+        if parts:
+            visible.append((area, name, parts))
+
+    ids = Image.new("L", (SIZE * ss, PIC_H * ss), 0)
+    draw = ImageDraw.Draw(ids)
+    # 大国先画、内洞填回海，小国后画：被包住的国家（莱索托、圣马力诺）才不会被盖掉
+    for n, (_, name, parts) in enumerate(sorted(visible, key=lambda v: v[0], reverse=True), 2):
+        color = 1 if name == target else min(n, 255)
+        for hole, ring, shift in sorted(parts, key=lambda p: p[0]):
+            draw.polygon(project(ring, shift), fill=0 if hole else color)
+
+    wd, ht = ids.size
+    edges = Image.new("L", ids.size, 0)
+    edges.paste(ImageChops.difference(ids.crop((0, 0, wd - 1, ht)), ids.crop((1, 0, wd, ht))), (0, 0))
+    down = Image.new("L", ids.size, 0)
+    down.paste(ImageChops.difference(ids.crop((0, 0, wd, ht - 1)), ids.crop((0, 1, wd, ht))), (0, 0))
+    edges = ImageChops.lighter(edges, down).point(lambda v: 255 if v else 0).filter(ImageFilter.MaxFilter(3))
+
+    big = Image.new("RGB", ids.size, MAP_BG)
+    big.paste(MAP_LAND, mask=ids.point(lambda v: 255 if v > 1 else 0))
+    big.paste(MAP_FILL, mask=ids.point(lambda v: 255 if v == 1 else 0))
+    big.paste(MAP_BG, mask=edges)
+    return big
 
 
 def _cover_fit(img: Image.Image, width: int, height: int) -> Image.Image:
