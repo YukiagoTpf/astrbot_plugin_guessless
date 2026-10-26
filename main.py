@@ -59,14 +59,23 @@ class GuessPlugin(Star):
         self.quota: dict[str, list[float]] = load_json(self.data_dir / "quota.json") or {}
         # 群号 -> 管理员额外放开的题数，每小时额度用完后再扣，不过期
         self.bonus: dict[str, int] = load_json(self.data_dir / "bonus.json") or {}
+        self._announcer: asyncio.Task | None = None
 
     async def initialize(self):
         self.bank.start()
+        # 上次退出时还没结束的题（重启、停机时恰好有人在猜）：退额度，连上平台后公布答案
+        if voided := load_json(self.data_dir / "rounds.json"):
+            for gid, rec in voided.items():
+                self._quota_refund(gid, rec.get("paid", ""))
+            save_json(self.data_dir / "rounds.json", {})
+            self._announcer = asyncio.create_task(self._announce_void(voided))
 
     async def terminate(self):
         for rnd in self.rounds.values():
             if rnd.timer:
                 rnd.timer.cancel()
+        if self._announcer:
+            self._announcer.cancel()
         await self.bank.close()
 
     @filter.command("猜游戏")
@@ -162,6 +171,7 @@ class GuessPlugin(Star):
         text = say("pause")
         if (rnd := self.rounds.pop(gid, None)) and rnd.entry:
             rnd.timer.cancel()
+            self._rounds_save()
             text += "\n" + say("pause_void", answer=rnd.entry["answer"])
         yield event.plain_result(text)
 
@@ -249,6 +259,7 @@ class GuessPlugin(Star):
         rnd.cands = candidates(rnd.entry["names"])
         rnd.deadline = time.monotonic() + seconds
         rnd.timer = asyncio.create_task(self._expire(gid, rnd, seconds))
+        self._rounds_save()
         return event.chain_result(self._question(rnd))
 
     async def _pick(self, cat: str):
@@ -308,6 +319,28 @@ class GuessPlugin(Star):
         limit = self.config.get("hourly_limit", 10)
         return max(0, limit - len(self._quota_used(gid))) + self.bonus.get(gid, 0)
 
+    def _rounds_save(self) -> None:
+        """进行中的题只在内存里，另存一份答案和扣的额度，进程被重启打断时下次启动能收尾。"""
+        save_json(self.data_dir / "rounds.json", {
+            gid: {"umo": rnd.umo, "category": rnd.category, "answer": rnd.entry["answer"], "paid": rnd.paid}
+            for gid, rnd in self.rounds.items() if rnd.entry
+        })
+
+    async def _announce_void(self, voided: dict) -> None:
+        """刚启动时平台还没连上（NapCat 要过几秒才重连），发不出去就隔 5 秒再试，最多等 3 分钟。"""
+        for _ in range(36):
+            await asyncio.sleep(5)
+            for gid, rec in list(voided.items()):
+                text = say("restart_void", kind=LABELS.get(rec["category"], ""), answer=rec["answer"])
+                try:
+                    if await self.context.send_message(rec["umo"], MessageChain([Comp.Plain(text)])):
+                        del voided[gid]
+                except Exception as e:
+                    logger.debug(f"[guess] announcing voided round in {gid} failed, will retry: {e}")
+            if not voided:
+                return
+        logger.warning(f"[guess] gave up announcing voided rounds in {sorted(voided)}")
+
     def _quota_save(self) -> None:
         save_json(self.data_dir / "quota.json", self.quota)
         save_json(self.data_dir / "bonus.json", self.bonus)
@@ -336,6 +369,7 @@ class GuessPlugin(Star):
         if self.rounds.get(gid) is not rnd:
             return None  # 答对和超时撞在一起，已经结算过
         del self.rounds[gid]
+        self._rounds_save()
         entry = rnd.entry
         answer = entry["answer"]
         if uid:

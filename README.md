@@ -71,7 +71,7 @@ WebUI → 插件 → Guessless → 配置。都有默认值，两组 key 是可�
 - **国家**：Natural Earth 10m 国界，只留本土附近的部分（法国不带海外省、美国不带阿拉斯加和夏威夷）。人口过千万或面积过 50 万平方公里的是大众题。提示依次是半球、大洲、行驶方向、货币、名胜、主要语言、美食、最有名的名胜、国名首字；没收录名胜的国家改给人口、面积、首都首字。`geo.EXCLUDE` 里的地区不出题。
 - **特产、名胜、美食**是手写的（`hint_data.py`，每国 / 每县按有名程度排），不带国名、县名、首都名；`bank.scrub` 再兜一层底：Wikidata 来的货币、语言里带国名的部分删掉（「巴西雷亚尔」→「雷亚尔」），删不干净的整条不要。改了 `hint_data.py` 要把 `geo.HINTS_VERSION` 改一下，题库才会重建。
 - 每 7 天自动刷新；改了题库大小、填了或删了 key、升级了题目格式，一小时内重建，重建期间旧题库照常出题。key 填错时构建中止并保留旧题库，日志里有「拒绝访问」。
-- 数据都在 `data/plugin_data/astrbot_plugin_guessless/`：`bank_*.json` 是题库，其余是各数据源的查询缓存（删掉会在下次重建时重新查）、`images/` 图片缓存、`scores.json` 排行榜、`paused.json` 暂停中的群、`quota.json` / `bonus.json` 开题额度。
+- 数据都在 `data/plugin_data/astrbot_plugin_guessless/`：`bank_*.json` 是题库，其余是各数据源的查询缓存（删掉会在下次重建时重新查）、`images/` 图片缓存、`scores.json` 排行榜、`paused.json` 暂停中的群、`quota.json` / `bonus.json` 开题额度、`rounds.json` 进行中的题（重启后收尾用）。
 
 ## 判定规则（`answer.py`）
 
@@ -103,7 +103,7 @@ WebUI → 插件 → Guessless → 配置。都有默认值，两组 key 是可�
 
 - 截图也可能带字：游戏 UI、标题画面，Steam 截图里偶尔有宣传图；AniList 横幅偶尔带 logo；B 站老番的分集封面只有 480 宽，放大后糊。
 - 提示里的人名、公司名会剔除括号内容，并丢掉包含答案的提示，但不保证 100% 不泄露。
-- 进行中的题只存在内存里，重启 AstrBot 会丢掉，已扣的额度不退。
+- 进行中的题在重启 AstrBot 后不会接着猜：启动时退回这道题扣的额度，等平台连上后在群里公布答案（最多等 3 分钟）。
 
 ## License
 
