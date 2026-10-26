@@ -74,6 +74,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
 
 ## Git
 
-- 直接提交到 `main`，不走 PR；只有仓库所有者能推，推送前先征得同意。`main` 禁止强推。
+- `main` 由仓库规则集保护：任何人都不能强推或删除；改动要走 PR 并经 1 人批准，只有仓库所有者（admin）可以绕过、直接推。
+- 替所有者干活时直接提交到 `main`，推送前先征得同意；其他人 fork 后提 PR。
 - 提交信息用英文：祈使句标题，正文写为什么改。
 - 发版时更新 `metadata.yaml` 里的 `version`。
