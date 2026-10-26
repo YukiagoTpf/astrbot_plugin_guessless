@@ -21,8 +21,11 @@ from .answer import norm
 from .entries import (
     ANIME_KINDS,
     GAME_INFO,
+    WORK_HINTS_VERSION,
+    TagStats,
     aliases,
     anime_entry,
+    bgm_tags,
     clean_mc_title,
     clip,
     country_basics,
@@ -30,6 +33,7 @@ from .entries import (
     game_entry,
     geo_entry,
     infobox,
+    people,
     pokemon_entry,
     popularity,
     pref_entry,
@@ -41,6 +45,7 @@ from .sources import (
     HttpError,
     Igdb,
     anilist_names,
+    dedupe,
     igdb_media,
     pokemon_species,
     steam_shots,
@@ -141,7 +146,7 @@ class Bank:
         """影响题库内容的配置，改了就重建。"""
         c = self.config
         if cat == "anime":
-            return [self._size("anime")]
+            return [self._size("anime"), WORK_HINTS_VERSION]
         if cat == "pokemon":
             return [c.get("pokemon_main_gen", 4)]
         if cat == "geo":
@@ -150,7 +155,10 @@ class Bank:
             return [geo.OUTLINE_VERSION, sorted(geo.EXCLUDE), geo.HINTS_VERSION]
         if cat == "jpgeo":
             return [geo.PANOS_PER_PREF, geo.MIN_PANOS, geo.SAMPLING, geo.HINTS_VERSION]
-        return [self._size("game"), c.get("game_niche_size", 300), c.get("game_min_score", 75), c.get("game_min_reviews", 10)]
+        return [
+            self._size("game"), c.get("game_niche_size", 300), c.get("game_min_score", 75),
+            c.get("game_min_reviews", 10), WORK_HINTS_VERSION,
+        ]
 
     def _stale(self, cat: str) -> bool:
         meta = self.meta[cat]
@@ -227,6 +235,11 @@ class Bank:
         wd = await self._wikidata("anime", "P5732", [str(s["id"]) for s in picked[: size * 2]], links)
         cache_path = self.dir / "media_anime.json"
         cache = load_json(cache_path) or {}
+        chars_path = self.dir / "bgm_characters.json"
+        chars = load_json(chars_path) or {}
+        # 标签按候选作品一起统计，才分得出哪些是大类、哪些是这部的特色
+        pool = picked[: size * 2]
+        stats = TagStats.build([bgm_tags(s.get("tags")) for s in pool], [people(infobox(s)) for s in pool])
         anilist, bili = Anilist(self._http()), Bilibili(self._http(), WEB_UA)
         entries, bili_errors, complete = [], 0, True
         # 首次构建没有旧题库，边找图边开放；刷新时找完再整体替换
@@ -238,8 +251,8 @@ class Bank:
                     break
                 chunk = picked[i : i + 50]
                 found, anilist_ok = {}, True
+                self.status["anime"] = f"正在找截图和角色表 {i}/{len(picked)}（已可出题 {len(entries)} 道）"
                 if todo := [s for s in chunk if str(s["id"]) not in cache]:
-                    self.status["anime"] = f"正在找截图 {i}/{len(picked)}（已可出题 {len(entries)} 道）"
                     try:
                         found = await anilist.match(todo, wd)
                     except Exception as e:
@@ -270,12 +283,14 @@ class Bank:
                             cache[sid] = media
                         complete = complete and cacheable
                     if media["images"]:
-                        entries.append(anime_entry(s, media, info))
+                        entries.append(anime_entry(s, media, info, stats, await self._characters(chars, s["id"])))
                     if len(entries) >= size:
                         break
                 save_json(cache_path, cache)
+                save_json(chars_path, chars)
         finally:
             save_json(cache_path, cache)
+            save_json(chars_path, chars)
         self._commit("anime", entries, complete=complete)
 
     async def _build_games(self) -> None:
@@ -318,23 +333,46 @@ class Bank:
 
         match_path = self.dir / "bgm_game_match.json"
         matches = load_json(match_path) or {}
+        chars_path = self.dir / "bgm_characters.json"
+        chars = load_json(chars_path) or {}
         entries = []
-        # 首次构建没有旧题库，边匹配边开放；刷新时匹配完再整体替换
+        # 首次构建没有旧题库，边匹配边开放（先不带标签）；刷新时匹配完再整体替换
         if not self.entries["game"]:
             self.entries["game"] = entries
-        for i, (it, tier) in enumerate(picked):
+        try:
+            for i, (it, tier) in enumerate(picked):
+                slug = it["slug"]
+                # 没存 staff 的是旧版匹配结果，缺标签、简介和人名，重新匹配
+                if slug not in matches or (matches[slug] and "staff" not in matches[slug]):
+                    self.status["game"] = f"正在用 Bangumi 补中文名和标签 {i}/{len(picked)}（已可出题 {len(entries)} 道）"
+                    try:
+                        matches[slug] = await self._match_bgm(clean_mc_title(it["title"]), it.get("premiereYear"))
+                    except Exception as e:  # 网络错误不写缓存，下次刷新再试
+                        logger.warning(f"[guess] bangumi match {slug} failed: {e}")
+                    if i % 25 == 0:
+                        save_json(match_path, matches)
+                        save_json(chars_path, chars)
+                    await asyncio.sleep(1)
+                if bgm_id := (matches.get(slug) or {}).get("id"):
+                    await self._characters(chars, bgm_id)
+                entries.append({**game_entry(it, matches.get(slug), wd.get(slug), media.get(slug)), "tier": tier})
+        finally:
+            save_json(match_path, matches)
+            save_json(chars_path, chars)
+
+        # 标签要整个题库一起统计才分得出大类和特色，所以全部匹配完再按标签出一遍提示
+        found = [matches.get(it["slug"]) or {} for it, _ in picked]
+        stats = TagStats.build(
+            [b.get("tags") or [] for b in found], [people(b.get("info") or {}) + b.get("staff", []) for b in found]
+        )
+        igdb_ids = {it["slug"]: m["id"] for it, _ in picked if (m := media.get(it["slug"])) and m.get("id")}
+        devs = await self._igdb_developers(list(igdb_ids.values()))
+        entries = []
+        for (it, tier), b in zip(picked, found):
             slug = it["slug"]
-            if slug not in matches:
-                self.status["game"] = f"正在用 Bangumi 补中文名 {i}/{len(picked)}（已可出题 {len(entries)} 道）"
-                try:
-                    matches[slug] = await self._match_bgm(clean_mc_title(it["title"]), it.get("premiereYear"))
-                except Exception as e:  # 网络错误不写缓存，下次刷新再试
-                    logger.warning(f"[guess] bangumi match {slug} failed: {e}")
-                if i % 25 == 0:
-                    save_json(match_path, matches)
-                await asyncio.sleep(1)
-            entries.append({**game_entry(it, matches.get(slug), wd.get(slug), media.get(slug)), "tier": tier})
-        save_json(match_path, matches)
+            dev, cast = devs.get(igdb_ids.get(slug)), chars.get(str(b.get("id")))
+            entry = game_entry(it, b or None, wd.get(slug), media.get(slug), stats, dev, cast)
+            entries.append({**entry, "tier": tier})
         self._commit("game", entries, use_media)
 
     async def _build_pokemon(self) -> None:
@@ -528,12 +566,42 @@ class Bank:
             if year and d.isdigit() and abs(int(d) - int(year)) <= 1:
                 info = infobox(s)
                 return {
+                    "id": s["id"],
                     "name": s["name"],
                     "name_cn": s.get("name_cn") or "",
                     "aliases": aliases(info),
                     "info": {k: clip(info[k]) for k in GAME_INFO if info.get(k)},
+                    "tags": bgm_tags(s.get("tags"))[:30],
+                    "summary": (s.get("summary") or "")[:600],
+                    "staff": people(info),  # 全部 staff 和公司，标签里的人名要去掉
                 }
         return None
+
+    async def _characters(self, cache: dict, sid) -> dict:
+        """Bangumi 角色表：主角的声优（出提示用），以及全部角色名和声优（从标签里去掉人名用）。结果写进 cache。"""
+        key = str(sid)
+        if key not in cache:
+            try:
+                rows = await self._get(f"{BGM_API}/subjects/{sid}/characters")
+            except Exception as e:  # 查不到只是少一条提示，下次刷新再查
+                logger.warning(f"[guess] bangumi characters of {sid} failed: {e}")
+                return {}
+            cv = [a["name"] for c in rows if c.get("relation") == "主角" for a in (c.get("actors") or [])[:1]]
+            names = [c["name"] for c in rows] + [a["name"] for c in rows for a in c.get("actors") or []]
+            cache[key] = {"cv": dedupe(cv), "names": dedupe(names)}
+            await asyncio.sleep(0.5)
+        return cache[key]
+
+    async def _igdb_developers(self, ids: list[int]) -> dict[int, list[str]]:
+        """查不到不影响出题，退回 Bangumi 记的开发商。"""
+        if not ids or not self._media_on("game"):
+            return {}
+        igdb = Igdb(self._http(), self.config.get("igdb_client_id", ""), self.config.get("igdb_client_secret", ""))
+        try:
+            return await igdb.developers(ids)
+        except Exception as e:
+            logger.warning(f"[guess] igdb developers lookup failed: {e}")
+            return {}
 
     def _http(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:

@@ -60,6 +60,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   |---|---|
   | 题目条目格式、通用选题规则 | `bank.BANK_VERSION` |
   | `hint_data.py`、`entries.scrub`、地点和国家的提示规则 | `geo.HINTS_VERSION` |
+  | 动画、游戏的提示规则（标签筛选、提示顺序） | `entries.WORK_HINTS_VERSION` |
   | 街景取景规则（全景缓存作废重找） | `geo.SAMPLING` |
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |
 

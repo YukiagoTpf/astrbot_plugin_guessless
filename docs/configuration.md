@@ -53,7 +53,7 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | 文件 | 内容 |
 |---|---|
 | `bank_*.json` | 各题型的题库 |
-| `media_*.json`、`bgm_game_match.json`、`geo_*.json`、`jp_panos.json`、`country_shapes.json` | 各数据源的查询缓存，删掉会在下次重建时重新查 |
+| `media_*.json`、`bgm_game_match.json`、`bgm_characters.json`、`geo_*.json`、`jp_panos.json`、`country_shapes.json` | 各数据源的查询缓存，删掉会在下次重建时重新查 |
 | `images/` | 题图缓存 |
 | `scores.json` | 排行榜 |
 | `paused.json` | 暂停中的群 |

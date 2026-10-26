@@ -285,6 +285,17 @@ class Igdb:
                 out[g["slug"]] = g
         return out
 
+    async def developers(self, ids: list[int]) -> dict[int, list[str]]:
+        """IGDB ID → 开发商。"""
+        out = {}
+        for i in range(0, len(ids), 500):
+            chunk = ",".join(str(x) for x in ids[i : i + 500])
+            fields = "fields involved_companies.developer,involved_companies.company.name;"
+            for g in await self.query(f"{fields} where id = ({chunk}); limit 500;"):
+                companies = g.get("involved_companies") or []
+                out[g["id"]] = [c["company"]["name"] for c in companies if c.get("developer") and c.get("company")]
+        return out
+
     async def search(self, title: str, year) -> dict | None:
         """年份 ±1 的结果里先认名字一致的，没有就取第一个；不知道年份不搜，免得认错。"""
         if not year:

@@ -3,7 +3,11 @@
 这里都是纯函数，不联网；构建和刷新在 bank.py。
 """
 
+import math
 import re
+from collections import Counter
+from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 
 from zhconv import convert
 
@@ -13,9 +17,38 @@ from .sources import POKEMON_ART, POKEMON_LANGS, dedupe
 
 MC_IMG = "https://www.metacritic.com/a/img/catalog"
 ANIME_KINDS = {"TV": "TV 动画", "剧场版": "剧场版", "WEB": "网络动画"}
-ANIME_STAFF = ("动画制作", "导演", "原作", "系列构成", "人物设定", "音乐")
-GENERIC_TAGS = {"TV", "日本", "剧场版", "WEB", "OVA"}
-GAME_INFO = ("游戏类型", "开发", "开发商", "发行", "发行商", "导演", "制作人", "音乐")
+# 动画的改编来源，看 Bangumi 的官方标签（meta_tags）
+ADAPTATIONS = {"漫画改": "漫画", "轻小说改": "轻小说", "小说改": "小说", "游戏改": "游戏", "原创": "原创动画"}
+# 用户标签里不算提示的：播出形式、平台、地区、评价和收藏状态；带年份的另外去掉
+TAG_STOP = {
+    "tv", "web", "ova", "oad", "剧场版", "动画", "日本", "日本动画", "游戏", "pc", "steam", "ns", "switch", "switch2",
+    "ps", "ps1", "ps2", "ps3", "ps4", "ps5", "psv", "psp", "xbox", "xbox360", "xboxone", "xboxseriesx", "xsx", "xb1",
+    "ios", "android", "3ds", "nds", "wii", "wiiu", "gba", "gbc", "gb", "n64", "ngc", "fc", "sfc", "nes", "snes", "md",
+    "dc", "ss", "mac", "macos", "linux", "windows", "单机", "必买", "神作", "满分神作", "神", "经典", "名作", "佳作", "良作", "粪作",
+    "补番", "补完", "已购", "想玩", "官中", "汉化", "中文", "国行", "通关", "未通关", "白金", "全成就", "必玩", "推荐",
+    "喜欢", "童年", "回忆", "情怀", "个人", "未完成", "补旧番", "总集篇", "tva", "映画", "电影", "动画电影", "巨坑", "坑",
+    # 改编来源单独一条提示
+    "漫画改", "漫改", "轻小说改", "轻改", "小说改", "游戏改", "原创",
+}
+TAG_MAX_LEN = 10  # 再长的多是玩梗的整句，常带剧情
+# 日文新字体 → 简体（zhconv 只管繁体）：标签里的人名常写成简体，infobox 和角色表里是日文写法
+_JP_HANS = str.maketrans(
+    "恵沢浜斎広竜桜戦歩辺関剣実楽黒亜栄絵帰暁駆経継軽県険権厳済雑児釈収従渋縦処焼浄縄嬢譲図穂瀬斉専銭総騒増蔵続対帯"
+    "滝単団弾遅聴転伝闘徳読悩脳廃売発髪抜晩払仏変弁豊毎満黙訳薬様覧両涙霊齢労寛郷円気覚巻歓観戯挙勲鶏芸撃検験鉱剤"
+    "獣奨醸摂臓択庁逓揺猟塁",
+    "惠泽滨斋广龙樱战步边关剑实乐黑亚荣绘归晓驱经继轻县险权严济杂儿释收从涩纵处烧净绳娘让图穗濑齐专钱总骚增藏续对带"
+    "泷单团弹迟听转传斗德读恼脑废卖发发拔晚拂佛变辩丰每满默译药样览两泪灵龄劳宽乡圆气觉卷欢观戏举勋鸡艺击检验矿剂"
+    "兽奖酿摄脏择厅递摇猎垒",
+)
+# infobox 里不是人名、公司名的字段
+NOT_PEOPLE = {
+    "中文名", "别名", "话数", "放送开始", "放送星期", "播放结束", "上映年度", "片长", "官方网站", "website", "发行日期",
+    "其他", "备注", "Copyright", "类型", "游戏类型", "游玩人数", "售价", "平台", "游戏引擎",
+}
+# 整个题库里超过这个比例的作品都有的标签算大类标签（「日常」「开放世界」），其余算特色标签
+COMMON_TAG_RATIO = 0.04
+WORK_HINTS_VERSION = "tags-v1"  # 动画、游戏的提示规则改了就换个名字，这两个题库会重建
+GAME_INFO = ("游戏类型", "开发", "开发商", "导演", "游玩人数", "游戏引擎")
 PLATFORMS = {
     "PlayStation": "PS1", "PlayStation 2": "PS2", "PlayStation 3": "PS3", "PlayStation 4": "PS4",
     "PlayStation 5": "PS5", "PlayStation Vita": "PSV", "Xbox One": "XB1", "Xbox Series X": "XSX",
@@ -73,6 +106,83 @@ def shape_hint(title: str) -> list[str]:
     return ["首字", f"「{chars[:1]}」，{len(chars)} 个字"]
 
 
+def _flat(value) -> str:
+    if isinstance(value, list):
+        return " ".join(v.get("v", "") if isinstance(v, dict) else str(v) for v in value)
+    return str(value)
+
+
+def bgm_tags(raw) -> list[list]:
+    """Bangumi 的用户标签 [{name, count}] → [[名字, 打这个标签的人数]]，人数从多到少。"""
+    return [[t["name"], t.get("count") or 0] for t in raw or [] if t.get("name")]
+
+
+def name_key(text: str) -> str:
+    """比较人名用：日文新字体也转成简体。"""
+    return norm(text.translate(_JP_HANS))
+
+
+def people(info: dict, extra: list[str] | None = None) -> list[str]:
+    """infobox 里的人名和公司名（staff、制作公司……）加上 extra（角色名、声优、开发商），归一化后按分隔符拆开。"""
+    values = [_flat(v) for k, v in info.items() if k not in NOT_PEOPLE] + list(extra or [])
+    return [n for v in values for part in re.split(r"[、,，;；/&·]", v) if (n := name_key(part))]
+
+
+@dataclass
+class TagStats:
+    """整个题库的标签统计：每个标签在多少部作品里出现、作品数、所有作品的 staff 和声优（标签里的人名、公司名要去掉）。"""
+
+    df: Counter = field(default_factory=Counter)
+    pool: int = 0
+    people: set = field(default_factory=set)
+
+    @classmethod
+    def build(cls, tag_lists: list, people_lists: list) -> "TagStats":
+        df = Counter(norm(n) for tags in tag_lists for n in {name for name, _ in tags})
+        return cls(df, len(tag_lists), {n for names in people_lists for n in names})
+
+
+def _overlap(a: str, b: str) -> int:
+    return SequenceMatcher(None, a, b, autojunk=False).find_longest_match(0, len(a), 0, len(b)).size
+
+
+def clean_tags(tags: list, titles: list[str], own: list[str], stats: TagStats, ascii_ok: bool) -> list[list]:
+    """去掉没区分度的（播出形式、平台、年份、评价）、会泄露答案的（跟作品名连着两个字以上一样）、
+    人名和公司名（这部的 staff、声优，或者整个题库里出现过的；另有专门的提示）和玩梗的长句。
+    动画的英文标签几乎都是公司名，ascii_ok=False 时不要；游戏的英文标签多是玩法（Roguelike、co-op），留着。"""
+    title_set = {n for n in (name_key(t) for t in titles if t) if n}
+    title_keys = "\0".join(title_set)
+    own_keys = "\0".join(own)
+    out, seen = [], set()
+    for name, count in tags:
+        key = name_key(name)
+        if (not key or key in seen or key in TAG_STOP or len(key) > TAG_MAX_LEN or re.search(r"\d{4}", name)
+                or (key.isascii() and not ascii_ok) or key in stats.people or key in title_set):
+            continue
+        if _overlap(key, title_keys) >= (4 if key.isascii() else 2) or _overlap(key, own_keys) >= 3:
+            continue
+        seen.add(key)
+        out.append([name, count])
+    return out
+
+
+def split_tags(tags: list, stats: TagStats, summary: str = "") -> tuple[list[str], list[str]]:
+    """分两档：大类标签（很多作品都有，「日常」「开放世界」）按人数取前 3；特色标签（只有少数作品有）
+    按「这部作品里打的人多、整个题库里少见」取前 3。只有这一部有、又出现在简介里的多半是角色名，不要。"""
+    if not tags or not stats.pool:  # 没有整个题库的统计（首次构建边匹配边出的临时题目）就先不给标签
+        return [], []
+    top = tags[0][1] or 1
+    cut = max(3, stats.pool * COMMON_TAG_RATIO)
+    common = [n for n, _ in tags if stats.df[norm(n)] >= cut][:3]
+    scored = []
+    for name, count in tags:
+        d = stats.df[norm(name)] or 1
+        if d >= cut or count < max(5, top * 0.02) or (d == 1 and name in summary):
+            continue
+        scored.append((count / top * math.log(stats.pool / d), name))
+    return common, [n for _, n in sorted(scored, reverse=True)[:3]]
+
+
 def finish_entry(entry: dict) -> dict:
     """去掉会泄露答案的提示，最多 8 条，最后补一条首字提示，凑满 9 格。"""
     leaks = {c for c in candidates(entry["names"]) if len(c) >= 3}
@@ -81,67 +191,85 @@ def finish_entry(entry: dict) -> dict:
     return entry
 
 
-def anime_entry(s: dict, media: dict | None = None, wd: dict | None = None) -> dict:
+def anime_entry(s: dict, media: dict | None = None, wd: dict | None = None, stats: TagStats | None = None,
+                chars: dict | None = None) -> dict:
+    """提示从宽到窄：放送季度和话数、改编来源、大类标签、动画制作、导演、特色标签、主角声优、原作。
+
+    stats 是整个题库的标签统计，没有就不出标签提示；chars 是 Bangumi 角色表，见 Bank._characters。
+    """
     info = infobox(s)
     cn, name = s["name_cn"], s["name"]
-    hints = []
+    names = dedupe([name, cn, *aliases(info), *(wd or {}).get("names", []), *(media or {}).get("names", [])])
     date = s.get("date") or ""
-    if re.match(r"\d{4}-\d{2}", date):
-        hints.append(["放送时间", f"{date[:4]} 年 {int(date[5:7])} 月"])
-    kind = ANIME_KINDS[s["platform"]]
     eps = s.get("eps") or s.get("total_episodes")
-    hints.append(["类型", f"{kind}，共 {eps} 话" if eps and s["platform"] != "剧场版" else kind])
-    tags = list(dict.fromkeys(t for t in s.get("meta_tags") or [] if t not in GENERIC_TAGS))[:4]
-    if tags:
-        hints.append(["标签", " / ".join(tags)])
-    rating = s.get("rating") or {}
-    if rating.get("score"):
-        hints.append(["Bangumi", f"{rating['score']} 分（排名 #{rating.get('rank')}）"])
-    for key in ANIME_STAFF:
-        if info.get(key):
-            hints.append([key, clip(info[key])])
+    form = f"{ANIME_KINDS[s['platform']]} {eps} 话" if eps and s["platform"] != "剧场版" else ANIME_KINDS[s["platform"]]
+    when = f"{date[:4]} 年 {int(date[5:7])} 月 · " if re.match(r"\d{4}-\d{2}", date) else ""
+    adapt = next((v for k, v in ADAPTATIONS.items() if k in (s.get("meta_tags") or [])), "")
+    stats, chars = stats or TagStats(), chars or {}
+    tags = clean_tags(bgm_tags(s.get("tags")), names, people(info, chars.get("names")), stats, ascii_ok=False)
+    common, rare = split_tags(tags, stats, s.get("summary") or "")
+    hints = [
+        ["放送", when + form],
+        ["改编自", adapt],
+        ["标签", " / ".join(common)],
+        ["动画制作", clip(info.get("动画制作") or "")],
+        ["导演", clip(info.get("导演") or "")],
+        ["特色标签", " / ".join(rare)],
+        ["主角声优", " / ".join(chars.get("cv", [])[:2])],
+        ["原作", clip(info.get("原作") or "")],
+    ]
     return finish_entry({
         "id": f"bgm-{s['id']}",
         "title": cn,
         "original": name,
         "answer": f"{cn}（{name}）" if cn != name else cn,
-        "names": dedupe([name, cn, *aliases(info), *(wd or {}).get("names", []), *(media or {}).get("names", [])]),
+        "names": names,
         "images": (media or {}).get("images") or [s["images"]["large"]],
         "hints": hints,
     })
 
 
-def game_entry(item: dict, bgm: dict | None, wd: dict | None = None, media: dict | None = None) -> dict:
+def game_entry(item: dict, bgm: dict | None, wd: dict | None = None, media: dict | None = None,
+               stats: TagStats | None = None, dev: list[str] | None = None, chars: dict | None = None) -> dict:
+    """提示从宽到窄：发售年份和平台、类型、大类标签、游玩人数、引擎、开发、导演、特色标签。
+
+    stats、chars 同 anime_entry；dev 是 IGDB 记的开发商（Bangumi 的「开发」「发行」常是日本代理，不准）。
+    """
     en = clean_mc_title(item["title"])
     bgm, wd = bgm or {}, wd or {}
     cn = bgm.get("name_cn") or wd.get("zh") or ""
     if norm(cn) == norm(en):  # Wikidata 的中文 label 有时就是英文原名
         cn = ""
     info = bgm.get("info") or {}
+    names = dedupe([en, cn, bgm.get("name", ""), *bgm.get("aliases", []), *wd.get("names", []),
+                    *(media or {}).get("names", [])])
     platforms = [PLATFORMS.get(p["name"], p["name"]) for p in item.get("platforms") or [] if p.get("name")]
     genres = [g["name"] for g in item.get("genres") or [] if g.get("name")]
-    hints = [["发售年份", str(item.get("premiereYear") or (item.get("releaseDate") or "")[:4])]]
-    if platforms:
-        hints.append(["平台", " / ".join(platforms[:4]) + (" 等" if len(platforms) > 4 else "")])
-    if info.get("游戏类型") or genres:
-        hints.append(["类型", info.get("游戏类型") or " / ".join(genres)])
-    hints.append(["Metacritic", f"{item['criticScoreSummary']['score']} 分"])
-    dev = info.get("开发") or info.get("开发商")
-    pub = info.get("发行") or info.get("发行商")
-    if dev:
-        hints.append(["开发", dev])
-    if pub and pub != dev:
-        hints.append(["发行", pub])
-    for key in ("导演", "制作人", "音乐"):
-        if info.get(key):
-            hints.append([key, info[key]])
-    names = [en, cn, bgm.get("name", ""), *bgm.get("aliases", []), *wd.get("names", []), *(media or {}).get("names", [])]
+    year = str(item.get("premiereYear") or (item.get("releaseDate") or "")[:4])
+    plat = " / ".join(platforms[:3]) + (" 等" if len(platforms) > 3 else "")
+    players = re.sub(r"\s+", "", info.get("游玩人数") or "")
+    if re.fullmatch(r"[\d\-~～]+", players):
+        players += "人"
+    stats = stats or TagStats()
+    own = people(info, [*(dev or []), *(chars or {}).get("names", [])]) + bgm.get("staff", [])
+    common, rare = split_tags(clean_tags(bgm.get("tags") or [], names, own, stats, ascii_ok=True), stats,
+                              bgm.get("summary") or "")
+    hints = [
+        ["发售", " · ".join(x for x in (f"{year} 年" if year else "", plat) if x)],
+        ["类型", info.get("游戏类型") or " / ".join(genres)],
+        ["标签", " / ".join(common)],
+        ["游玩人数", players],
+        ["引擎", info.get("游戏引擎") or ""],
+        ["开发", clip(" / ".join(dev or []) or info.get("开发") or info.get("开发商") or "")],
+        ["导演", info.get("导演") or ""],
+        ["特色标签", " / ".join(rare)],
+    ]
     return finish_entry({
         "id": f"mc-{item['slug']}",
         "title": cn or en,
         "original": en,
         "answer": f"{cn}（{en}）" if cn else en,
-        "names": dedupe(names),
+        "names": names,
         "images": (media or {}).get("images") or [MC_IMG + item["image"]["bucketPath"]],
         "hints": hints,
     })
