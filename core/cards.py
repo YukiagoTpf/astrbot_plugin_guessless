@@ -37,6 +37,7 @@ WORLD_LAT = (84, -58)  # 世界地图的纬度范围，南极洲不画
 # 猜国家猜错时按两国中心距离上色：越近越红，(公里, 颜色) 之间线性插值
 HEAT = ((0, (200, 36, 36)), (1000, (232, 86, 44)), (2500, (240, 146, 54)), (5000, (244, 204, 96)), (10000, (240, 232, 204)))
 # 盲猜对比表格子的颜色：一致、接近、不符、没资料
+PEEK = 176  # 盲猜萝卜表旁边那一格设定图的边长
 CELL = {"hit": (56, 142, 60), "near": (196, 146, 32), "miss": (150, 54, 54), "none": (62, 66, 76)}
 # AstrBot 镜像自带 Noto Sans CJK；ttc 里按名字找简中字形
 FONT_DIR = "/usr/share/fonts/opentype/noto"
@@ -203,30 +204,57 @@ class WorldMap:
         return out
 
 
-def compare_table(name: str, columns: tuple, rows: list, empty: str = "") -> Image.Image:
+def compare_table(name: str, columns: tuple, rows: list, empty: str = "", inset: Image.Image | None = None) -> Image.Image:
     """盲猜的对比表：name 是第一列的表头，columns 是其余各列；rows 是 [(猜的名字, entries.*_row 的结果), ...]，
-    新猜的在上面，最多 9 行。还没人猜时表下写 empty。"""
+    新猜的在上面，最多 9 行。还没人猜时表下写 empty。inset 是放在表右边的一小块图（peek 切出来的一格设定图）。"""
     out = Image.new("RGB", (SIZE, PIC_H), MAP_BG)
     draw = ImageDraw.Draw(out)
-    head, cell = font(24), font(26)
-    m, gap, name_w, row_h = 16, 6, 190, 56
-    col_w = (SIZE - m * 2 - name_w - gap * len(columns)) / len(columns)
+    head = font(24)
+    m, gap, row_h = 16, 6, 56
+    name_w, right = (150, SIZE - m - PEEK - 14) if inset is not None else (190, SIZE - m)
+    col_w = (right - m - name_w - gap * len(columns)) / len(columns)
     xs = [m + name_w + gap + i * (col_w + gap) for i in range(len(columns))]
     draw.text((m + 8, 26), name, fill=DIM, font=head, anchor="lm")
     for x, title in zip(xs, columns):
-        draw.text((x + col_w / 2, 26), title, fill=DIM, font=head, anchor="mm")
+        draw.text((x + col_w / 2, 26), fit(title, head, col_w), fill=DIM, font=head, anchor="mm")
     for i, (name, cells) in enumerate(rows[:9]):
         y = 46 + i * (row_h + gap)
         draw.rounded_rectangle((m, y, m + name_w, y + row_h), 8, fill=COVER)
-        draw.text((m + 12, y + row_h / 2), fit(name, cell, name_w - 20), fill=TEXT, font=cell, anchor="lm")
+        label_font = _shrink(name, name_w - 20)
+        draw.text((m + 12, y + row_h / 2), fit(name, label_font, name_w - 20), fill=TEXT, font=label_font, anchor="lm")
         for x, (text, state, arrow) in zip(xs, cells):
             draw.rounded_rectangle((x, y, x + col_w, y + row_h), 8, fill=CELL[state])
-            label = fit(text + (f" {arrow}" if arrow else ""), cell, col_w - 10)
-            draw.text((x + col_w / 2, y + row_h / 2), label, fill=TEXT, font=cell, anchor="mm")
+            label = text + (f" {arrow}" if arrow else "")
+            cell_font = _shrink(label, col_w - 10)
+            draw.text((x + col_w / 2, y + row_h / 2), fit(label, cell_font, col_w - 10), fill=TEXT, font=cell_font,
+                      anchor="mm")
     if not rows and empty:
-        draw.text((SIZE / 2, PIC_H / 2), empty, fill=DIM, font=font(34), anchor="mm")
+        draw.text(((m + right) / 2, PIC_H / 2), empty, fill=DIM, font=font(34), anchor="mm")
+    if inset is not None:
+        x = SIZE - m - PEEK
+        draw.text((x + PEEK / 2, 26), "设定图局部", fill=DIM, font=head, anchor="mm")
+        out.paste(inset.convert("RGB").resize((PEEK, PEEK), Image.Resampling.LANCZOS), (x, 46))
+        draw.rectangle((x - 1, 45, x + PEEK, 46 + PEEK), outline=MARK, width=2)
     out.info["grid"] = None
     return out
+
+
+def _shrink(text: str, width: float) -> ImageFont.FreeTypeFont:
+    """表格里的字放不下就缩小一号，最小 17 号，还放不下再由 fit 截断。"""
+    for size in (26, 23, 20, 17):
+        if font(size).getlength(text) <= width:
+            break
+    return font(size)
+
+
+def peek(img: Image.Image) -> Image.Image:
+    """从 load(contain=True) 的九宫格里随机切一格有内容的（这一格五分之一以上不是空白），给盲猜萝卜放在表旁边。"""
+    x0, x1 = img.info["grid"]
+    fill = img.info.get("fill") or [1.0] * 9
+    i = random.choice([i for i in range(9) if fill[i] >= 0.2] or [max(range(9), key=fill.__getitem__)])
+    row, col = divmod(i, 3)
+    w = x1 - x0
+    return img.crop((x0 + round(w * col / 3), round(PIC_H * row / 3), x0 + round(w * (col + 1) / 3), round(PIC_H * (row + 1) / 3)))
 
 
 def music(clips: tuple, shown: int, label: str) -> Image.Image:
@@ -283,11 +311,12 @@ def _contain(img: Image.Image) -> Image.Image:
     x0 = (SIZE - PIC_H) // 2
     out.paste(board, (x0, 0))
     out.info["grid"] = (x0, x0 + PIC_H)
-    out.info["empty"] = set()
+    out.info["empty"], out.info["fill"] = set(), []  # fill 是每一格有内容的比例，peek 用
     for i in range(9):
         row, col = divmod(i, 3)
         cell = alpha.crop([round(PIC_H * k / 3) for k in (col, row, col + 1, row + 1)])
-        if sum(cell.histogram()[32:]) < cell.width * cell.height * 0.03:
+        out.info["fill"].append(sum(cell.histogram()[32:]) / (cell.width * cell.height))
+        if out.info["fill"][-1] < 0.03:
             out.info["empty"].add(i)
     return out
 

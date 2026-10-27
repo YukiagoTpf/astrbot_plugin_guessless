@@ -61,10 +61,11 @@ class Round:
     hint_wait_sent: float = -1.0  # 已对哪次揭开后的冷却发过「等一下」，每个冷却窗口只回一次
     timer: asyncio.Task | None = None
     paid: str = ""  # 这道题扣的是每小时额度（hourly）还是管理员加的题（bonus），没出成时退回去
-    wrong: dict = field(default_factory=dict)  # 用户 -> 猜错过的答案（Bank.match 的键），每人最多 max_guesses 个
+    wrong: dict = field(default_factory=dict)  # 用户 -> 猜错过的答案（Bank.match 的键），每人最多 _limit 个
     # 有反馈的题型（地点类、盲猜宝可梦）本题猜错过的：{"key", "title", "km" 或 "row"}，再猜一次不扣次数
     history: list = field(default_factory=list)
     pcm: bytes = b""  # 听歌猜番：解码好的音频，见 audio.decode
+    peek: object = None  # 盲猜萝卜：对比表旁边放的一格设定图，整道题不变
     song: str = ""  # 听歌猜番：答案卡上写的歌名和歌手
 
     def left(self) -> int:
@@ -306,7 +307,7 @@ class GuessPlugin(Star):
 
         uid, cat = event.get_sender_id(), rnd.category
         wrong = rnd.wrong.setdefault(uid, set())
-        limit = self.config.get("max_guesses", 5)
+        limit = self._limit(cat)
         if limit and len(wrong) >= limit:
             return  # 次数用完了，说对了也不算
         key, item = self.bank.match(cat, text, prefer=rnd.key)
@@ -407,8 +408,10 @@ class GuessPlugin(Star):
             clues = {k: v for k, v in entry["hints"]}
             rnd.hints = [[k, clues[k]] for k in clue_keys if clues.get(k)]
             rnd.shown = 0
-            rnd.image = cards.compare_table(name, columns, [], say(f"{cat}_empty"))
             rnd.reveal = cards.load(await self.bank.image(entry), contain=True)
+            if cat == "mechadle":  # 高达资料列多，只看表太难，旁边放一格设定图，不会揭开
+                rnd.peek = cards.peek(rnd.reveal)
+            rnd.image = cards.compare_table(name, columns, [], say(f"{cat}_empty"), rnd.peek)
         elif cat == "anisong":
             # OP 比 ED 好认，抽中的概率翻倍
             theme = random.choices(entry["themes"], [2 if t["type"] == "OP" else 1 for t in entry["themes"]])[0]
@@ -502,8 +505,14 @@ class GuessPlugin(Star):
             return len(audio.CLIPS)
         return len(rnd.hints)
 
+    def _limit(self, cat: str) -> int:
+        """每人每题最多猜几次，0 不限。盲猜萝卜要多猜几台才推得出来，单独设。"""
+        if cat == "mechadle":
+            return self.config.get("mechadle_max_guesses", 10)
+        return self.config.get("max_guesses", 5)
+
     def _card(self, rnd: Round, image, status: str, hints: list) -> list:
-        limit = self.config.get("max_guesses", 5)
+        limit = self._limit(rnd.category)
         tries = say("tries", limit=limit) if limit else say("tries_free")
         note = f"card_note_{rnd.category}" if f"card_note_{rnd.category}" in LINES else "card_note"
         revealed = set(rnd.order[: rnd.shown]) if rnd.category in GRID else None
@@ -529,7 +538,7 @@ class GuessPlugin(Star):
         if cat in BLIND and (attrs := item.get("attrs")):
             name, columns, _, row = BLIND[cat]
             rnd.history.insert(0, {"key": key, "title": item["title"], "row": row(attrs, rnd.entry["attrs"])})
-            rnd.image = cards.compare_table(name, columns, [(h["title"], h["row"]) for h in rnd.history])
+            rnd.image = cards.compare_table(name, columns, [(h["title"], h["row"]) for h in rnd.history], inset=rnd.peek)
             return say("blind_wrong", place=item["title"]), self._question(rnd)[0]
         spot = rnd.entry.get("spot")
         if "points" not in item or not spot:

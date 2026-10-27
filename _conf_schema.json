@@ -22,6 +22,12 @@
     "default": 5,
     "hint": "只有说出某道题的答案（地点类是任意国家 / 都道府县）才算一次，闲聊和重复猜的不算；用完后说对了也不算。0 不限"
   },
+  "mechadle_max_guesses": {
+    "description": "盲猜萝卜每人每题最多猜几次",
+    "type": "int",
+    "default": 10,
+    "hint": "对比的资料多、要多猜几台才推得出来，比其他题型多。0 不限"
+  },
   "hourly_limit": {
     "description": "每小时最多开几道题",
     "type": "int",
