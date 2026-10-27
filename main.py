@@ -337,7 +337,10 @@ class GuessPlugin(Star):
             yield event.plain_result(say("paused"))
             return
 
+        # 盲猜宝可梦要一只只推，两分钟不够
         seconds = self.config.get("round_seconds", 120)
+        if cat == "pokedle":
+            seconds = self.config.get("pokedle_round_seconds", 300)
         rnd.cands = candidates(rnd.entry["names"])
         rnd.deadline = time.monotonic() + seconds
         rnd.timer = asyncio.create_task(self._expire(gid, rnd, seconds))
