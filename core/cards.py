@@ -1,4 +1,7 @@
-"""出题卡片：正方形，中间 16:9 是图（九宫格，未揭开的格子盖色块），上下黑边写标题和提示。"""
+"""出题卡片：正方形，中间 16:9 是图（九宫格，未揭开的格子盖色块），上下黑边写标题和提示。
+
+图区还有几种不分格的：街景三联、国家剪影、猜国家猜错时的世界地图、盲猜宝可梦的对比表、听歌猜番的进度条。
+"""
 
 import base64
 import io
@@ -7,6 +10,8 @@ import random
 from functools import cache
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+
+from .entries import POKEDLE_COLUMNS
 
 SIZE = 1080
 PIC_H = 608  # 16:9
@@ -30,6 +35,11 @@ MAP_FILL = (236, 238, 242)
 MAP_LAND = (74, 80, 94)
 MAP_PAD = 0.35  # 答案卡画邻国时，题目国家四周各留出它自身尺寸的这么多
 MAP_MARGIN = 36  # 出题只画剪影时，剪影离图区边缘的像素
+WORLD_LAT = (84, -58)  # 世界地图的纬度范围，南极洲不画
+# 猜国家猜错时按两国中心距离上色：越近越红，(公里, 颜色) 之间线性插值
+HEAT = ((0, (200, 36, 36)), (1000, (232, 86, 44)), (2500, (240, 146, 54)), (5000, (244, 204, 96)), (10000, (240, 232, 204)))
+# 盲猜宝可梦对比表格子的颜色：一致、接近、不符
+CELL = {"hit": (56, 142, 60), "near": (196, 146, 32), "miss": (150, 54, 54)}
 # AstrBot 镜像自带 Noto Sans CJK；ttc 里按名字找简中字形
 FONT_DIR = "/usr/share/fonts/opentype/noto"
 
@@ -138,6 +148,106 @@ def _neighbors(world: dict, target: str, project, lons: tuple, lats: tuple, ss: 
     return big
 
 
+def heat(km: int) -> tuple:
+    for (d0, c0), (d1, c1) in zip(HEAT, HEAT[1:]):
+        if km <= d1:
+            t = (km - d0) / (d1 - d0)
+            return tuple(round(a + (b - a) * t) for a, b in zip(c0, c1))
+    return HEAT[-1][1]
+
+
+class WorldMap:
+    """猜国家猜错时发的世界地图：等距圆柱投影，猜过的国家按 heat 上色，左下角放题目的剪影。
+
+    world 同 load_outline。国家编号图（画法同 _neighbors）和国界只在第一次用时画一次，之后每次只换颜色。
+    """
+
+    def __init__(self, world: dict):
+        ss, k = 2, SIZE / 360
+        self.size = (SIZE * ss, round((WORLD_LAT[0] - WORLD_LAT[1]) * k) * ss)
+        self.ids = Image.new("L", self.size, 0)
+        draw = ImageDraw.Draw(self.ids)
+        areas = {
+            name: sum((max(x for x, _ in r) - min(x for x, _ in r)) * (max(y for _, y in r) - min(y for _, y in r))
+                      for hole, r in rings if not hole)
+            for name, rings in world.items()
+        }
+        self.index = {}
+        for n, name in enumerate(sorted(world, key=areas.get, reverse=True), 1):
+            self.index[name] = n
+            for hole, ring in sorted(world[name], key=lambda r: r[0]):
+                draw.polygon([((x + 180) * k * ss, (WORLD_LAT[0] - y) * k * ss) for x, y in ring], fill=0 if hole else n)
+        wd, ht = self.size
+        right = Image.new("L", self.size, 0)
+        right.paste(ImageChops.difference(self.ids.crop((0, 0, wd - 1, ht)), self.ids.crop((1, 0, wd, ht))), (0, 0))
+        down = Image.new("L", self.size, 0)
+        down.paste(ImageChops.difference(self.ids.crop((0, 0, wd, ht - 1)), self.ids.crop((0, 1, wd, ht))), (0, 0))
+        self.edges = ImageChops.lighter(right, down).point(lambda v: 255 if v else 0).filter(ImageFilter.MaxFilter(3))
+        self.base = Image.new("RGB", self.size, MAP_BG)
+        self.base.paste(MAP_LAND, mask=self.ids.point(lambda v: 255 if v else 0))
+
+    def render(self, colors: dict, inset: Image.Image | None = None) -> Image.Image:
+        """colors 是 {组名: 颜色}；inset 是题目的剪影图（load_outline 出题用的那张）。"""
+        big = self.base.copy()
+        for name, color in colors.items():
+            if n := self.index.get(name):
+                big.paste(color, mask=self.ids.point(lambda v, n=n: 255 if v == n else 0))
+        big.paste(MAP_BG, mask=self.edges)
+        out = Image.new("RGB", (SIZE, PIC_H), MAP_BG)
+        world = big.resize((SIZE, self.size[1] // 2), Image.Resampling.LANCZOS)
+        out.paste(world, (0, (PIC_H - world.height) // 2))
+        if inset is not None:
+            w, h = SIZE // 4, PIC_H // 4
+            box = (12, PIC_H - h - 12)
+            out.paste(inset.resize((w, h), Image.Resampling.LANCZOS), box)
+            ImageDraw.Draw(out).rectangle((box[0] - 1, box[1] - 1, box[0] + w, box[1] + h), outline=MARK, width=2)
+        out.info["grid"] = None
+        return out
+
+
+def pokedle_table(rows: list, empty: str = "") -> Image.Image:
+    """盲猜宝可梦的对比表：rows 是 [(宝可梦名, entries.pokedle_row 的结果), ...]，新猜的在上面，最多 9 行。
+    还没人猜时表下写 empty。"""
+    out = Image.new("RGB", (SIZE, PIC_H), MAP_BG)
+    draw = ImageDraw.Draw(out)
+    head, cell = font(24), font(26)
+    m, gap, name_w, row_h = 16, 6, 190, 56
+    col_w = (SIZE - m * 2 - name_w - gap * len(POKEDLE_COLUMNS)) / len(POKEDLE_COLUMNS)
+    xs = [m + name_w + gap + i * (col_w + gap) for i in range(len(POKEDLE_COLUMNS))]
+    draw.text((m + 8, 26), "宝可梦", fill=DIM, font=head, anchor="lm")
+    for x, title in zip(xs, POKEDLE_COLUMNS):
+        draw.text((x + col_w / 2, 26), title, fill=DIM, font=head, anchor="mm")
+    for i, (name, cells) in enumerate(rows[:9]):
+        y = 46 + i * (row_h + gap)
+        draw.rounded_rectangle((m, y, m + name_w, y + row_h), 8, fill=COVER)
+        draw.text((m + 12, y + row_h / 2), fit(name, cell, name_w - 20), fill=TEXT, font=cell, anchor="lm")
+        for x, (text, state, arrow) in zip(xs, cells):
+            draw.rounded_rectangle((x, y, x + col_w, y + row_h), 8, fill=CELL[state])
+            label = fit(text + (f" {arrow}" if arrow else ""), cell, col_w - 10)
+            draw.text((x + col_w / 2, y + row_h / 2), label, fill=TEXT, font=cell, anchor="mm")
+    if not rows and empty:
+        draw.text((SIZE / 2, PIC_H / 2), empty, fill=DIM, font=font(34), anchor="mm")
+    out.info["grid"] = None
+    return out
+
+
+def music(clips: tuple, shown: int, label: str) -> Image.Image:
+    """听歌猜番的图区：一排进度条（长短按每段秒数），已经放过的点亮，下面写这是第几段。"""
+    out = Image.new("RGB", (SIZE, PIC_H), MAP_BG)
+    draw = ImageDraw.Draw(out)
+    draw.text((SIZE / 2, PIC_H / 2 - 120), "♪", fill=KEY, font=font(140, bold=True), anchor="mm")
+    m, gap, h = 120, 10, 26
+    unit = (SIZE - m * 2 - gap * (len(clips) - 1)) / sum(clips)
+    x, y = m, PIC_H / 2 + 40
+    for i, sec in enumerate(clips):
+        w = sec * unit
+        draw.rounded_rectangle((x, y, x + w, y + h), 6, fill=KEY if i < shown else COVER)
+        x += w + gap
+    draw.text((SIZE / 2, y + h + 60), label, fill=TEXT, font=font(36), anchor="mm")
+    out.info["grid"] = None
+    return out
+
+
 def _cover_fit(img: Image.Image, width: int, height: int) -> Image.Image:
     """按目标比例居中裁切再缩放，不拉伸。"""
     w, h = img.size
@@ -196,7 +306,7 @@ def render(img: Image.Image, revealed: set[int] | None, title: str, status: str,
     """返回 base64 JPEG。revealed 是已揭开的格子（按行从 0 编到 8），None 表示整图公开、不画格线。
 
     提示按固定格位排：上边黑边 2 行、下边 3 行，每行两条，第 n 条提示的位置不随揭开变化；
-    最后一个格位放 note。
+    最后一个格位放 note。每条提示是 [名目, 内容]，或者 [名目, 内容, 色块颜色]（见 _hint）。
     """
     out = Image.new("RGB", (SIZE, SIZE), BG)
     out.paste(img, (0, BAR))
@@ -212,8 +322,8 @@ def render(img: Image.Image, revealed: set[int] | None, title: str, status: str,
 
     ys = [100 + i * ROW_H for i in range(TOP_ROWS)] + [BAR + PIC_H + 30 + i * ROW_H for i in range(BOTTOM_ROWS)]
     slots = [(PAD + col * (HALF + COL_GAP), y) for y in ys for col in range(2)]
-    for (x, y), (key, value) in zip(slots, hints):
-        _hint(draw, x, y, key, value)
+    for (x, y), hint in zip(slots, hints):
+        _hint(draw, x, y, *hint)
     if note:
         x, y = slots[-1]
         draw.text((x + HALF, y), fit(note, font(26), HALF), fill=DIM, font=font(26), anchor="rt")
@@ -236,11 +346,17 @@ def _cover(draw: ImageDraw.ImageDraw, revealed: set[int], x0: int, x1: int) -> N
         draw.rectangle((x0, y - GAP // 2, x1 - 1, y + GAP // 2 - 1), fill=BG)
 
 
-def _hint(draw: ImageDraw.ImageDraw, x: float, y: float, key: str, value: str) -> None:
+def _hint(draw: ImageDraw.ImageDraw, x: float, y: float, key: str, value: str, swatch: tuple | None = None) -> None:
+    """一条提示：黄色的名目加白色的内容；swatch 是名目前面的小色块（世界地图上这个国家的颜色）。"""
     key_font, value_font = font(30, bold=True), font(30)
+    end = x + HALF
+    if swatch:
+        draw.rounded_rectangle((x, y + 6, x + 24, y + 30), 5, fill=swatch)
+        x += 36
+    key = fit(key, key_font, end - x - 120)
     draw.text((x, y), key, fill=KEY, font=key_font, anchor="lt")
     vx = x + key_font.getlength(key) + 14
-    draw.text((vx, y), fit(value, value_font, x + HALF - vx), fill=TEXT, font=value_font, anchor="lt")
+    draw.text((vx, y), fit(value, value_font, end - vx), fill=TEXT, font=value_font, anchor="lt")
 
 
 def encode(img: Image.Image) -> str:

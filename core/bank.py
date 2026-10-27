@@ -2,6 +2,7 @@
 
 动画取 Bangumi 最热门的作品，游戏从 Metacritic 高分游戏里按热度和评分分大众 / 小众两档，宝可梦取 PokeAPI 全图鉴，
 地点和日本地点是 Google 街景随机取景，国家是 Natural Earth 轮廓。找不到图的作品不进题库。
+听歌猜番是猜动画题库里在 AnimeThemes 有 OP / ED 的作品；盲猜宝可梦直接用宝可梦题库。
 题库、各数据源的查询结果和图片都缓存在插件数据目录，出题时只有首次用到的图片和街景需要联网。
 """
 
@@ -16,11 +17,12 @@ import aiohttp
 
 from astrbot.api import logger
 
-from . import geo
+from . import audio, cards, geo
 from .answer import candidates, find, norm
 from .entries import (
     ANIME_KINDS,
     GAME_INFO,
+    POKEMON_VERSION,
     WORK_HINTS_VERSION,
     TagStats,
     aliases,
@@ -41,11 +43,13 @@ from .entries import (
     split_tiers,
 )
 from .sources import (
+    ANIMETHEMES,
     Anilist,
     Bilibili,
     HttpError,
     Igdb,
     anilist_names,
+    anime_themes,
     dedupe,
     igdb_media,
     pokemon_species,
@@ -56,6 +60,7 @@ from .sources import (
 from .store import load_json, save_json
 
 BANK_VERSION = 4  # 题目格式或选题规则变了就加一，旧题库会自动重建
+ANISONG_VERSION = "themes-v1"  # 听歌猜番的选曲规则（sources.anime_themes）改了就换个名字
 BGM_API = "https://api.bgm.tv/v0"
 BGM_UA = "YukiagoTpf/astrbot_plugin_guessless"
 # Metacritic 评分榜是网页前端用的非官方接口，目前不用 key
@@ -73,7 +78,9 @@ class Bank:
         self.img_dir = data_dir / "images"
         self.img_dir.mkdir(parents=True, exist_ok=True)
         self.config = config
-        self.entries: dict[str, list] = {"anime": [], "game": [], "pokemon": [], "geo": [], "country": [], "jpgeo": []}
+        self.entries: dict[str, list] = {
+            "anime": [], "anisong": [], "game": [], "pokemon": [], "pokedle": [], "geo": [], "country": [], "jpgeo": [],
+        }
         self.meta: dict[str, dict] = {cat: {} for cat in self.entries}
         # 地点类可以猜的国家 / 都道府县 {代码: {"title", "names", "points"}}，没街景、不出题的也在里面；
         # points 是报距离用的位置，见 geo.distance
@@ -81,6 +88,7 @@ class Bank:
         self._index: dict[str, tuple] = {}
         self.status = {cat: "等待构建" for cat in self.entries}
         self._shapes: dict = {}
+        self._world: cards.WorldMap | None = None
         self._task: asyncio.Task | None = None
         self._session: aiohttp.ClientSession | None = None
 
@@ -92,6 +100,7 @@ class Bank:
                 self.places[cat] = data.pop("places", {})
                 self.meta[cat] = data
                 self.status[cat] = f"{len(self.entries[cat])} 题"
+        self._derive_pokedle()
         self._task = asyncio.create_task(self._refresh_loop())
 
     async def close(self) -> None:
@@ -109,19 +118,20 @@ class Bank:
         pool = [e for e in self.entries[cat] if e.get("tier", "main") == tier] or self.entries[cat]
         return random.choice([e for e in pool if e.get("group", e["id"]) not in exclude] or pool)
 
-    def match(self, cat: str, text: str, prefer: str = "") -> str | None:
-        """群友这句话猜的是哪个答案：地点类返回国家 / 都道府县代码（按 places 认），其他题型返回题目的组
-        （按题库里所有题的答案认）。不是任何一个答案（闲聊）返回 None。"""
-        src = self.places[cat] or self.entries[cat]
-        cached = self._index.get(cat)
+    def match(self, cat: str, text: str, prefer: str = "") -> tuple[str | None, dict | None]:
+        """群友这句话猜的是哪个答案，返回 (键, 资料)：地点类是国家 / 都道府县代码和 places 里那一项，
+        其他题型是题目的组和题目条目（按题库里所有题的答案认）。不是任何一个答案（闲聊）返回 (None, None)。
+        听歌猜番按整个猜动画题库认，题库外的番说了也不算一次。"""
+        src_cat = "anime" if cat == "anisong" else cat
+        src = self.places[src_cat] or self.entries[src_cat]
+        cached = self._index.get(src_cat)
         # 首次构建时题库边建边开放，列表是同一个、长度在变
         if not cached or cached[0] is not src or cached[1] != len(src):
-            if self.places[cat]:
-                items = [(k, p["names"]) for k, p in src.items()]
-            else:
-                items = [(e.get("group", e["id"]), e["names"]) for e in src]
-            cached = self._index[cat] = (src, len(src), [(k, candidates(names)) for k, names in items])
-        return find(text, cached[2], prefer)
+            items = list(src.items()) if self.places[src_cat] else [(e.get("group", e["id"]), e) for e in src]
+            index = [(k, candidates(item["names"])) for k, item in items]
+            cached = self._index[src_cat] = (src, len(src), index, dict(items))
+        key = find(text, cached[2], prefer)
+        return key, cached[3].get(key)
 
     async def image(self, entry: dict) -> bytes:
         """每次从这道题的几张截图里随机挑一张。"""
@@ -144,18 +154,38 @@ class Bank:
             sv.image(entry["pano"]["id"], (heading + 120 * i) % 360, size) for i, size in enumerate(geo.PANELS)
         )))
 
+    async def audio(self, url: str) -> bytes:
+        """听歌猜番的整首音频（几 MB 的 ogg），出题时现下，不存盘。"""
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with self._http().get(url, headers={"User-Agent": BGM_UA}, timeout=timeout) as r:
+            r.raise_for_status()
+            return await r.read()
+
     def outline(self, entry: dict) -> tuple[list, dict, str]:
         """(国家轮廓, 邻国底图, 题目国家在底图里的组名)，参数顺序同 cards.load_outline。"""
+        shapes = self._load_shapes()
+        group = shapes["iso"][entry["iso"]]
+        return geo.outline(shapes["groups"][group]), shapes["groups"], group
+
+    def world_map(self) -> tuple[cards.WorldMap, dict]:
+        """(世界地图, {国家代码: 组名})，地图第一次用时才画。"""
+        shapes = self._load_shapes()
+        if self._world is None:
+            self._world = cards.WorldMap(shapes["groups"])
+        return self._world, shapes["iso"]
+
+    def _load_shapes(self) -> dict:
         if not self._shapes:
             self._shapes = load_json(self.dir / "country_shapes.json") or {}
-        group = self._shapes["iso"][entry["iso"]]
-        return geo.outline(self._shapes["groups"][group]), self._shapes["groups"], group
+        return self._shapes
 
     def _size(self, cat: str) -> int:
         return self.config.get(f"{cat}_pool_size", 1000 if cat == "anime" else 500)
 
     def _media_on(self, cat: str) -> bool:
-        """动画、宝可梦、国家轮廓免 key，游戏要 IGDB 的 key，地点要 Google 街景的 key。"""
+        """动画、宝可梦、国家轮廓免 key，游戏要 IGDB 的 key，地点要 Google 街景的 key，听歌猜番要 ffmpeg。"""
+        if cat == "anisong":
+            return audio.available()
         if cat in ("geo", "jpgeo"):
             return bool(str(self.config.get("google_maps_key") or "").strip())
         if cat != "game":
@@ -168,7 +198,9 @@ class Bank:
         if cat == "anime":
             return [self._size("anime"), WORK_HINTS_VERSION]
         if cat == "pokemon":
-            return [c.get("pokemon_main_gen", 4)]
+            return [c.get("pokemon_main_gen", 4), POKEMON_VERSION]
+        if cat == "anisong":  # 猜动画题库重建了，这边跟着换
+            return [ANISONG_VERSION, self.meta["anime"].get("built_at")]
         if cat == "geo":
             return [geo.PANOS_PER_COUNTRY, geo.MIN_PANOS, sorted(geo.EXCLUDE), geo.SAMPLING, geo.HINTS_VERSION]
         if cat == "country":
@@ -202,12 +234,21 @@ class Bank:
         save_json(self.dir / f"bank_{cat}.json", {**self.meta[cat], "places": self.places[cat], "entries": entries})
         self.status[cat] = f"{len(entries)} 题"
         logger.info(f"[guess] {cat} bank built: {len(entries)} entries")
+        if cat == "pokemon":
+            self._derive_pokedle()
+
+    def _derive_pokedle(self) -> None:
+        """盲猜宝可梦不单独建题库，用宝可梦题库里带对比属性的条目（旧题库没有，重建完才有）。"""
+        self.entries["pokedle"] = [e for e in self.entries["pokemon"] if "attrs" in e]
+        if self.entries["pokedle"]:
+            self.status["pokedle"] = f"{len(self.entries['pokedle'])} 题"
 
     async def _refresh_loop(self) -> None:
         # 游戏有缓存时一两分钟就建完，动画要等 B 站慢慢搜，放后面
         builders = {
             "game": self._build_games, "pokemon": self._build_pokemon, "country": self._build_country,
             "geo": self._build_geo, "jpgeo": self._build_jpgeo, "anime": self._build_anime,
+            "anisong": self._build_anisong,
         }
         while True:
             for cat, build in builders.items():
@@ -313,6 +354,81 @@ class Bank:
             save_json(cache_path, cache)
             save_json(chars_path, chars)
         self._commit("anime", entries, complete=complete)
+
+    async def _build_anisong(self) -> None:
+        """猜动画题库里能在 AnimeThemes 找到 OP / ED 音频的作品。结果缓存在 media_anisong.json，只查新进题库的。"""
+        if not self._media_on("anisong"):
+            self.status["anisong"] = "AstrBot 容器里没有 ffmpeg，放不了音频"
+            return
+        anime = self.entries["anime"]
+        if not anime or not self.meta["anime"]:
+            self.status["anisong"] = "等猜动画的题库建好"
+            return
+        path = self.dir / "media_anisong.json"
+        cache = load_json(path) or {}
+        if todo := [e["id"].removeprefix("bgm-") for e in anime if e["id"].removeprefix("bgm-") not in cache]:
+            ids, failed = await self._anime_ids(todo)
+            themes = await self._anime_themes(ids)
+            # 查不到 ID 的下次再查；查到 ID、AnimeThemes 上没有的记成空，不再重复查
+            cache.update({sid: themes.get(sid, []) for sid in todo if sid not in failed})
+            save_json(path, cache)
+        entries = [{**e, "themes": cache[sid]} for e in anime if cache.get(sid := e["id"].removeprefix("bgm-"))]
+        self._commit("anisong", entries)
+
+    async def _anime_ids(self, sids: list[str]) -> tuple[dict, set]:
+        """Bangumi ID → {"AniList": ID, "MyAnimeList": ID}。先查 Wikidata，没有的拿 Bangumi 条目按原名去 AniList 搜。
+        返回 (ID 表, 这次没查成的 Bangumi ID)。"""
+        wd = await self._wikidata("anisong", "P5732", sids, {"anilist": "P8729", "mal": "P4086"})
+        ids = {}
+        for sid, info in wd.items():
+            got = {site: str(info[k]) for site, k in (("AniList", "anilist"), ("MyAnimeList", "mal"))
+                   if str(info.get(k) or "").isdigit()}
+            if got:
+                ids[sid] = got
+        rest, subjects, failed = [sid for sid in sids if sid not in ids], [], set()
+        for i, sid in enumerate(rest):
+            self.status["anisong"] = f"正在用 AniList 补 ID {i}/{len(rest)}"
+            try:
+                subjects.append(await self._get(f"{BGM_API}/subjects/{sid}"))
+            except Exception as e:
+                logger.warning(f"[guess] bangumi subject {sid} failed: {e}")
+                failed.add(sid)
+            await asyncio.sleep(0.5)
+        try:
+            found = await Anilist(self._http()).match(subjects, {})
+        except Exception as e:
+            logger.warning(f"[guess] anilist search for anisong failed: {e}")
+            return ids, failed | {str(s["id"]) for s in subjects}
+        ids.update({sid: {"AniList": str(m["id"])} for sid, m in found.items()})
+        return ids, failed
+
+    async def _anime_themes(self, ids: dict) -> dict[str, list]:
+        """按 AniList、MAL 的 ID 各批量查一遍 AnimeThemes：{Bangumi ID: anime_themes 的结果}。"""
+        out: dict[str, list] = {}
+        for site in ("AniList", "MyAnimeList"):
+            rev = {v[site]: sid for sid, v in ids.items() if site in v and sid not in out}
+            keys = list(rev)
+            for i in range(0, len(keys), 50):
+                self.status["anisong"] = f"正在查 AnimeThemes（{site} {i}/{len(keys)}）"
+                params = {
+                    "filter[has]": "resources", "filter[site]": site, "filter[external_id]": ",".join(keys[i : i + 50]),
+                    "include": "resources,animethemes.animethemeentries.videos.audio,animethemes.song.artists",
+                    "page[size]": "100",
+                }
+                try:
+                    data = await self._get(ANIMETHEMES, params=params)
+                except Exception as e:
+                    logger.warning(f"[guess] animethemes lookup failed: {e}")
+                    continue
+                for a in data.get("anime") or []:
+                    ext = next((
+                        str(r["external_id"]) for r in a.get("resources") or []
+                        if r.get("site") == site and str(r.get("external_id")) in rev
+                    ), None)
+                    if ext and (themes := anime_themes(a)):
+                        out[rev[ext]] = themes
+                await asyncio.sleep(1)
+        return out
 
     async def _build_games(self) -> None:
         """大众题：MC 分过线的游戏里按热度（IGDB 评分人数）取前 N；小众题：剩下的按 MC 分取前 M。

@@ -55,6 +55,10 @@ PLATFORMS = {
     "Nintendo Switch": "Switch", "Nintendo Switch 2": "Switch 2", "Nintendo 64": "N64",
     "GameCube": "NGC", "Game Boy Advance": "GBA",
 }
+POKEMON_VERSION = "attrs-v1"  # 宝可梦条目格式（attrs）改了就换个名字，宝可梦题库重建
+# 盲猜宝可梦对比表的列；「提示」只给表里比不出来的线索
+POKEDLE_COLUMNS = ("世代", "属性1", "属性2", "颜色", "进化阶段", "身高", "体重")
+POKEDLE_CLUES = ("特性", "分类", "进化", "首字")
 GENERATIONS = {1: "一（关都）", 2: "二（城都）", 3: "三（丰缘）", 4: "四（神奥）", 5: "五（合众）",
                6: "六（卡洛斯）", 7: "七（阿罗拉）", 8: "八（伽勒尔）", 9: "九（帕底亚）"}
 _BRACKETED = re.compile(r"[（(「『【\[][^（(「『【\[）)」』】\]]*[）)」』】\]]")
@@ -344,6 +348,10 @@ def pokemon_entry(s: dict, by_id: dict, wd: dict | None) -> dict | None:
         ["图鉴编号", f"#{s['id']:04d}"],
     ]
     other = [(names.get(k) or {}).get("name") for k in ("zh-hant", "ja", "ja-hrkt", "ja-roma")]
+    attrs = {
+        "gen": s["generation_id"], "types": [t for t in types if t], "color": color, "stage": stage,
+        "height": (height or 0) / 10, "weight": (weight or 0) / 10,
+    }
     return finish_entry({
         "id": f"pm-{s['id']}",
         "title": cn,
@@ -353,7 +361,38 @@ def pokemon_entry(s: dict, by_id: dict, wd: dict | None) -> dict | None:
         "images": [POKEMON_ART.format(s["id"])],
         "fit": "contain",  # 透明底立绘，整张缩进正方形，不裁
         "hints": hints,
+        "attrs": attrs,  # 盲猜宝可梦对比用，见 pokedle_row
     })
+
+
+def pokedle_row(guess: dict, answer: dict) -> list[list[str]]:
+    """盲猜宝可梦对比表的一行，按 POKEDLE_COLUMNS：每格 [显示的值, 结果, 箭头]。
+    结果是 hit（一致）、near（接近；属性是答案有、但不在这一格）、miss（不符）；箭头指答案更大（↑）还是更小（↓）。"""
+
+    def num(x, y, text, close=False):
+        return [text, "hit", ""] if x == y else [text, "near" if close else "miss", "↑" if y > x else "↓"]
+
+    def near(x, y):  # 身高体重差 25% 以内算接近
+        return bool(x and y) and 0.8 <= x / y <= 1.25
+
+    def typ(i):
+        mine = guess["types"][i] if i < len(guess["types"]) else "无"
+        theirs = answer["types"][i] if i < len(answer["types"]) else "无"
+        if mine == theirs:
+            return [mine, "hit", ""]
+        return [mine, "near" if mine in answer["types"] else "miss", ""]
+
+    # 100 公斤以上截掉小数，不然加上箭头格子放不下
+    weight = int(guess["weight"]) if guess["weight"] >= 100 else f"{guess['weight']:g}"
+    return [
+        num(guess["gen"], answer["gen"], f"第{guess['gen']}代", abs(guess["gen"] - answer["gen"]) == 1),
+        typ(0),
+        typ(1),
+        [guess["color"], "hit" if guess["color"] == answer["color"] else "miss", ""],
+        num(guess["stage"], answer["stage"], f"{guess['stage']} 阶"),
+        num(guess["height"], answer["height"], f"{guess['height']:g}m", near(guess["height"], answer["height"])),
+        num(guess["weight"], answer["weight"], f"{weight}kg", near(guess["weight"], answer["weight"])),
+    ]
 
 
 def fmt_pop(pop: float) -> str:

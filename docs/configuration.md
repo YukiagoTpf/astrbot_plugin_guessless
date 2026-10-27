@@ -47,6 +47,10 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 
 卡片文字用 Noto Sans CJK（`/usr/share/fonts/opentype/noto`，AstrBot 官方 Docker 镜像自带）。找不到时退回 Pillow 默认字体，中文会显示成方块。
 
+## ffmpeg
+
+听歌猜番要用 ffmpeg 解码和切音频（AstrBot 官方 Docker 镜像自带）。找不到时这个题型不开放，`听歌猜番` 会回「题库还在搬砖（容器里没有 ffmpeg）」。语音发出去时由 NapCat 转成 QQ 的格式，NapCat 那边也要有 ffmpeg（官方镜像自带）。
+
 ## 数据目录
 
 插件数据都在 AstrBot 的 `data/plugin_data/astrbot_plugin_guessless/` 下：
@@ -54,7 +58,7 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | 文件 | 内容 |
 |---|---|
 | `bank_*.json` | 各题型的题库 |
-| `media_*.json`、`bgm_game_match.json`、`bgm_characters.json`、`geo_*.json`、`jp_panos.json`、`country_shapes.json` | 各数据源的查询缓存，删掉会在下次重建时重新查 |
+| `media_*.json`（含听歌猜番的 `media_anisong.json`）、`bgm_game_match.json`、`bgm_characters.json`、`geo_*.json`、`jp_panos.json`、`country_shapes.json` | 各数据源的查询缓存，删掉会在下次重建时重新查 |
 | `images/` | 题图缓存 |
 | `scores.json` | 排行榜 |
 | `paused.json` | 暂停中的群 |

@@ -1,4 +1,5 @@
-"""外部数据源：Wikidata（各地区译名、跨站 ID）、B 站 / AniList（动画）、IGDB / Steam（游戏）、PokeAPI（宝可梦）。"""
+"""外部数据源：Wikidata（各地区译名、跨站 ID）、B 站 / AniList（动画）、AnimeThemes（动画 OP / ED）、
+IGDB / Steam（游戏）、PokeAPI（宝可梦）。"""
 
 import asyncio
 import json
@@ -21,6 +22,8 @@ ANILIST = "https://graphql.anilist.co"
 ANILIST_FIELDS = "id title { romaji english native } synonyms bannerImage startDate { year } format"
 # Bangumi 的放送类型 → AniList 的 format，只靠年份匹配时用来排除 OVA、特别篇
 ANILIST_FORMATS = {"TV": {"TV", "TV_SHORT"}, "WEB": {"ONA", "TV", "TV_SHORT"}, "剧场版": {"MOVIE"}}
+# 免 key，限速每分钟 90 次；按 AniList / MAL 的 ID 查，音频是几 MB 的 ogg
+ANIMETHEMES = "https://api.animethemes.moe/anime"
 TWITCH_TOKEN = "https://id.twitch.tv/oauth2/token"
 IGDB_GAMES = "https://api.igdb.com/v4/games"
 IGDB_IMG = "https://images.igdb.com/igdb/image/upload/t_screenshot_huge/{}.jpg"
@@ -226,6 +229,28 @@ class Anilist:
 def anilist_names(m: dict) -> list[str]:
     t = m.get("title") or {}
     return dedupe([t.get("native"), t.get("romaji"), t.get("english"), *(m.get("synonyms") or [])])
+
+
+def anime_themes(anime: dict) -> list[dict]:
+    """AnimeThemes 一部动画的 OP / ED：[{"type", "seq", "song", "artists", "audio"}, ...]。
+    每首取第一个有音频、没标 NSFW 的版本；同一个音频文件挂在几首下面的只留一次。"""
+    out, seen = [], set()
+    for t in anime.get("animethemes") or []:
+        if t.get("type") not in ("OP", "ED"):
+            continue
+        audio = next((
+            v["audio"]["link"] for e in t.get("animethemeentries") or [] if not e.get("nsfw")
+            for v in e.get("videos") or [] if (v.get("audio") or {}).get("link")
+        ), None)
+        if not audio or audio in seen:
+            continue
+        seen.add(audio)
+        song = t.get("song") or {}
+        out.append({
+            "type": t["type"], "seq": t.get("sequence") or 0, "song": song.get("title") or "",
+            "artists": [a["name"] for a in song.get("artists") or []][:3], "audio": audio,
+        })
+    return out
 
 
 def _anilist_pick(media: list, s: dict) -> dict | None:
