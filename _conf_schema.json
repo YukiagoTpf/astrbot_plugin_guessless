@@ -10,6 +10,12 @@
     "default": 5,
     "hint": "防止几个人同时喊提示，一下揭开好几格"
   },
+  "max_guesses": {
+    "description": "每人每题最多猜几次",
+    "type": "int",
+    "default": 5,
+    "hint": "只有说出某道题的答案（地点类是任意国家 / 都道府县）才算一次，闲聊和重复猜的不算；用完后说对了也不算。0 不限"
+  },
   "hourly_limit": {
     "description": "每小时最多开几道题",
     "type": "int",

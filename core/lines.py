@@ -3,10 +3,25 @@
 import random
 
 LINES = {
-    "card_note": ["直接说答案 · 喊「提示」开下一格"],
-    "card_note_geo": ["直接说国家名 · 喊「提示」加一条线索"],
-    "card_note_country": ["直接说国家名 · 喊「提示」加一条线索"],
-    "card_note_jpgeo": ["直接说都道府县 · 喊「提示」加一条线索"],
+    # 卡片右下角，宽度只够十七八个字；{tries} 是 tries / tries_free
+    "card_note": ["说答案，{tries} · 喊「提示」开一格"],
+    "card_note_geo": ["说国家名，{tries} · 「提示」加线索"],
+    "card_note_country": ["说国家名，{tries} · 「提示」加线索"],
+    "card_note_jpgeo": ["说都道府县，{tries}·「提示」加线索"],
+    "tries": ["每人 {limit} 次"],
+    "tries_free": ["不限次数"],
+    # 地点类猜错报距离：{dist} 是 dist_*，猜国家是两国中心之间，猜地点、猜日本地点是你猜的地方离拍摄地最近的城镇
+    "guess_far": ["{place} 不对，{dist}", "不是 {place}，{dist}", "{place}？{dist}，再想想"],
+    "dist_geo": ["离拍摄地最近约 {km} 公里"],
+    "dist_jpgeo": ["离拍摄地最近约 {km} 公里"],
+    "dist_country": ["两国中心相距约 {km} 公里"],
+    "guess_repeat": ["{place} 刚才有人猜过了，{dist}，这次不算", "{place} 猜过了，{dist}，不扣次数"],
+    "guess_left": ["{name} 还能猜 {left} 次"],
+    "guess_used_up": [
+        "{name} 的 {limit} 次机会用完了，这道题看别人表演吧",
+        "{name} {limit} 次全猜错，这道题和你无缘了",
+        "{name} 的 {limit} 次用光了，接下来说什么都不算，安心看戏",
+    ],
     "hint_wait": [
         "急急急，{wait} 秒后再喊",
         "别急，格子又不会跑，{wait} 秒后再喊",

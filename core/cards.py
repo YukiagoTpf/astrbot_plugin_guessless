@@ -28,7 +28,8 @@ ART_PAD = 28
 MAP_BG = (28, 31, 38)  # 国家轮廓：深色海、浅色剪影、灰色邻国
 MAP_FILL = (236, 238, 242)
 MAP_LAND = (74, 80, 94)
-MAP_PAD = 0.35  # 有邻国底图时，题目国家四周各留出它自身尺寸的这么多
+MAP_PAD = 0.35  # 答案卡画邻国时，题目国家四周各留出它自身尺寸的这么多
+MAP_MARGIN = 36  # 出题只画剪影时，剪影离图区边缘的像素
 # AstrBot 镜像自带 Noto Sans CJK；ttc 里按名字找简中字形
 FONT_DIR = "/usr/share/fonts/opentype/noto"
 
@@ -69,11 +70,11 @@ def load_panels(images: list[bytes]) -> Image.Image:
     return out
 
 
-def load_outline(rings: list, world: dict, target: str) -> Image.Image:
+def load_outline(rings: list, world: dict | None = None, target: str = "") -> Image.Image:
     """猜国家：国家剪影居中，不画九宫格。rings 见 geo.outline()；按中心纬度压缩经度，近似等积，不至于高纬国家变胖。
 
-    world 是邻国底图 {组名: 轮廓}（geo.fetch_outlines 的 "groups"），target 是题目国家的组名：
-    四周留出一圈，邻国画成灰色，国与国之间留一道深色缝，题目国家整组（含图里的属地）画成剪影色。
+    出题只画剪影，铺满图区。答案卡给 world（邻国底图 {组名: 轮廓}，geo.fetch_outlines 的 "groups"）和
+    target（题目国家的组名）：四周留出一圈，邻国画成灰色，国与国之间留一道深色缝，题目国家整组（含图里的属地）画成剪影色。
     """
     outer = [pt for hole, ring in rings if not hole for pt in ring]
     lat0 = (min(p[1] for p in outer) + max(p[1] for p in outer)) / 2
@@ -81,8 +82,8 @@ def load_outline(rings: list, world: dict, target: str) -> Image.Image:
     xs, ys = [p[0] * k for p in outer], [-p[1] for p in outer]
     w, h = max(max(xs) - min(xs), 1e-6), max(max(ys) - min(ys), 1e-6)
     ss = 2  # 2 倍大小画再缩小，边缘平滑
-    pad = max(w, h) * MAP_PAD
-    scale = min(SIZE / (w + pad * 2), PIC_H / (h + pad * 2))
+    pad, margin = (max(w, h) * MAP_PAD, 0) if world else (0, MAP_MARGIN)
+    scale = min((SIZE - margin * 2) / (w + pad * 2), (PIC_H - margin * 2) / (h + pad * 2))
     ox = (SIZE - w * scale) / 2 - min(xs) * scale
     oy = (PIC_H - h * scale) / 2 - min(ys) * scale
 
@@ -91,7 +92,9 @@ def load_outline(rings: list, world: dict, target: str) -> Image.Image:
 
     lons = (-ox / scale / k, (SIZE - ox) / scale / k)
     lats = ((oy - PIC_H) / scale, oy / scale)
-    out = _neighbors(world, target, project, lons, lats, ss).resize((SIZE, PIC_H), Image.Resampling.LANCZOS)
+    # 只画剪影时当成只有它一个国家的底图
+    out = _neighbors(world or {target: rings}, target, project, lons, lats, ss)
+    out = out.resize((SIZE, PIC_H), Image.Resampling.LANCZOS)
     out.info["grid"] = None
     return out
 

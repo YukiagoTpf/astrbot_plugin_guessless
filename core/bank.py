@@ -17,7 +17,7 @@ import aiohttp
 from astrbot.api import logger
 
 from . import geo
-from .answer import norm
+from .answer import candidates, find, norm
 from .entries import (
     ANIME_KINDS,
     GAME_INFO,
@@ -37,6 +37,7 @@ from .entries import (
     pokemon_entry,
     popularity,
     pref_entry,
+    pref_names,
     split_tiers,
 )
 from .sources import (
@@ -74,6 +75,10 @@ class Bank:
         self.config = config
         self.entries: dict[str, list] = {"anime": [], "game": [], "pokemon": [], "geo": [], "country": [], "jpgeo": []}
         self.meta: dict[str, dict] = {cat: {} for cat in self.entries}
+        # 地点类可以猜的国家 / 都道府县 {代码: {"title", "names", "points"}}，没街景、不出题的也在里面；
+        # points 是报距离用的位置，见 geo.distance
+        self.places: dict[str, dict] = {cat: {} for cat in self.entries}
+        self._index: dict[str, tuple] = {}
         self.status = {cat: "等待构建" for cat in self.entries}
         self._shapes: dict = {}
         self._task: asyncio.Task | None = None
@@ -84,6 +89,7 @@ class Bank:
             data = load_json(self.dir / f"bank_{cat}.json")
             if data:
                 self.entries[cat] = data.pop("entries")
+                self.places[cat] = data.pop("places", {})
                 self.meta[cat] = data
                 self.status[cat] = f"{len(self.entries[cat])} 题"
         self._task = asyncio.create_task(self._refresh_loop())
@@ -102,6 +108,20 @@ class Bank:
         tier = "niche" if random.random() < self.config.get("niche_ratio", 0.2) else "main"
         pool = [e for e in self.entries[cat] if e.get("tier", "main") == tier] or self.entries[cat]
         return random.choice([e for e in pool if e.get("group", e["id"]) not in exclude] or pool)
+
+    def match(self, cat: str, text: str, prefer: str = "") -> str | None:
+        """群友这句话猜的是哪个答案：地点类返回国家 / 都道府县代码（按 places 认），其他题型返回题目的组
+        （按题库里所有题的答案认）。不是任何一个答案（闲聊）返回 None。"""
+        src = self.places[cat] or self.entries[cat]
+        cached = self._index.get(cat)
+        # 首次构建时题库边建边开放，列表是同一个、长度在变
+        if not cached or cached[0] is not src or cached[1] != len(src):
+            if self.places[cat]:
+                items = [(k, p["names"]) for k, p in src.items()]
+            else:
+                items = [(e.get("group", e["id"]), e["names"]) for e in src]
+            cached = self._index[cat] = (src, len(src), [(k, candidates(names)) for k, names in items])
+        return find(text, cached[2], prefer)
 
     async def image(self, entry: dict) -> bytes:
         """每次从这道题的几张截图里随机挑一张。"""
@@ -172,13 +192,14 @@ class Bank:
             return True
         return time.time() - meta.get("built_at", 0) > self.config.get("refresh_days", 7) * 86400
 
-    def _commit(self, cat: str, entries: list, media: bool = True, complete: bool = True) -> None:
+    def _commit(self, cat: str, entries: list, media: bool = True, complete: bool = True, places=None) -> None:
         self.entries[cat] = entries
+        self.places[cat] = places or {}
         self.meta[cat] = {
             "built_at": time.time(), "version": BANK_VERSION, "media": media, "complete": complete,
             "settings": self._settings(cat),
         }
-        save_json(self.dir / f"bank_{cat}.json", {**self.meta[cat], "entries": entries})
+        save_json(self.dir / f"bank_{cat}.json", {**self.meta[cat], "places": self.places[cat], "entries": entries})
         self.status[cat] = f"{len(entries)} 题"
         logger.info(f"[guess] {cat} bank built: {len(entries)} entries")
 
@@ -413,9 +434,9 @@ class Bank:
                 basics[cc] = b
         return [cc for cc in codes if cc in basics], basics
 
-    async def _sample_all(self, cat: str, cache_name: str, targets: list, make_entries) -> None:
+    async def _sample_all(self, cat: str, cache_name: str, targets: list, make_entries, places: dict) -> None:
         """猜地点、猜日本地点共用：targets 是 [(键, 候选城镇, accept, 个数)]，全景缓存在 cache_name，
-        找到不足 MIN_PANOS 个的每次重建再补找；make_entries(键, 全景列表) 生成题目。"""
+        找到不足 MIN_PANOS 个的每次重建再补找；make_entries(键, 全景列表) 生成题目，places 见 Bank.places。"""
         key = str(self.config.get("google_maps_key") or "").strip()
         cache_path = self.dir / cache_name
         cache = load_json(cache_path) or {}
@@ -425,7 +446,7 @@ class Bank:
         entries, failures = [], 0
         # 首次构建没有旧题库，边找边开放
         if not self.entries[cat]:
-            self.entries[cat] = entries
+            self.entries[cat], self.places[cat] = entries, places
         try:
             for i, (k, towns, accept, count) in enumerate(targets):
                 if len(cache.get(k, [])) < geo.MIN_PANOS:
@@ -442,7 +463,7 @@ class Bank:
                     entries.extend(make_entries(k, cache[k]))
         finally:
             save_json(cache_path, cache)
-        self._commit(cat, entries)
+        self._commit(cat, entries, places=places)
 
     async def _build_geo(self) -> None:
         if not self._media_on("geo"):
@@ -451,8 +472,11 @@ class Bank:
         cities = await self._cities("geo")
         codes, basics = await self._countries("geo", cities)
         targets = [(cc, cities[cc], lambda near, cc=cc: near[0] == cc, geo.PANOS_PER_COUNTRY) for cc in codes]
+        places = {
+            cc: {"title": basics[cc]["zh"], "names": basics[cc]["names"], "points": geo.towns(cities[cc])} for cc in codes
+        }
         await self._sample_all(
-            "geo", "geo_panos.json", targets, lambda cc, panos: [geo_entry(cc, p, basics[cc]) for p in panos]
+            "geo", "geo_panos.json", targets, lambda cc, panos: [geo_entry(cc, p, basics[cc]) for p in panos], places
         )
 
     async def _build_jpgeo(self) -> None:
@@ -471,12 +495,16 @@ class Bank:
             (code, towns[code], lambda near, code=code: near[0] == "JP" and near[2] == code, geo.PANOS_PER_PREF)
             for code, gn in sorted(admin1.items()) if gn in prefs and towns[code]
         ]
+        places = {
+            code: {"title": zh, "names": pref_names(prefs[gn], wd[gn]), "points": geo.towns(towns[code])}
+            for code, gn in admin1.items() if gn in prefs and towns[code] and (zh := wd.get(gn, {}).get("zh"))
+        }
 
         def make(code, panos):
             gn = admin1[code]
             return [e for p in panos if (e := pref_entry(code, p, prefs[gn], wd.get(gn, {})))]
 
-        await self._sample_all("jpgeo", "jp_panos.json", targets, make)
+        await self._sample_all("jpgeo", "jp_panos.json", targets, make, places)
 
     async def _build_country(self) -> None:
         """国家轮廓：Natural Earth 10m 国界，处理好的轮廓存 country_shapes.json。"""
@@ -491,7 +519,8 @@ class Bank:
         codes, basics = await self._countries("country", list(iso))
         # 很小的岛国抽稀后一个环都不剩，不出题
         entries = [country_entry(cc, geo.outline(groups[iso[cc]]), basics[cc]) for cc in codes if groups[iso[cc]]]
-        self._commit("country", entries)
+        places = {e["group"]: {"title": e["title"], "names": e["names"], "points": [e["spot"]]} for e in entries}
+        self._commit("country", entries, places=places)
 
     async def _game_media(self, items: list, wd: dict) -> dict:
         """IGDB 截图优先，IGDB 上没截图再用 Steam 的。结果缓存，只查新进榜的。"""

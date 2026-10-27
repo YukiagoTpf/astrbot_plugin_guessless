@@ -10,7 +10,7 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, StarTools
 
-from .core import cards
+from .core import cards, geo
 from .core.answer import candidates, is_correct
 from .core.bank import Bank
 from .core.lines import LINES, say
@@ -40,9 +40,16 @@ class Round:
     hint_wait_sent: float = -1.0  # 已对哪次揭开后的冷却发过「等一下」，每个冷却窗口只回一次
     timer: asyncio.Task | None = None
     paid: str = ""  # 这道题扣的是每小时额度（hourly）还是管理员加的题（bonus），没出成时退回去
+    wrong: dict = field(default_factory=dict)  # 用户 -> 猜错过的答案（Bank.match 的键），每人最多 max_guesses 个
+    tried: dict = field(default_factory=dict)  # 地点类：本题猜过的地方 -> 距离文案，再猜一次不扣次数
 
     def left(self) -> int:
         return max(0, round(self.deadline - time.monotonic()))
+
+    @property
+    def key(self) -> str:
+        """答案在 Bank.match 里的键：地点类是国家 / 都道府县代码。"""
+        return self.entry.get("group", self.entry["id"])
 
 
 class GuessPlugin(Star):
@@ -221,10 +228,41 @@ class GuessPlugin(Star):
             event.stop_event()
             return
 
-        if is_correct(text, rnd.cands):
-            chain = self._finish(gid, rnd, event.get_sender_id(), event.get_sender_name())
+        uid, cat = event.get_sender_id(), rnd.category
+        wrong = rnd.wrong.setdefault(uid, set())
+        limit = self.config.get("max_guesses", 5)
+        if limit and len(wrong) >= limit:
+            return  # 次数用完了，说对了也不算
+        places = self.bank.places[cat]
+        key = self.bank.match(cat, text, prefer=rnd.key)
+        # 地点类按「说的是哪个地方」判，「几内亚」不算「赤道几内亚」；其他题型按答案的各种说法判
+        if (key == rnd.key) if places else is_correct(text, rnd.cands):
+            chain = self._finish(gid, rnd, uid, event.get_sender_name())
             if chain:
                 yield event.chain_result(chain)
+            event.stop_event()
+            return
+        # 闲聊、说的不是任何一道题的答案，不算次数
+        if key is None:
+            return
+        if key in rnd.tried:
+            yield event.plain_result(say("guess_repeat", place=places[key]["title"], dist=rnd.tried[key]))
+            event.stop_event()
+            return
+        if key in wrong:
+            return
+        wrong.add(key)
+        name = event.get_sender_name() or uid
+        parts = []
+        if (place := places.get(key)) and (spot := rnd.entry.get("spot")):
+            rnd.tried[key] = say(f"dist_{cat}", km=geo.distance(place["points"], spot))
+            parts.append(say("guess_far", place=place["title"], dist=rnd.tried[key]))
+            if limit and len(wrong) < limit:
+                parts.append(say("guess_left", name=name, left=limit - len(wrong)))
+        if limit and len(wrong) >= limit:
+            parts.append(say("guess_used_up", name=name, limit=limit))
+        if parts:
+            yield event.plain_result("。".join(parts))
             event.stop_event()
 
     async def _start(self, event: AstrMessageEvent, cat: str):
@@ -269,7 +307,7 @@ class GuessPlugin(Star):
                 if entry.get("fit") == "panels":
                     image = cards.load_panels(await self.bank.panels(entry))
                 elif entry.get("fit") == "outline":
-                    image = cards.load_outline(*self.bank.outline(entry))
+                    image = cards.load_outline(self.bank.outline(entry)[0])  # 出题不画邻国
                 else:
                     image = cards.load(await self.bank.image(entry), contain=entry.get("fit") == "contain")
             except Exception as e:
@@ -355,13 +393,15 @@ class GuessPlugin(Star):
 
     def _question(self, rnd: Round) -> list:
         """出题和提示只发一张卡片，标题、进度和提示都画在图上。"""
+        limit = self.config.get("max_guesses", 5)
+        tries = say("tries", limit=limit) if limit else say("tries_free")
         image = cards.render(
             rnd.image,
             set(rnd.order[: rnd.shown]),
             f"猜{LABELS[rnd.category]}",
             f"{rnd.shown}/{self._steps(rnd)} · 剩 {rnd.left()} 秒",
             rnd.entry["hints"][: rnd.shown],
-            say(f"card_note_{rnd.category}" if f"card_note_{rnd.category}" in LINES else "card_note"),
+            say(f"card_note_{rnd.category}" if f"card_note_{rnd.category}" in LINES else "card_note", tries=tries),
         )
         return [Comp.Image.fromBase64(image)]
 
@@ -381,10 +421,16 @@ class GuessPlugin(Star):
             text = say(tier, name=name, progress=progress) + "\n" + say("score", answer=answer, count=count)
         else:
             text = say(f"timeout_{rnd.category}") + "\n" + say("answer", answer=answer)
-        # 答案卡：整图公开，标题写答案，右上角写原名
+        # 答案卡：整图公开，标题写答案，右上角写原名；猜国家这时才把邻国画出来，看清在哪
+        image = rnd.image
+        if entry.get("fit") == "outline":
+            try:
+                image = cards.load_outline(*self.bank.outline(entry))
+            except Exception as e:
+                logger.warning(f"[guess] neighbor map of {entry['id']} failed: {e}")
         original = entry.get("original", "")
         card = cards.render(
-            rnd.image, None, entry["title"], original if original != entry["title"] else "答案", entry["hints"]
+            image, None, entry["title"], original if original != entry["title"] else "答案", entry["hints"]
         )
         return [Comp.Plain(text), Comp.Image.fromBase64(card)]
 

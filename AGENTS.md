@@ -15,7 +15,7 @@ core/
   entries.py          题目条目和提示（*_entry、country_basics、scrub），纯函数、不联网
   sources.py          外部数据源：Wikidata、B 站、AniList、IGDB、Steam、PokeAPI；HttpError
   geo.py              地理：GeoNames、Wikidata 国家资料、街景取景、Natural Earth 轮廓，以及各种版本常量
-  cards.py            卡片渲染（Pillow）：九宫格、街景三联、国家轮廓和邻国底图
+  cards.py            卡片渲染（Pillow）：九宫格、街景三联、国家轮廓（答案卡带邻国底图）
   answer.py           答案归一化和判定
   store.py            数据目录里 JSON 文件的读写
   hint_data.py        手写的特产、名胜、美食提示
@@ -46,7 +46,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
 
 - 改了题库构建或提示：把线上数据目录里的缓存（`geo_*.json`、`country_shapes.json` 等）拷到临时目录，`Bank(临时目录, 配置)` 调对应的 `_build_*`，检查条目和提示。不要在线上数据目录里试。
 - 改了提示内容（`core/hint_data.py`、`entries.scrub`）：重建地点、国家、日本地点题库后，检查每条提示里没有答案的中文名（`answer.norm` 后比较），也没有残留的 `□`。
-- 改了卡片渲染：渲染样图存成 PNG 打开看，至少覆盖九宫格、宝可梦、街景，国家要看邻国多的（越南、德国）、被包围的（南非）、跨 180° 经线的（俄罗斯、斐济）。
+- 改了卡片渲染：渲染样图存成 PNG 打开看，至少覆盖九宫格、宝可梦、街景，国家的出题卡和答案卡都要看，挑邻国多的（越南、德国）、被包围的（南非）、跨 180° 经线的（俄罗斯、斐济）。
 - 改了 `main.py`：没有完整的事件环境，可以用 `GuessPlugin.__new__` 建对象、手动塞属性、假的 `context` 来测单个方法。
 
 ## 约定
@@ -59,7 +59,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 改了什么 | 改哪个 |
   |---|---|
   | 题目条目格式、通用选题规则 | `bank.BANK_VERSION` |
-  | `hint_data.py`、`entries.scrub`、地点和国家的提示规则 | `geo.HINTS_VERSION` |
+  | `hint_data.py`、`entries.scrub`、地点和国家的提示规则、报距离用的位置（`geo.towns` / `centroid`、`places`） | `geo.HINTS_VERSION` |
   | 动画、游戏的提示规则（标签筛选、提示顺序） | `entries.WORK_HINTS_VERSION` |
   | 街景取景规则（全景缓存作废重找） | `geo.SAMPLING` |
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |

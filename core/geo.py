@@ -33,7 +33,8 @@ EXCLUDE = {"TW", "HK", "MO", "XK", "CN"}
 SOVEREIGN_EXTRA = {"DK"}
 # Wikidata 的中文 label 是正式全称的，改用日常叫法
 TITLES = {"NL": "荷兰", "KR": "韩国", "ML": "马里", "KP": "朝鲜"}
-HINTS_VERSION = "specials-v3"  # 提示规则（hint_data、scrub）改了就换个名字，地点和国家题库重建
+# 提示规则（hint_data、scrub）或猜错报距离用的位置（towns、centroid）改了就换个名字，地点和国家题库重建
+HINTS_VERSION = "distance-v1"
 CONTINENTS = {"AF": "非洲", "AS": "亚洲", "EU": "欧洲", "NA": "北美洲", "OC": "大洋洲", "SA": "南美洲", "AN": "南极洲"}
 DRIVING = {"Q14565199": "靠右行驶", "Q11920728": "靠左行驶"}
 PANOS_PER_COUNTRY = 6
@@ -148,6 +149,46 @@ async def fetch_languages(session: aiohttp.ClientSession) -> dict[str, str]:
     rows = await _sparql(session, """SELECT ?code ?name WHERE {
       ?l wdt:P218 ?code . ?l rdfs:label ?name FILTER(LANG(?name) = "zh-cn") }""")
     return {r["code"]["value"]: r["name"]["value"] for r in rows}
+
+
+def _km(a: list, b: list) -> float:
+    (lat1, lng1), (lat2, lng2) = (map(math.radians, p) for p in (a, b))
+    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lng2 - lng1) / 2) ** 2
+    return 2 * 6371 * math.asin(math.sqrt(h))
+
+
+def distance(points: list, spot: list) -> int:
+    """points（[[纬度, 经度], ...]）里离 spot 最近的一个有多远（公里）。
+    100 公里以上只留两位有效数字：报个大概，不至于拿来精确定位。"""
+    km = max(1, round(min(_km(p, spot) for p in points)))
+    return km if km < 100 else round(km, 2 - len(str(km)))
+
+
+def towns(rows: list) -> list:
+    """猜地点、猜日本地点报距离用的位置：这个国家 / 都道府县所有城镇的坐标，报最近一个到拍摄地的距离。
+    用中心的话，猜俄罗斯离北海道的拍摄地有六千多公里，跟直觉对不上。"""
+    return [[round(r[0], 2), round(r[1], 2)] for r in rows]
+
+
+def _wrap(lng: float) -> float:
+    return lng - 360 if lng > 180 else lng
+
+
+def centroid(rings: list) -> list[float]:
+    """猜国家报距离用的位置：outline() 处理过的轮廓的面积中心 [纬度, 经度]，两国报中心之间的距离。
+
+    先投到正弦投影（经度差乘纬度余弦，等积）再求，直接在经纬度上算会高估高纬度的面积，挪威的中心被斯瓦尔巴拉到北极圈里。
+    """
+    xs = [x for _, ring in rings for x, _ in ring]
+    lng0 = (min(xs) + max(xs)) / 2
+    area = cx = cy = 0.0
+    for _, ring in rings:  # 内洞和外环方向相反，有向面积直接加起来就扣掉了
+        pts = [((x - lng0) * math.cos(math.radians(y)), y) for x, y in ring]
+        for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1]):
+            cross = x1 * y2 - x2 * y1
+            area, cx, cy = area + cross, cx + (x1 + x2) * cross, cy + (y1 + y2) * cross
+    lat = cy / area / 3
+    return [round(lat, 3), round(_wrap(lng0 + cx / area / 3 / math.cos(math.radians(lat))), 3)]
 
 
 class Nearest:

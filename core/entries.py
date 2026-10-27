@@ -443,13 +443,14 @@ def geo_entry(cc: str, pano: dict, basics: dict) -> dict:
         "answer": f"{zh}（{en}）" if en else zh,
         "names": basics["names"],
         "pano": {"id": pano["id"], "heading": pano["heading"]},
+        "spot": [pano["lat"], pano["lng"]],
         "fit": "panels",
         "hints": hints,
     })
 
 
 def country_entry(cc: str, rings: list, basics: dict) -> dict:
-    """看轮廓猜国家。人口过千万或面积过 50 万平方公里的算大众题。"""
+    """看轮廓猜国家。人口过千万或面积过 50 万平方公里的算大众题；spot 是猜错报距离用的国家中心。"""
     outer = [pt for hole, ring in rings if not hole for pt in ring]
     lng = (min(p[0] for p in outer) + max(p[0] for p in outer)) / 2
     lat = (min(p[1] for p in outer) + max(p[1] for p in outer)) / 2
@@ -463,23 +464,30 @@ def country_entry(cc: str, rings: list, basics: dict) -> dict:
         "answer": f"{zh}（{en}）" if en else zh,
         "names": basics["names"],
         "iso": cc,
+        "spot": geo.centroid(rings),
         "fit": "outline",
         "tier": "main" if basics["big"] else "niche",
         "hints": hints,
     })
 
 
+def pref_names(pref: dict, wd: dict) -> list[str]:
+    """都道府县的各种叫法。「东京都」「大阪府」「冲绳县」只说「东京」「大阪」「冲绳」也算（北海道的「道」不能省）。"""
+    labels = [wd.get("zh") or "", *wd.get("names", [])]
+    bases = [n[:-1] for n in labels if n[-1:] in "都府县県" and len(n) > 2 and not n.startswith("北海")]
+    return usable_names([*labels, *bases, pref.get("en") or ""])
+
+
 def pref_entry(code: str, pano: dict, pref: dict, wd: dict) -> dict | None:
-    """日本街景猜都道府县。「东京都」「大阪府」「冲绳县」只说「东京」「大阪」「冲绳」也算（北海道的「道」不能省）。"""
+    """日本街景猜都道府县。"""
     zh, en = wd.get("zh") or "", pref.get("en") or ""
     if not zh:
         return None
-    labels = [zh, *wd.get("names", [])]
-    bases = [n[:-1] for n in labels if n[-1:] in "都府县県" and len(n) > 2 and not n.startswith("北海")]
+    names = pref_names(pref, wd)
     jis = pref.get("jis") or 0
     capital = pref.get("capital") or ""
     # 特产、名胜从不那么出名的开始给
-    words = place_words([*labels, *bases], capital)
+    words = place_words(names, capital)
     foods, sights = (
         [x for f in items if (x := scrub(f, words, zh))] for items in hint_data.JP.get(jis, ([], []))
     )
@@ -493,8 +501,9 @@ def pref_entry(code: str, pano: dict, pref: dict, wd: dict) -> dict | None:
         "title": zh,
         "original": " · ".join(x for x in (en, pano.get("near")) if x),
         "answer": f"{zh}（{en}）" if en else zh,
-        "names": usable_names([*labels, *bases, en]),
+        "names": names,
         "pano": {"id": pano["id"], "heading": pano["heading"]},
+        "spot": [pano["lat"], pano["lng"]],
         "fit": "panels",
         "hints": hints,
     })

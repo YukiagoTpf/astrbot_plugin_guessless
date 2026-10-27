@@ -37,8 +37,25 @@ def candidates(names: list[str]) -> set[str]:
 
 def is_correct(guess: str, cands: set[str]) -> bool:
     g = norm(guess)
+    return bool(g) and _hit(g, cands)
+
+
+def find(guess: str, index: list[tuple[str, set[str]]], prefer: str = "") -> str | None:
+    """这句话说的是 index [(键, 候选答案), ...] 里的哪一个，都不沾边（闲聊）返回 None。
+
+    完全说中的优先，「几内亚」就不会因为是「赤道几内亚」的一大段被认成后者；
+    几个都完全说中（同一个别名）时优先 prefer，一般是本题答案。
+    """
+    g = norm(guess)
     if not g:
-        return False
+        return None
+    exact = [key for key, cands in index if g in cands]
+    if exact:
+        return prefer if prefer in exact else exact[0]
+    return next((key for key, cands in index if _hit(g, cands)), None)
+
+
+def _hit(g: str, cands: set[str]) -> bool:
     for c in cands:
         if g == c:
             return True
