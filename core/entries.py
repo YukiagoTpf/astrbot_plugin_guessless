@@ -5,13 +5,14 @@
 
 import math
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
 from zhconv import convert
 
-from . import geo, hint_data
+from . import geo, hint_data, mecha_data
 from .answer import candidates, norm
 from .sources import POKEMON_ART, POKEMON_LANGS, dedupe
 
@@ -55,10 +56,18 @@ PLATFORMS = {
     "Nintendo Switch": "Switch", "Nintendo Switch 2": "Switch 2", "Nintendo 64": "N64",
     "GameCube": "NGC", "Game Boy Advance": "GBA",
 }
-POKEMON_VERSION = "attrs-v1"  # 宝可梦条目格式（attrs）改了就换个名字，宝可梦题库重建
+POKEMON_VERSION = "attrs-v2"  # 宝可梦条目格式（attrs）改了就换个名字，宝可梦题库重建
 # 盲猜宝可梦对比表的列；「提示」只给表里比不出来的线索
-POKEDLE_COLUMNS = ("世代", "属性1", "属性2", "颜色", "进化阶段", "身高", "体重")
-POKEDLE_CLUES = ("特性", "分类", "进化", "首字")
+POKEDLE_COLUMNS = ("世代", "属性1", "属性2", "颜色", "进化阶段", "种族值")
+POKEDLE_CLUES = ("分类", "进化", "首字")
+MECHA_VERSION = "srw-v2"  # 猜萝卜的选题和条目规则改了就换个名字，萝卜题库重建
+# 盲猜萝卜对比表的列（只出 Gundam Wiki 上有资料的高达机体）和「提示」给的线索
+MECHADLE_COLUMNS = ("世界观", "登场年份", "阵营", "机型", "机械设计", "型号开头")
+MECHADLE_CLUES = ("出自", "全高", "首字")
+# 高达模型系列的世界观：这些作品里的机体是改造的模型，和原作机体同名
+BUILD_ERAS = {"Build Fighters", "Build Divers", "Gunpla Builders", "Gundam Breaker", "Not Applicable/Specified"}
+# 机体型号：开头一串带连字符、带数字的字母数字，如 RX-78-2、GN-0000+GNR-010、RX-79[G]Ez-8
+_MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\[\]()+/.α-ωΑ-Ω]*-[A-Za-z0-9\[\]()+/.\-α-ωΑ-Ω]*")
 GENERATIONS = {1: "一（关都）", 2: "二（城都）", 3: "三（丰缘）", 4: "四（神奥）", 5: "五（合众）",
                6: "六（卡洛斯）", 7: "七（阿罗拉）", 8: "八（伽勒尔）", 9: "九（帕底亚）"}
 _BRACKETED = re.compile(r"[（(「『【\[][^（(「『【\[）)」』】\]]*[）)」』】\]]")
@@ -103,7 +112,8 @@ def clean_mc_title(title: str) -> str:
 
 
 def shape_hint(title: str) -> list[str]:
-    chars = norm(title)
+    # 「∀高达」的 ∀ 在 norm 里换成了字母，这里要原样数
+    chars = "".join(ch for ch in unicodedata.normalize("NFKC", title) if ch.isalnum() or ch in "∀∞") or norm(title)
     if chars.isascii():
         words = len(re.findall(r"[A-Za-z0-9]+", title))
         return ["首字母", f"{chars[:1].upper()}，{words} 个单词"]
@@ -350,7 +360,7 @@ def pokemon_entry(s: dict, by_id: dict, wd: dict | None) -> dict | None:
     other = [(names.get(k) or {}).get("name") for k in ("zh-hant", "ja", "ja-hrkt", "ja-roma")]
     attrs = {
         "gen": s["generation_id"], "types": [t for t in types if t], "color": color, "stage": stage,
-        "height": (height or 0) / 10, "weight": (weight or 0) / 10,
+        "bst": sum(st["base_stat"] for st in poke.get("pokemon_v2_pokemonstats") or []),
     }
     return finish_entry({
         "id": f"pm-{s['id']}",
@@ -365,15 +375,14 @@ def pokemon_entry(s: dict, by_id: dict, wd: dict | None) -> dict | None:
     })
 
 
+def _num(x, y, text: str, close: bool = False) -> list[str]:
+    return [text, "hit", ""] if x == y else [text, "near" if close else "miss", "↑" if y > x else "↓"]
+
+
 def pokedle_row(guess: dict, answer: dict) -> list[list[str]]:
     """盲猜宝可梦对比表的一行，按 POKEDLE_COLUMNS：每格 [显示的值, 结果, 箭头]。
-    结果是 hit（一致）、near（接近；属性是答案有、但不在这一格）、miss（不符）；箭头指答案更大（↑）还是更小（↓）。"""
-
-    def num(x, y, text, close=False):
-        return [text, "hit", ""] if x == y else [text, "near" if close else "miss", "↑" if y > x else "↓"]
-
-    def near(x, y):  # 身高体重差 25% 以内算接近
-        return bool(x and y) and 0.8 <= x / y <= 1.25
+    结果是 hit（一致）、near（接近；属性是答案有、但不在这一格）、miss（不符）、none（没资料）；
+    箭头指答案更大（↑）还是更小（↓）。"""
 
     def typ(i):
         mine = guess["types"][i] if i < len(guess["types"]) else "无"
@@ -382,17 +391,151 @@ def pokedle_row(guess: dict, answer: dict) -> list[list[str]]:
             return [mine, "hit", ""]
         return [mine, "near" if mine in answer["types"] else "miss", ""]
 
-    # 100 公斤以上截掉小数，不然加上箭头格子放不下
-    weight = int(guess["weight"]) if guess["weight"] >= 100 else f"{guess['weight']:g}"
     return [
-        num(guess["gen"], answer["gen"], f"第{guess['gen']}代", abs(guess["gen"] - answer["gen"]) == 1),
+        _num(guess["gen"], answer["gen"], f"第{guess['gen']}代", abs(guess["gen"] - answer["gen"]) == 1),
         typ(0),
         typ(1),
         [guess["color"], "hit" if guess["color"] == answer["color"] else "miss", ""],
-        num(guess["stage"], answer["stage"], f"{guess['stage']} 阶"),
-        num(guess["height"], answer["height"], f"{guess['height']:g}m", near(guess["height"], answer["height"])),
-        num(guess["weight"], answer["weight"], f"{weight}kg", near(guess["weight"], answer["weight"])),
+        _num(guess["stage"], answer["stage"], f"{guess['stage']} 阶"),
+        # 种族值差 40 以内算接近
+        _num(guess["bst"], answer["bst"], str(guess["bst"]), abs(guess["bst"] - answer["bst"]) <= 40),
     ]
+
+
+def mechadle_row(guess: dict, answer: dict) -> list[list[str]]:
+    """盲猜萝卜对比表的一行，按 MECHADLE_COLUMNS，格式同 pokedle_row。登场年份差 3 年以内算接近。"""
+
+    def same(key):
+        mine = guess[key]
+        if not mine:
+            return ["—", "none", ""]
+        return [mine, "hit" if mine == answer[key] else "miss", ""]
+
+    year = _num(guess["year"], answer["year"], str(guess["year"]), abs(guess["year"] - answer["year"]) <= 3)
+    return [same("era"), year, same("faction"), same("kind"), same("designer"), same("prefix")]
+
+
+def mecha_model(name: str) -> str:
+    """名字开头的型号，没有返回空串。型号里至少有一个数字，免得把「Hi-ν」当成型号。"""
+    m = _MODEL.match(unicodedata.normalize("NFKC", name).strip())
+    return m.group(0).rstrip("-") if m and re.search(r"\d", m.group(0)) else ""
+
+
+def strip_model(name: str) -> str:
+    """去掉开头的型号。没有连字符的型号（「F91 ガンダムF91」的 F91）也算，只要后面还有别的。"""
+    name = unicodedata.normalize("NFKC", name).strip()
+    if model := mecha_model(name):
+        return name[len(model):].strip()
+    head, _, rest = name.partition(" ")
+    return rest.strip() if rest and head.isascii() and re.search(r"\d", head) else name
+
+
+def wiki_text(value: str) -> str:
+    """Gundam Wiki 信息框的值去掉 wiki 标记，多个值只取第一个：[[链接|文字]] 取文字，
+    [作品缩写]、<ref>、~ 后面的备注、#锚点、（GQ）这类作品标注都去掉。"""
+    v = re.sub(r"<ref[^>]*?/>|<ref.*?</ref>|<[^>]+>", "", value or "", flags=re.S)
+    v = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]", r"\1", v)
+    v = re.sub(r"\{\{[^}]*\}\}|\[[^\]]*\]", "", v)
+    v = re.split(r"[,;\n]", v)[0].split("~")[0].split("#")[0]
+    return re.sub(r"\s*\((GQ|Origin|Thunderbolt)\)\s*$", "", v).strip()
+
+
+def _wiki_number(value: str) -> float:
+    m = re.search(r"\d+(?:\.\d+)?", value or "")
+    return float(m.group(0)) if m else 0.0
+
+
+def match_gundam_wiki(chars: dict, pages: dict) -> dict:
+    """Bangumi 的机体 → Gundam Wiki 的页面标题，{Bangumi 角色 ID: 页面标题}。
+
+    先按型号对（RX-78-2），一个型号有好几页（各种改型、雷霆版）时挑日文名完全一样的，再挑标题最短的；
+    名字里没型号的（ユニコーン）按日文名、再按 Bangumi 别名里的英文名对。
+    """
+    by_model, by_kana, by_english = {}, {}, {}
+    for title, f in pages.items():
+        if model := mecha_model(title):
+            by_model.setdefault(model.lower(), []).append(title)
+        by_english.setdefault(norm(strip_model(title)), []).append(title)
+        # 日文名可能有好几个，逗号、斜杠分隔，「~」后面是备注
+        for kana in re.split(r"[/、,，]", re.sub(r"\(.*?\)|<[^>]*>|\[\[|\]\]", "", f.get("kanji", ""))):
+            if key := norm(strip_model(kana.split("~")[0])):
+                by_kana.setdefault(key, []).append(title)
+
+    def kana_of(title):
+        return norm(re.sub(r"\(.*?\)|~[^,]*", "", pages[title].get("kanji", "")))
+
+    out = {}
+    for cid, c in chars.items():
+        model, kana = mecha_model(c["name"]).lower(), norm(strip_model(c["name"]))
+        # 高达模型系列（创战者、创形者）里的改造机常和原型机同名，这台机体没在这些作品里出现过就不对它们
+        works = " ".join(w[2] for w in c.get("works", []))
+        build = any(k in works for k in ("创战", "创形", "ビルド"))
+
+        def ok(titles, build=build):
+            return [t for t in titles if build or wiki_text(pages[t].get("era", "")) not in BUILD_ERAS]
+
+        found = ok(by_model.get(model, [])) if model else []
+        # 「ユニコーン」在 Wiki 上叫「ユニコーンガンダム」
+        for key in (kana, kana + "ガンダム") if kana and not found else ():
+            found = found or ok(by_kana.get(key, []))
+        if not found:
+            found = ok([t for a in c.get("aliases", []) if a.isascii() for t in by_english.get(norm(strip_model(a)), [])])
+        if found:
+            # 一个型号有好几页（各种改型、雷霆版）：日文名对得上的优先；带括号的多是衍生版本，再取不带括号、标题最短的
+            out[cid] = min(found, key=lambda t: (bool(kana) and kana not in kana_of(t), "(" in t, len(t)))
+    return out
+
+
+def mecha_entry(char: dict, page: dict | None, image: str, wiki_title: str = "") -> dict | None:
+    """一台机体一道题。char 是 Bangumi 上的机体（同一台的几个条目已合并，year 是最早登场的年份，work 是出场作品里
+    看的人最多的一部），
+    page 是 Gundam Wiki 的信息框（只有高达有），image 是题图地址。
+
+    提示从泛到具体：登场年份、世界观、出自、阵营、机型、机械设计、全高、型号开头。
+    名字里的连字符去掉再比（RX-78-2 → RX782），不然 answer.candidates 会把「RX」当成主标题。
+    """
+    jp = unicodedata.normalize("NFKC", char["name"])
+    model = mecha_model(jp)
+    nicknames = mecha_data.NICKNAMES.get(wiki_title, []) + mecha_data.SRW_NICKNAMES.get(norm(jp), [])
+    cn = strip_model(char.get("cn") or "") or next(iter(nicknames), "")
+    if not cn or cn.isascii():
+        return None
+    names = [cn, char.get("cn") or "", *char.get("aliases", []), strip_model(jp), model, strip_model(wiki_title), *nicknames]
+    names = usable_names(re.sub(r"[-‐−–—~～:：|/／]", "", n) for n in names if n)
+    page = page or {}
+    era = mecha_data.ERAS.get(wiki_text(page.get("era", "")))
+    faction = mecha_data.FACTIONS.get(wiki_text(page.get("operator", "")), "")
+    kind = mecha_data.PRODUCTION.get(wiki_text(page.get("production", "")), "")
+    designer = mecha_data.DESIGNERS.get(wiki_text(page.get("mechdesigner", "")), "")
+    info = char.get("info", {})
+    height = _wiki_number(page.get("headheight", "")) or _wiki_number(info.get("全高") or info.get("身高") or "")
+    prefix = re.match(r"[A-Za-z]+", model).group(0).upper() if model else ""
+    original = wiki_title or jp
+    entry = finish_entry({
+        "id": f"mecha-{char['id']}",
+        "title": cn,
+        "original": original,
+        "answer": f"{cn}（{original}）",
+        "names": names,
+        "images": [image],
+        "fit": "contain",  # 设定图多是白底全身像，整张缩进正方形，不裁
+        "hints": [
+            ["登场", f"{char['year']} 年" if char.get("year") else ""],
+            ["世界观", era[1] if era else ""],
+            ["出自", char.get("work", "")],
+            ["阵营", faction],
+            ["机型", kind],
+            ["机械设计", designer],
+            ["全高", f"{height:g} 米" if height else ""],
+            ["型号开头", prefix],
+        ],
+    })
+    if era and char.get("year"):
+        entry["attrs"] = {
+            "era": era[0], "year": char["year"], "faction": faction, "kind": kind, "designer": designer,
+            "prefix": prefix,
+        }
+    return entry
 
 
 def fmt_pop(pop: float) -> str:

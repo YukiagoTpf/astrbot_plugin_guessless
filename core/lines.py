@@ -10,6 +10,8 @@ LINES = {
     "card_note_jpgeo": ["说都道府县，{tries}·「提示」加线索"],
     "card_note_pokedle": ["说宝可梦名，{tries} · 「提示」加线索"],
     "card_note_anisong": ["说番名，{tries} · 「提示」听长一点"],
+    "card_note_mecha": ["说机体名，{tries} · 「提示」开一格"],
+    "card_note_mechadle": ["说机体名，{tries} · 「提示」加线索"],
     "tries": ["每人 {limit} 次"],
     "tries_free": ["不限次数"],
     # 地点类猜错报距离：{dist} 是 dist_*，猜国家是两国中心之间，猜地点、猜日本地点是你猜的地方离拍摄地最近的城镇
@@ -19,8 +21,9 @@ LINES = {
     "dist_country": ["两国中心相距约 {km} 公里"],
     "guess_repeat": ["{place} 刚才有人猜过了，{dist}，这次不算", "{place} 猜过了，{dist}，不扣次数"],
     "guess_repeat_board": ["{place} 猜过了，看表，这次不算", "{place} 表里已经有了，不扣次数"],
-    "pokedle_wrong": ["{place} 不对，看表", "不是 {place}，对照一下表", "{place}？差点意思，看表"],
+    "blind_wrong": ["{place} 不对，看表", "不是 {place}，对照一下表", "{place}？差点意思，看表"],
     "pokedle_empty": ["随便说一只宝可梦，看看它和答案差在哪"],
+    "mechadle_empty": ["随便说一台高达机体，看看它和答案差在哪"],
     "song_step": ["第 {n} 段 · {sec} 秒"],
     "guess_left": ["{name} 还能猜 {left} 次"],
     "guess_used_up": [
@@ -42,6 +45,7 @@ LINES = {
         "整段前奏都给你了，剩下的靠耳朵——如果有的话。剩 {left} 秒",
     ],
     "hint_exhausted_pokedle": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
+    "hint_exhausted_mechadle": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
     "hint_exhausted_clue": [
         "线索全给完了，再猜不出来就去补地理课。剩 {left} 秒",
         "提示都念完了，剩下的只能靠阅历——如果有的话。剩 {left} 秒",
@@ -81,6 +85,15 @@ LINES = {
         "时间到，前奏放完了也没人听出来。各位看番是不是都跳 OP",
         "两分钟，零人答对。这首在本群的传唱度约等于零",
         "时间到。耳朵和番剧储备，总有一个出了问题",
+    ],
+    "timeout_mecha": [
+        "时间到，全群没一个认出来的。萝卜都不认识，还好意思说自己是机器人厨",
+        "两分钟，零人答对。建议把超级机器人大战从头打一遍",
+        "时间到。这台机体在本群的出场率大概和量产机的存活率差不多",
+    ],
+    "timeout_mechadle": [
+        "时间到，表都快填满了还没人猜中。高达是白看了",
+        "时间到，零人答对。建议去模型店把盒绘挨个认一遍",
     ],
     "timeout_pokemon": [
         "时间到，全群没一个认出来的。图鉴白集了",
@@ -137,6 +150,8 @@ LINES = {
     "board_empty_pokemon": ["还没人猜对过宝可梦，精灵球全扔空了"],
     "board_empty_pokedle": ["还没人盲猜中过宝可梦，全员靠看图"],
     "board_empty_anisong": ["还没人听歌猜中过番，全员跳 OP 党"],
+    "board_empty_mecha": ["还没人猜对过萝卜，全员门外汉"],
+    "board_empty_mechadle": ["还没人盲猜中过萝卜，全员靠看图"],
     "board_empty_geo": ["还没人猜对过地点，全员宅家，可喜可贺"],
     "board_empty_country": ["还没人猜对过国家，地理老师哭晕在厕所"],
     "board_empty_jpgeo": ["还没人猜对过日本地点，全员只认识东京"],

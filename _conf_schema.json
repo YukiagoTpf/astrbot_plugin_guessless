@@ -4,11 +4,11 @@
     "type": "int",
     "default": 120
   },
-  "pokedle_round_seconds": {
-    "description": "盲猜宝可梦限时（秒）",
+  "blind_round_seconds": {
+    "description": "盲猜宝可梦、盲猜萝卜限时（秒）",
     "type": "int",
     "default": 300,
-    "hint": "要一只只猜、看表推理，比其他题型久"
+    "hint": "要一个个猜、看表推理，比其他题型久"
   },
   "hint_cooldown_seconds": {
     "description": "两次「提示」的最短间隔（秒）",

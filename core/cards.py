@@ -1,6 +1,6 @@
 """出题卡片：正方形，中间 16:9 是图（九宫格，未揭开的格子盖色块），上下黑边写标题和提示。
 
-图区还有几种不分格的：街景三联、国家剪影、猜国家猜错时的世界地图、盲猜宝可梦的对比表、听歌猜番的进度条。
+图区还有几种不分格的：街景三联、国家剪影、猜国家猜错时的世界地图、盲猜的对比表、听歌猜番的进度条。
 """
 
 import base64
@@ -10,8 +10,6 @@ import random
 from functools import cache
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
-
-from .entries import POKEDLE_COLUMNS
 
 SIZE = 1080
 PIC_H = 608  # 16:9
@@ -38,8 +36,8 @@ MAP_MARGIN = 36  # 出题只画剪影时，剪影离图区边缘的像素
 WORLD_LAT = (84, -58)  # 世界地图的纬度范围，南极洲不画
 # 猜国家猜错时按两国中心距离上色：越近越红，(公里, 颜色) 之间线性插值
 HEAT = ((0, (200, 36, 36)), (1000, (232, 86, 44)), (2500, (240, 146, 54)), (5000, (244, 204, 96)), (10000, (240, 232, 204)))
-# 盲猜宝可梦对比表格子的颜色：一致、接近、不符
-CELL = {"hit": (56, 142, 60), "near": (196, 146, 32), "miss": (150, 54, 54)}
+# 盲猜对比表格子的颜色：一致、接近、不符、没资料
+CELL = {"hit": (56, 142, 60), "near": (196, 146, 32), "miss": (150, 54, 54), "none": (62, 66, 76)}
 # AstrBot 镜像自带 Noto Sans CJK；ttc 里按名字找简中字形
 FONT_DIR = "/usr/share/fonts/opentype/noto"
 
@@ -205,17 +203,17 @@ class WorldMap:
         return out
 
 
-def pokedle_table(rows: list, empty: str = "") -> Image.Image:
-    """盲猜宝可梦的对比表：rows 是 [(宝可梦名, entries.pokedle_row 的结果), ...]，新猜的在上面，最多 9 行。
-    还没人猜时表下写 empty。"""
+def compare_table(name: str, columns: tuple, rows: list, empty: str = "") -> Image.Image:
+    """盲猜的对比表：name 是第一列的表头，columns 是其余各列；rows 是 [(猜的名字, entries.*_row 的结果), ...]，
+    新猜的在上面，最多 9 行。还没人猜时表下写 empty。"""
     out = Image.new("RGB", (SIZE, PIC_H), MAP_BG)
     draw = ImageDraw.Draw(out)
     head, cell = font(24), font(26)
     m, gap, name_w, row_h = 16, 6, 190, 56
-    col_w = (SIZE - m * 2 - name_w - gap * len(POKEDLE_COLUMNS)) / len(POKEDLE_COLUMNS)
-    xs = [m + name_w + gap + i * (col_w + gap) for i in range(len(POKEDLE_COLUMNS))]
-    draw.text((m + 8, 26), "宝可梦", fill=DIM, font=head, anchor="lm")
-    for x, title in zip(xs, POKEDLE_COLUMNS):
+    col_w = (SIZE - m * 2 - name_w - gap * len(columns)) / len(columns)
+    xs = [m + name_w + gap + i * (col_w + gap) for i in range(len(columns))]
+    draw.text((m + 8, 26), name, fill=DIM, font=head, anchor="lm")
+    for x, title in zip(xs, columns):
         draw.text((x + col_w / 2, 26), title, fill=DIM, font=head, anchor="mm")
     for i, (name, cells) in enumerate(rows[:9]):
         y = 46 + i * (row_h + gap)
@@ -263,16 +261,24 @@ def _contain(img: Image.Image) -> Image.Image:
     """裁掉透明边后整张缩进图区正中的正方形（浅色底），两边留黑，九宫格只画在这个正方形上。
 
     立绘四角常是空白，info["empty"] 记下几乎没内容的格子，出题时最后才揭开。
+    不透明的白底设定图（猜萝卜）把接近白色的地方当成空白来裁边、找空白格，底板也用白色。
     """
     art = img.convert("RGBA")
-    art = art.crop(art.getchannel("A").getbbox() or (0, 0, *art.size))
+    if art.getchannel("A").getextrema()[0] == 255:
+        mask = ImageChops.invert(art.convert("L")).point(lambda v: 255 if v > 18 else 0)
+        bg = (255, 255, 255)
+    else:
+        mask, bg = art.getchannel("A"), ART_BG
+    box = mask.getbbox() or (0, 0, *art.size)
+    art, mask = art.crop(box), mask.crop(box)
     scale = min((PIC_H - ART_PAD * 2) / art.width, (PIC_H - ART_PAD * 2) / art.height)
-    art = art.resize((max(1, round(art.width * scale)), max(1, round(art.height * scale))), Image.Resampling.LANCZOS)
+    size = (max(1, round(art.width * scale)), max(1, round(art.height * scale)))
+    art, mask = art.resize(size, Image.Resampling.LANCZOS), mask.resize(size, Image.Resampling.LANCZOS)
     offset = ((PIC_H - art.width) // 2, (PIC_H - art.height) // 2)
-    board = Image.new("RGB", (PIC_H, PIC_H), ART_BG)
+    board = Image.new("RGB", (PIC_H, PIC_H), bg)
     board.paste(art, offset, art)
     alpha = Image.new("L", (PIC_H, PIC_H), 0)
-    alpha.paste(art.getchannel("A"), offset)
+    alpha.paste(mask, offset)
     out = Image.new("RGB", (SIZE, PIC_H), BG)
     x0 = (SIZE - PIC_H) // 2
     out.paste(board, (x0, 0))
@@ -280,8 +286,7 @@ def _contain(img: Image.Image) -> Image.Image:
     out.info["empty"] = set()
     for i in range(9):
         row, col = divmod(i, 3)
-        box = [round(PIC_H * k / 3) for k in (col, row, col + 1, row + 1)]
-        cell = alpha.crop(box)
+        cell = alpha.crop([round(PIC_H * k / 3) for k in (col, row, col + 1, row + 1)])
         if sum(cell.histogram()[32:]) < cell.width * cell.height * 0.03:
             out.info["empty"].add(i)
     return out

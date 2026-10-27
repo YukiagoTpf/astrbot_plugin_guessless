@@ -11,9 +11,13 @@ _SEP = re.compile(r"[:：\-–—~～|/／]")
 _TRAILING_NUM = re.compile(r"(\d+|[ivx]+)$")
 
 
+# 机体名里当字用的符号：「∀高达」去掉 ∀ 就成了「高达」；Ζ 高达的 Ζ 是希腊字母，群友打的是拉丁 Z
+_SYMBOLS = str.maketrans({"∀": "倒a", "∞": "无限", "Ζ": "z", "ζ": "z"})
+
+
 def norm(text: str) -> str:
     """全半角统一、繁转简、转小写、去掉空格和标点。"""
-    text = convert(unicodedata.normalize("NFKC", text), "zh-hans").lower()
+    text = convert(unicodedata.normalize("NFKC", text), "zh-hans").lower().translate(_SYMBOLS)
     return "".join(ch for ch in text if ch.isalnum())
 
 

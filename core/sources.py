@@ -1,5 +1,5 @@
 """外部数据源：Wikidata（各地区译名、跨站 ID）、B 站 / AniList（动画）、AnimeThemes（动画 OP / ED）、
-IGDB / Steam（游戏）、PokeAPI（宝可梦）。"""
+IGDB / Steam（游戏）、PokeAPI（宝可梦）、Gundam Wiki（高达机体资料和设定图）。"""
 
 import asyncio
 import json
@@ -24,6 +24,8 @@ ANILIST_FIELDS = "id title { romaji english native } synonyms bannerImage startD
 ANILIST_FORMATS = {"TV": {"TV", "TV_SHORT"}, "WEB": {"ONA", "TV", "TV_SHORT"}, "剧场版": {"MOVIE"}}
 # 免 key，限速每分钟 90 次；按 AniList / MAL 的 ID 查，音频是几 MB 的 ogg
 ANIMETHEMES = "https://api.animethemes.moe/anime"
+# Fandom 上的英文 Gundam Wiki（CC BY-SA），MediaWiki API 免 key
+GUNDAM_WIKI = "https://gundam.fandom.com/api.php"
 TWITCH_TOKEN = "https://id.twitch.tv/oauth2/token"
 IGDB_GAMES = "https://api.igdb.com/v4/games"
 IGDB_IMG = "https://images.igdb.com/igdb/image/upload/t_screenshot_huge/{}.jpg"
@@ -47,6 +49,7 @@ POKEMON_QUERY = """query {
     pokemon_v2_pokemoncolor { pokemon_v2_pokemoncolornames(where: {language_id: {_eq: 12}}) { name } }
     pokemon_v2_pokemons(where: {is_default: {_eq: true}}) {
       height weight
+      pokemon_v2_pokemonstats { base_stat }
       pokemon_v2_pokemontypes(order_by: {slot: asc}) {
         pokemon_v2_type { pokemon_v2_typenames(where: {language_id: {_eq: 12}}) { name } }
       }
@@ -65,6 +68,68 @@ class HttpError(Exception):
     def __init__(self, source: str, status: int):
         super().__init__(f"{source} HTTP {status}")
         self.status = status
+
+
+async def _wiki(session: aiohttp.ClientSession, params: dict) -> dict:
+    headers = {"User-Agent": f"Mozilla/5.0 ({UA})"}
+    timeout = aiohttp.ClientTimeout(total=60)
+    for attempt in range(3):
+        try:
+            async with session.get(GUNDAM_WIKI, params={**params, "format": "json"}, headers=headers, timeout=timeout) as r:
+                if r.status >= 400:
+                    raise HttpError("Gundam Wiki", r.status)
+                return await r.json(content_type=None)
+        except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
+            if attempt == 2:
+                raise
+            await asyncio.sleep(5)
+    return {}
+
+
+async def gundam_wiki(session: aiohttp.ClientSession) -> dict[str, dict]:
+    """Gundam Wiki「Mobile Weapons」分类下所有机体页的信息框：{页面标题: {字段: wikitext 原文}}。四千来页，约 80 次请求。"""
+    titles, more = [], {}
+    while True:
+        params = {"action": "query", "list": "categorymembers", "cmtitle": "Category:Mobile Weapons", "cmnamespace": 0,
+                  "cmlimit": 500, **more}
+        data = await _wiki(session, params)
+        titles += [m["title"] for m in data["query"]["categorymembers"]]
+        if "continue" not in data:
+            break
+        more = {"cmcontinue": data["continue"]["cmcontinue"]}
+    pages = {}
+    for i in range(0, len(titles), 50):
+        params = {"action": "query", "prop": "revisions", "rvprop": "content", "rvslots": "main",
+                  "titles": "|".join(titles[i : i + 50])}
+        for p in (await _wiki(session, params))["query"]["pages"].values():
+            text = (p.get("revisions") or [{}])[0].get("slots", {}).get("main", {}).get("*", "")
+            start = text.find("{{Infobox/Mobile Weapon")
+            if not 0 <= start < 500:
+                continue
+            fields = {}
+            for line in text[start:].split("\n}}")[0].split("\n|")[1:]:
+                key, _, value = line.partition("=")
+                fields[key.strip()] = value.strip()
+            pages[p["title"]] = fields
+        await asyncio.sleep(0.5)
+    return pages
+
+
+async def gundam_wiki_images(session: aiohttp.ClientSession, files: list[str]) -> dict[str, str]:
+    """设定图文件名 → 宽 900 的图片地址。Special:FilePath 带宽度参数会被 CDN 拒绝，要用 imageinfo 拿缩略图地址。"""
+    out = {}
+    for i in range(0, len(files), 50):
+        params = {"action": "query", "prop": "imageinfo", "iiprop": "url", "iiurlwidth": 900,
+                  "titles": "|".join(f"File:{f}" for f in files[i : i + 50])}
+        data = await _wiki(session, params)
+        # 标题会被规范化（下划线变空格、首字母大写），按规范化后的名字对回去
+        normalized = {n["to"]: n["from"] for n in data["query"].get("normalized", [])}
+        for p in data["query"]["pages"].values():
+            if info := (p.get("imageinfo") or [{}])[0]:
+                name = normalized.get(p["title"], p["title"]).removeprefix("File:")
+                out[name] = info.get("thumburl") or info.get("url")
+        await asyncio.sleep(0.5)
+    return out
 
 
 def dedupe(names) -> list[str]:

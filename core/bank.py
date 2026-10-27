@@ -2,7 +2,8 @@
 
 动画取 Bangumi 最热门的作品，游戏从 Metacritic 高分游戏里按热度和评分分大众 / 小众两档，宝可梦取 PokeAPI 全图鉴，
 地点和日本地点是 Google 街景随机取景，国家是 Natural Earth 轮廓。找不到图的作品不进题库。
-听歌猜番是猜动画题库里在 AnimeThemes 有 OP / ED 的作品；盲猜宝可梦直接用宝可梦题库。
+听歌猜番是猜动画题库里在 AnimeThemes 有 OP / ED 的作品；猜萝卜是 Bangumi 上高达系列动画和超级机器人大战里的机体。
+盲猜宝可梦、盲猜萝卜不单独建题库，用宝可梦、萝卜题库里带对比属性的条目。
 题库、各数据源的查询结果和图片都缓存在插件数据目录，出题时只有首次用到的图片和街景需要联网。
 """
 
@@ -22,6 +23,7 @@ from .answer import candidates, find, norm
 from .entries import (
     ANIME_KINDS,
     GAME_INFO,
+    MECHA_VERSION,
     POKEMON_VERSION,
     WORK_HINTS_VERSION,
     TagStats,
@@ -35,6 +37,8 @@ from .entries import (
     game_entry,
     geo_entry,
     infobox,
+    match_gundam_wiki,
+    mecha_entry,
     people,
     pokemon_entry,
     popularity,
@@ -51,6 +55,8 @@ from .sources import (
     anilist_names,
     anime_themes,
     dedupe,
+    gundam_wiki,
+    gundam_wiki_images,
     igdb_media,
     pokemon_species,
     steam_shots,
@@ -70,6 +76,8 @@ WEB_UA = (
     "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 )
 MIN_POOL = 20
+# 盲猜题型 -> 用哪个题库（只出带 attrs 的条目）
+DERIVED = {"pokedle": "pokemon", "mechadle": "mecha"}
 
 
 class Bank:
@@ -79,7 +87,8 @@ class Bank:
         self.img_dir.mkdir(parents=True, exist_ok=True)
         self.config = config
         self.entries: dict[str, list] = {
-            "anime": [], "anisong": [], "game": [], "pokemon": [], "pokedle": [], "geo": [], "country": [], "jpgeo": [],
+            "anime": [], "anisong": [], "game": [], "pokemon": [], "pokedle": [], "mecha": [], "mechadle": [],
+            "geo": [], "country": [], "jpgeo": [],
         }
         self.meta: dict[str, dict] = {cat: {} for cat in self.entries}
         # 地点类可以猜的国家 / 都道府县 {代码: {"title", "names", "points"}}，没街景、不出题的也在里面；
@@ -100,7 +109,8 @@ class Bank:
                 self.places[cat] = data.pop("places", {})
                 self.meta[cat] = data
                 self.status[cat] = f"{len(self.entries[cat])} 题"
-        self._derive_pokedle()
+        for base in DERIVED.values():
+            self._derive(base)
         self._task = asyncio.create_task(self._refresh_loop())
 
     async def close(self) -> None:
@@ -139,7 +149,8 @@ class Bank:
         path = self.img_dir / f"{entry['id']}-{hashlib.sha1(url.encode()).hexdigest()[:10]}.jpg"
         if path.exists():
             return path.read_bytes()
-        ua = BGM_UA if "bgm.tv" in url else WEB_UA
+        # Fandom 的图片 CDN 防盗链：浏览器 UA 不带 Referer 会 403，用插件自己的 UA 反而放行
+        ua = BGM_UA if "bgm.tv" in url or "nocookie.net" in url else WEB_UA
         async with self._http().get(url, headers={"User-Agent": ua}) as r:
             r.raise_for_status()
             data = await r.read()
@@ -199,6 +210,8 @@ class Bank:
             return [self._size("anime"), WORK_HINTS_VERSION]
         if cat == "pokemon":
             return [c.get("pokemon_main_gen", 4), POKEMON_VERSION]
+        if cat == "mecha":
+            return [MECHA_VERSION]
         if cat == "anisong":  # 猜动画题库重建了，这边跟着换
             return [ANISONG_VERSION, self.meta["anime"].get("built_at")]
         if cat == "geo":
@@ -234,21 +247,22 @@ class Bank:
         save_json(self.dir / f"bank_{cat}.json", {**self.meta[cat], "places": self.places[cat], "entries": entries})
         self.status[cat] = f"{len(entries)} 题"
         logger.info(f"[guess] {cat} bank built: {len(entries)} entries")
-        if cat == "pokemon":
-            self._derive_pokedle()
+        self._derive(cat)
 
-    def _derive_pokedle(self) -> None:
-        """盲猜宝可梦不单独建题库，用宝可梦题库里带对比属性的条目（旧题库没有，重建完才有）。"""
-        self.entries["pokedle"] = [e for e in self.entries["pokemon"] if "attrs" in e]
-        if self.entries["pokedle"]:
-            self.status["pokedle"] = f"{len(self.entries['pokedle'])} 题"
+    def _derive(self, base: str) -> None:
+        """盲猜题型用 base 题库里带对比属性（attrs）的条目；旧题库没有，重建完才有。"""
+        for cat, src in DERIVED.items():
+            if src == base:
+                self.entries[cat] = [e for e in self.entries[base] if "attrs" in e]
+                if self.entries[cat]:
+                    self.status[cat] = f"{len(self.entries[cat])} 题"
 
     async def _refresh_loop(self) -> None:
         # 游戏有缓存时一两分钟就建完，动画要等 B 站慢慢搜，放后面
         builders = {
             "game": self._build_games, "pokemon": self._build_pokemon, "country": self._build_country,
             "geo": self._build_geo, "jpgeo": self._build_jpgeo, "anime": self._build_anime,
-            "anisong": self._build_anisong,
+            "anisong": self._build_anisong, "mecha": self._build_mecha,
         }
         while True:
             for cat, build in builders.items():
@@ -354,6 +368,150 @@ class Bank:
             save_json(cache_path, cache)
             save_json(chars_path, chars)
         self._commit("anime", entries, complete=complete)
+
+    async def _build_mecha(self) -> None:
+        """猜萝卜：Bangumi 上高达系列动画和超级机器人大战系列游戏里的「机体」。高达再按型号、日文名对上
+        Gundam Wiki，用它的设定图和资料（世界观、阵营、机型、机械设计）；其他机体用 Bangumi 的图。
+
+        Bangumi 的机体详情和作品的 [年份, 收藏人数] 缓存在 bgm_mecha.json，Gundam Wiki 的信息框缓存在 gundam_wiki.json。
+        """
+        path = self.dir / "bgm_mecha.json"
+        cache = load_json(path) or {}
+        chars, works = cache.setdefault("chars", {}), cache.setdefault("works", {})
+        gundam_works, srw_works = await self._mecha_sources()
+        sources = [*gundam_works, *srw_works]
+        ids: set[str] = set()
+        for i, sid in enumerate(sources):
+            self.status["mecha"] = f"正在翻 Bangumi 的机体表 {i}/{len(sources)}"
+            try:
+                rows = await self._get(f"{BGM_API}/subjects/{sid}/characters")
+            except Exception as e:
+                logger.warning(f"[guess] bangumi characters of {sid} failed: {e}")
+                continue
+            ids |= {str(c["id"]) for c in rows if c.get("type") == 2}
+            await asyncio.sleep(0.3)
+        todo = sorted(ids - set(chars))
+        try:
+            for i, cid in enumerate(todo):
+                self.status["mecha"] = f"正在查机体资料 {i}/{len(todo)}"
+                try:
+                    chars[cid] = await self._mecha_char(cid)
+                except Exception as e:
+                    logger.warning(f"[guess] bangumi mecha {cid} failed: {e}")
+                if i % 50 == 0:
+                    save_json(path, cache)
+            todo = sorted({w[0] for cid in ids if cid in chars for w in chars[cid]["works"]} - set(works))
+            for i, sid in enumerate(todo):
+                self.status["mecha"] = f"正在查出场作品 {i}/{len(todo)}"
+                try:
+                    s = await self._get(f"{BGM_API}/subjects/{sid}")
+                except Exception as e:
+                    logger.warning(f"[guess] bangumi subject {sid} failed: {e}")
+                    continue
+                works[sid] = [int((s.get("date") or "0")[:4] or 0), popularity(s)]
+                await asyncio.sleep(0.3)
+        finally:
+            save_json(path, cache)
+
+        wiki_path = self.dir / "gundam_wiki.json"
+        self.status["mecha"] = "正在拉 Gundam Wiki 的机体资料"
+        try:
+            pages = await gundam_wiki(self._http())
+            save_json(wiki_path, pages)
+        except Exception as e:  # 拉不到就用上次的；一次都没拉到过，高达也用 Bangumi 的图、不出盲猜
+            logger.warning(f"[guess] gundam wiki failed: {e}")
+            pages = load_json(wiki_path) or {}
+        found = {cid: chars[cid] for cid in ids if cid in chars}
+        # 只有在高达作品里出过场的才去对 Gundam Wiki，不然 EVA 初号机会对上某台叫「初号機」的高达
+        matched = match_gundam_wiki({k: c for k, c in found.items() if gundam_works & {w[0] for w in c["works"]}}, pages)
+        # 同一台机体在 Bangumi 上常按作品建了好几个条目，对上同一个 Wiki 页面的合并成一道题
+        groups: dict[str, list] = {}
+        for cid, c in found.items():
+            groups.setdefault(matched.get(cid) or f"bgm-{cid}", []).append(c)
+        files = {t: f for t in groups if t in pages and (f := pages[t].get("image", "").split("\n")[0].split(";")[0].strip())}
+        self.status["mecha"] = "正在找设定图"
+        try:
+            images = await gundam_wiki_images(self._http(), sorted(set(files.values())))
+        except Exception as e:
+            logger.warning(f"[guess] gundam wiki images failed: {e}")
+            images = {}
+        entries = []
+        for key, group in groups.items():
+            group.sort(key=lambda c: c["collects"], reverse=True)
+            seen = [w for c in group for w in c["works"] if (works.get(w[0]) or [0])[0]]
+            # 出自：高达机体取高达系列里看的人最多的一部；其他机体取最早的动画（一般是原作，后来的多是客串、恶搞），
+            # 没有动画的（超级机器人大战原创机体）取看的人最多的游戏。登场年份取最早的
+            gundam = [w for w in seen if w[0] in gundam_works]
+            anime = [w for w in seen if w[1] == 2]
+            if gundam:
+                top = max(gundam, key=lambda w: works[w[0]][1])
+            elif anime:
+                top = min(anime, key=lambda w: works[w[0]][0])
+            else:
+                top = max(seen, key=lambda w: works[w[0]][1], default=None)
+            char = {
+                **group[0], "cn": next((c["cn"] for c in group if c["cn"]), ""),
+                "aliases": dedupe(a for c in group for a in c["aliases"]), "collects": sum(c["collects"] for c in group),
+                "work": top[2] if top else "", "year": min((works[w[0]][0] for w in seen), default=0),
+            }
+            image = images.get(files.get(key, "")) or char["image"]
+            if image and (entry := mecha_entry(char, pages.get(key), image, key if key in pages else "")):
+                entries.append((char["collects"], entry))
+        # 同名的（Bangumi 上同一台的几个条目没对上 Wiki、或者对上了不同版本）只留收藏多的，名字并过去
+        entries.sort(key=lambda x: x[0], reverse=True)
+        kept: dict[str, dict] = {}
+        for _, e in entries:
+            if (key := norm(e["title"])) in kept:
+                kept[key]["names"] = dedupe([*kept[key]["names"], *e["names"]])
+            else:
+                kept[key] = e
+        # 收藏人数排前一半的是大众题
+        kept_list = list(kept.values())
+        self._commit("mecha", [{**e, "tier": "main" if i < len(kept_list) / 2 else "niche"} for i, e in enumerate(kept_list)])
+
+    async def _mecha_sources(self) -> tuple[set[str], set[str]]:
+        """萝卜从哪些作品里挖，(高达系列动画, 超级机器人大战系列游戏) 的 Bangumi ID：
+        高达搜出来的再顺着续作、前传等关系找全。"""
+        self.status["mecha"] = "正在找高达和超级机器人大战的作品"
+
+        async def search(keyword: str, kind: int, keep) -> list[str]:
+            out = []
+            for offset in range(0, 200, 50):
+                payload = {"keyword": keyword, "filter": {"type": [kind]}}
+                rows = (await self._post(f"{BGM_API}/search/subjects", payload, params={"limit": 50, "offset": offset})).get("data") or []
+                out += [str(s["id"]) for s in rows if keep(f"{s['name']} {s.get('name_cn') or ''}")]
+                if len(rows) < 50:
+                    break
+                await asyncio.sleep(0.3)
+            return out
+
+        def gundam(name: str) -> bool:
+            return any(k in name.lower() for k in ("高达", "ガンダム", "gundam"))
+
+        found = dict.fromkeys(await search("高达", 2, gundam) + await search("ガンダム", 2, gundam))
+        queue = list(found)
+        while queue and len(found) < 300:
+            for r in await self._get(f"{BGM_API}/subjects/{queue.pop()}/subjects"):
+                if r.get("type") == 2 and gundam(f"{r['name']} {r.get('name_cn') or ''}") and str(r["id"]) not in found:
+                    found[str(r["id"])] = None
+                    queue.append(str(r["id"]))
+            await asyncio.sleep(0.3)
+        srw = await search("超级机器人大战", 4, lambda n: "机器人大战" in n or "ロボット大戦" in n)
+        srw += await search("スーパーロボット大戦", 4, lambda n: "机器人大战" in n or "ロボット大戦" in n)
+        return set(found), set(srw) - set(found)
+
+    async def _mecha_char(self, cid: str) -> dict:
+        """Bangumi 一台机体：日文名、中文名、别名、全高、图、收藏人数、出场的动画和游戏 [[作品 ID, 类型, 名字], ...]。"""
+        c = await self._get(f"{BGM_API}/characters/{cid}")
+        info = infobox(c)
+        rows = await self._get(f"{BGM_API}/characters/{cid}/subjects")
+        await asyncio.sleep(0.3)
+        return {
+            "id": cid, "name": c["name"], "cn": info.get("简体中文名") if isinstance(info.get("简体中文名"), str) else "",
+            "aliases": aliases(info), "info": {k: info[k] for k in ("全高", "身高") if isinstance(info.get(k), str)},
+            "image": (c.get("images") or {}).get("large") or "", "collects": (c.get("stat") or {}).get("collects") or 0,
+            "works": [[str(r["id"]), r["type"], r.get("name_cn") or r["name"]] for r in rows if r.get("type") in (2, 4)],
+        }
 
     async def _build_anisong(self) -> None:
         """猜动画题库里能在 AnimeThemes 找到 OP / ED 音频的作品。结果缓存在 media_anisong.json，只查新进题库的。"""

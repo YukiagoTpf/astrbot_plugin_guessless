@@ -13,13 +13,14 @@ pyproject.toml        开发工具配置（ruff）
 core/
   bank.py             题库：各题型的构建（Bank._build_*）、定期刷新和重建判断（_settings / _stale）、出题（pick）
   entries.py          题目条目和提示（*_entry、country_basics、scrub），纯函数、不联网
-  sources.py          外部数据源：Wikidata、B 站、AniList、AnimeThemes、IGDB、Steam、PokeAPI；HttpError
+  sources.py          外部数据源：Wikidata、B 站、AniList、AnimeThemes、IGDB、Steam、PokeAPI、Gundam Wiki；HttpError
   geo.py              地理：GeoNames、Wikidata 国家资料、街景取景、Natural Earth 轮廓，以及各种版本常量
   cards.py            卡片渲染（Pillow）：九宫格、街景三联、国家轮廓（答案卡带邻国底图）、世界地图、对比表、听歌进度条
   audio.py            听歌猜番的音频：ffmpeg 解码、切片段
   answer.py           答案归一化和判定
   store.py            数据目录里 JSON 文件的读写
   hint_data.py        手写的特产、名胜、美食提示
+  mecha_data.py       手写的 Gundam Wiki 资料中译（世界观、阵营、机型、机械设计）和机体外号
   lines.py            所有发到群里的文案
 docs/                 用户文档
 ```
@@ -64,6 +65,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | `hint_data.py`、`entries.scrub`、地点和国家的提示规则、报距离用的位置（`geo.towns` / `centroid`、`places`） | `geo.HINTS_VERSION` |
   | 动画、游戏的提示规则（标签筛选、提示顺序） | `entries.WORK_HINTS_VERSION` |
   | 宝可梦条目格式（盲猜宝可梦的 `attrs`） | `entries.POKEMON_VERSION` |
+  | 萝卜的选题、条目格式、`mecha_data.py` | `entries.MECHA_VERSION` |
   | 听歌猜番的选曲规则（`sources.anime_themes`） | `bank.ANISONG_VERSION` |
   | 街景取景规则（全景缓存作废重找） | `geo.SAMPLING` |
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |
@@ -78,6 +80,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
 - 不要改动这些处理方式：`geo.EXCLUDE` 里的地区不出题；国界只用 Natural Earth 的 CHN 视角数据；邻国底图按 `FCLASS_CN` 合并（`geo.MERGED_FCLASS`）、`geo.SKIP_FEATURES` 不画。
 - 提示里不能出现答案的国名、县名、首都名，也不能用「法式」「日元」这种拿国名首字的说法。
 - 听歌猜番不用 AnimeThemes 标了 NSFW 的版本；音频只在出题时现下，不存盘。
+- 萝卜的阵营不翻 G 高达里以现实国家命名的（新香港、新中国……），对比表和提示里显示「—」。
 
 ## 外部接口
 

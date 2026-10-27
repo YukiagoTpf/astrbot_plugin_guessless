@@ -14,17 +14,31 @@ from astrbot.api.star import Context, Star, StarTools
 from .core import audio, cards, geo
 from .core.answer import candidates, is_correct
 from .core.bank import Bank
-from .core.entries import POKEDLE_CLUES, pokedle_row
+from .core.entries import (
+    MECHADLE_CLUES,
+    MECHADLE_COLUMNS,
+    POKEDLE_CLUES,
+    POKEDLE_COLUMNS,
+    mechadle_row,
+    pokedle_row,
+)
 from .core.lines import LINES, say
 from .core.store import load_json, save_json
 
 # 题型 -> 开题指令，也是卡片标题；排行榜指令去掉开头的「猜」
 MODES = {
     "game": "猜游戏", "anime": "猜动画", "anisong": "听歌猜番", "pokemon": "猜宝可梦", "pokedle": "盲猜宝可梦",
-    "geo": "猜地点", "country": "猜国家", "jpgeo": "猜日本地点",
+    "mecha": "猜萝卜", "mechadle": "盲猜萝卜", "geo": "猜地点", "country": "猜国家", "jpgeo": "猜日本地点",
 }
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
-GRID = {"game", "anime", "pokemon"}  # 九宫格逐格揭开的题型
+GRID = {"game", "anime", "pokemon", "mecha"}  # 九宫格逐格揭开的题型
+# 盲猜：不给图，每猜一个回一行对比。题型 -> (表头第一列, 对比的列, 「提示」给的线索, 算一行的函数)
+BLIND = {
+    "pokedle": ("宝可梦", POKEDLE_COLUMNS, POKEDLE_CLUES, pokedle_row),
+    "mechadle": ("机体", MECHADLE_COLUMNS, MECHADLE_CLUES, mechadle_row),
+}
+# 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对
+BY_KEY = {"mecha", "mechadle"}
 GEO_ALIASES = {"猜街景"}
 JPGEO_ALIASES = {"猜日本街景"}
 COMMANDS = set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始"} | GEO_ALIASES | JPGEO_ALIASES
@@ -125,6 +139,18 @@ class GuessPlugin(Star):
         async for r in self._start(event, "pokedle"):
             yield r
 
+    @filter.command("猜萝卜")
+    async def guess_mecha(self, event: AstrMessageEvent):
+        """开一道猜萝卜（高达和超级机器人大战的机体）"""
+        async for r in self._start(event, "mecha"):
+            yield r
+
+    @filter.command("盲猜萝卜")
+    async def guess_mechadle(self, event: AstrMessageEvent):
+        """开一道盲猜萝卜（不给图，猜一台高达机体看资料对比）"""
+        async for r in self._start(event, "mechadle"):
+            yield r
+
     @filter.command("猜地点", alias=GEO_ALIASES)
     async def guess_geo(self, event: AstrMessageEvent):
         """开一道猜地点（Google 街景，猜国家）"""
@@ -167,6 +193,16 @@ class GuessPlugin(Star):
     async def pokedle_board(self, event: AstrMessageEvent):
         """盲猜宝可梦答对次数排行"""
         yield self._board(event, "pokedle")
+
+    @filter.command("萝卜排行榜")
+    async def mecha_board(self, event: AstrMessageEvent):
+        """猜萝卜答对次数排行"""
+        yield self._board(event, "mecha")
+
+    @filter.command("盲猜萝卜排行榜")
+    async def mechadle_board(self, event: AstrMessageEvent):
+        """盲猜萝卜答对次数排行"""
+        yield self._board(event, "mechadle")
 
     @filter.command("地点排行榜")
     async def geo_board(self, event: AstrMessageEvent):
@@ -274,8 +310,8 @@ class GuessPlugin(Star):
         if limit and len(wrong) >= limit:
             return  # 次数用完了，说对了也不算
         key, item = self.bank.match(cat, text, prefer=rnd.key)
-        # 地点类按「说的是哪个地方」判，「几内亚」不算「赤道几内亚」；其他题型按答案的各种说法判
-        if (key == rnd.key) if self.bank.places[cat] else is_correct(text, rnd.cands):
+        # 地点类按「说的是哪个地方」判，「几内亚」不算「赤道几内亚」；萝卜同理；其他题型按答案的各种说法判
+        if (key == rnd.key) if self.bank.places[cat] or cat in BY_KEY else is_correct(text, rnd.cands):
             chain = self._finish(gid, rnd, uid, event.get_sender_name())
             if chain:
                 yield event.chain_result(chain)
@@ -339,8 +375,8 @@ class GuessPlugin(Star):
 
         # 盲猜宝可梦要一只只推，两分钟不够
         seconds = self.config.get("round_seconds", 120)
-        if cat == "pokedle":
-            seconds = self.config.get("pokedle_round_seconds", 300)
+        if cat in BLIND:  # 要一个个推，两分钟不够
+            seconds = self.config.get("blind_round_seconds", 300)
         rnd.cands = candidates(rnd.entry["names"])
         rnd.deadline = time.monotonic() + seconds
         rnd.timer = asyncio.create_task(self._expire(gid, rnd, seconds))
@@ -365,12 +401,13 @@ class GuessPlugin(Star):
     async def _load(self, rnd: Round, entry: dict) -> None:
         cat = rnd.category
         rnd.hints, rnd.image, rnd.reveal = entry["hints"], None, None
-        if cat == "pokedle":
+        if cat in BLIND:
             # 不给图；「提示」只给表里比不出来的线索，一开始一条都没有
+            name, columns, clue_keys, _ = BLIND[cat]
             clues = {k: v for k, v in entry["hints"]}
-            rnd.hints = [[k, clues[k]] for k in POKEDLE_CLUES if clues.get(k)]
+            rnd.hints = [[k, clues[k]] for k in clue_keys if clues.get(k)]
             rnd.shown = 0
-            rnd.image = cards.pokedle_table([], say("pokedle_empty"))
+            rnd.image = cards.compare_table(name, columns, [], say(f"{cat}_empty"))
             rnd.reveal = cards.load(await self.bank.image(entry), contain=True)
         elif cat == "anisong":
             # OP 比 ED 好认，抽中的概率翻倍
@@ -476,7 +513,7 @@ class GuessPlugin(Star):
     def _question(self, rnd: Round) -> list[list]:
         """出题和提示发的消息：一张卡片，标题、进度和提示都画在图上；听歌猜番再加一条语音。"""
         image, status = rnd.image, f"{rnd.shown}/{self._steps(rnd)} · 剩 {rnd.left()} 秒"
-        if rnd.category == "pokedle":
+        if rnd.category in BLIND:
             status = f"已猜 {len(rnd.history)} 次 · 剩 {rnd.left()} 秒"
         if rnd.category == "anisong":
             sec = audio.CLIPS[rnd.shown - 1]
@@ -487,12 +524,13 @@ class GuessPlugin(Star):
 
     def _feedback(self, rnd: Round, key: str, item: dict) -> tuple[str, list]:
         """猜错时回什么，(文字, 卡片)：地点类报距离，猜国家再附一张按远近上色的世界地图；
-        盲猜宝可梦回对比表；其他题型不回。"""
+        盲猜回对比表；其他题型不回。"""
         cat = rnd.category
-        if cat == "pokedle" and (attrs := item.get("attrs")):
-            rnd.history.insert(0, {"key": key, "title": item["title"], "row": pokedle_row(attrs, rnd.entry["attrs"])})
-            rnd.image = cards.pokedle_table([(h["title"], h["row"]) for h in rnd.history])
-            return say("pokedle_wrong", place=item["title"]), self._question(rnd)[0]
+        if cat in BLIND and (attrs := item.get("attrs")):
+            name, columns, _, row = BLIND[cat]
+            rnd.history.insert(0, {"key": key, "title": item["title"], "row": row(attrs, rnd.entry["attrs"])})
+            rnd.image = cards.compare_table(name, columns, [(h["title"], h["row"]) for h in rnd.history])
+            return say("blind_wrong", place=item["title"]), self._question(rnd)[0]
         spot = rnd.entry.get("spot")
         if "points" not in item or not spot:
             return "", []
@@ -515,8 +553,8 @@ class GuessPlugin(Star):
         return self._card(rnd, image, f"已猜 {len(guesses)} 个 · 剩 {rnd.left()} 秒", hints[:9])
 
     def _progress(self, rnd: Round) -> tuple[str, str]:
-        """答对文案的档位和「用了多少」：九宫格按格数，听歌猜番按段数，盲猜宝可梦按全群猜了几次，其他按线索数。"""
-        if rnd.category == "pokedle":
+        """答对文案的档位和「用了多少」：九宫格按格数，听歌猜番按段数，盲猜按全群猜了几次，其他按线索数。"""
+        if rnd.category in BLIND:
             n = len(rnd.history) + 1
             return ("correct_fast" if n <= 3 else "correct_slow" if n >= 10 else "correct"), f"{n} 次"
         n, steps = rnd.shown, self._steps(rnd)
