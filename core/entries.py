@@ -65,6 +65,11 @@ MECHA_VERSION = "srw-v2"  # 猜萝卜的选题和条目规则改了就换个名�
 MECHADLE_COLUMNS = ("世界观", "登场年份", "阵营", "机型", "机械设计", "型号开头")
 MECHADLE_CLUES = ("出自", "全高", "首字")
 # 高达模型系列的世界观：这些作品里的机体是改造的模型，和原作机体同名
+VTUBER_VERSION = "vtbs-v1"  # 猜Vtuber的选题和条目规则、vtuber_data.py 改了就换个名字，题库重建
+VT_LANGS = {"cn": "中文", "zh": "中文", "ch": "中文", "jp": "日语", "en": "英语", "id": "印尼语", "kr": "韩语"}
+_VT_SUFFIX = re.compile(r"[\s_\-·.]*(?:official|channel|vtuber|官方|频道)$|[\s_\-]+en$", re.I)
+# 拆开中英文名字时不单独算答案的英文半边：太常见，群里随口一说就成了一次猜测
+VT_GENERIC = {"sama", "chan", "kun", "queen", "kira", "official", "channel", "real", "大人", "酱", "官方"}
 BUILD_ERAS = {"Build Fighters", "Build Divers", "Gunpla Builders", "Gundam Breaker", "Not Applicable/Specified"}
 # 机体型号：开头一串带连字符、带数字的字母数字，如 RX-78-2、GN-0000+GNR-010、RX-79[G]Ez-8
 _MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\[\]()+/.α-ωΑ-Ω]*-[A-Za-z0-9\[\]()+/.\-α-ωΑ-Ω]*")
@@ -536,6 +541,67 @@ def mecha_entry(char: dict, page: dict | None, image: str, wiki_title: str = "")
             "prefix": prefix,
         }
     return entry
+
+
+def vt_lang(v: dict) -> str:
+    """VTuber Database 记的主要语言（名字的 default 字段），写法很杂：cn、CN、zh-cn、ID(印度尼西亚)……"""
+    code = re.sub(r"[^a-z]", "", (v["name"].get("default") or "cn").lower())[:2]
+    return VT_LANGS.get(code, "中文")
+
+
+def vt_clean(name: str) -> str:
+    """去掉昵称后面的 Official、_Channel、_EN 这类后缀：「東雪蓮Official」→「東雪蓮」。"""
+    name = (name or "").strip().strip("丶-_ ")
+    while (short := _VT_SUFFIX.sub("", name).strip("丶-_ ")) != name and len(norm(short)) >= (3 if short.isascii() else 2):
+        name = short
+    return name
+
+
+def vt_title(v: dict, acc: dict) -> str:
+    """题目名：有中文名用中文名（日本的 V 多有国内通行的译名），没有用主要语言的名字，再没有用 B 站昵称。"""
+    names = {k.lower(): x for k, x in v["name"].items() if isinstance(x, str) and k not in ("default", "extra")}
+    default = (v["name"].get("default") or "").lower()
+    return vt_clean(names.get("cn") or names.get(default) or acc.get("uname") or "")
+
+
+def vt_names(names: list[str]) -> list[str]:
+    """能算答对的名字：原名、去后缀的，再把「七海Nana7mi」这种中文加英文的拆开，两半都算。"""
+    out = []
+    for name in names:
+        short = vt_clean(name)
+        out += [name, short]
+        parts = re.findall(r"[A-Za-z][A-Za-z0-9]{2,}|[^\x00-\x7f]{2,}", short)
+        if len(parts) == 2 and {p.isascii() for p in parts} == {True, False}:
+            out += [p for p in parts if p.lower() not in VT_GENERIC]
+    return dedupe(out)
+
+
+def vtuber_entry(v: dict, acc: dict, team: str, mates: list[str]) -> dict | None:
+    """v 是 VTuber Database 的条目，acc 是它粉丝最多的 B 站号（vtbs.moe），team 是所属团体，mates 是同团的其他人。"""
+    title, face = vt_title(v, acc), acc.get("face") or ""
+    if not title or not face.startswith("http"):
+        return None
+    names = {k.lower(): x for k, x in v["name"].items() if isinstance(x, str) and k not in ("default", "extra")}
+    original = vt_clean(names.get("jp") or names.get("en") or "")
+    if norm(original) == norm(title):
+        original = ""
+    fans, guard = acc.get("follower") or 0, acc.get("guardNum") or 0
+    return finish_entry({
+        "id": f"vt-{acc['mid']}",
+        "title": title,
+        "original": original,
+        "answer": f"{title}（{original}）" if original else title,
+        "names": vt_names([*names.values(), *(v["name"].get("extra") or []), acc.get("uname") or ""]),
+        "images": [face.replace("http://", "https://", 1)],
+        "fit": "contain",  # 头像是正方形，整张缩进图区正中，不裁成 16:9
+        "hints": [
+            ["语言", vt_lang(v)],
+            ["所属", team],
+            ["B站粉丝", fmt_pop(fans) or f"{fans} 人"],
+            ["大航海", f"{guard} 人" if guard else ""],
+            ["同团", "、".join(mates[:2])],
+        ],
+    })
 
 
 def fmt_pop(pop: float) -> str:

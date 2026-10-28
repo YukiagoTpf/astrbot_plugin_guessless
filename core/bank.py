@@ -2,7 +2,8 @@
 
 动画取 Bangumi 最热门的作品，游戏从 Metacritic 高分游戏里按热度和评分分大众 / 小众两档，宝可梦取 PokeAPI 全图鉴，
 地点和日本地点是 Google 街景随机取景，国家是 Natural Earth 轮廓。找不到图的作品不进题库。
-听歌猜番是猜动画题库里在 AnimeThemes 有 OP / ED 的作品；猜萝卜是 Bangumi 上高达系列动画和超级机器人大战里的机体。
+听歌猜番是猜动画题库里在 AnimeThemes 有 OP / ED 的作品；猜萝卜是 Bangumi 上高达系列动画和超级机器人大战里的机体；
+猜Vtuber是 vtbs.moe 名单里 B 站粉丝最多的国内和国外虚拟主播。
 盲猜宝可梦、盲猜萝卜不单独建题库，用宝可梦、萝卜题库里带对比属性的条目。
 题库、各数据源的查询结果和图片都缓存在插件数据目录，出题时只有首次用到的图片和街景需要联网。
 """
@@ -12,19 +13,21 @@ import hashlib
 import random
 import re
 import time
+from collections import defaultdict
 from pathlib import Path
 
 import aiohttp
 
 from astrbot.api import logger
 
-from . import audio, cards, geo
+from . import audio, cards, geo, vtuber_data
 from .answer import candidates, find, norm
 from .entries import (
     ANIME_KINDS,
     GAME_INFO,
     MECHA_VERSION,
     POKEMON_VERSION,
+    VTUBER_VERSION,
     WORK_HINTS_VERSION,
     TagStats,
     aliases,
@@ -45,6 +48,9 @@ from .entries import (
     pref_entry,
     pref_names,
     split_tiers,
+    vt_lang,
+    vt_title,
+    vtuber_entry,
 )
 from .sources import (
     ANIMETHEMES,
@@ -60,6 +66,7 @@ from .sources import (
     igdb_media,
     pokemon_species,
     steam_shots,
+    vtubers,
     wikidata,
     year_close,
 )
@@ -78,6 +85,7 @@ WEB_UA = (
 MIN_POOL = 20
 # 盲猜题型 -> 用哪个题库（只出带 attrs 的条目）
 DERIVED = {"pokedle": "pokemon", "mechadle": "mecha"}
+EXACT_ONLY = {"vtuber"}  # 只认完整说出某个名字的题型，见 match
 
 
 class Bank:
@@ -88,7 +96,7 @@ class Bank:
         self.config = config
         self.entries: dict[str, list] = {
             "anime": [], "anisong": [], "game": [], "pokemon": [], "pokedle": [], "mecha": [], "mechadle": [],
-            "geo": [], "country": [], "jpgeo": [],
+            "vtuber": [], "geo": [], "country": [], "jpgeo": [],
         }
         self.meta: dict[str, dict] = {cat: {} for cat in self.entries}
         # 地点类可以猜的国家 / 都道府县 {代码: {"title", "names", "points"}}，没街景、不出题的也在里面；
@@ -140,7 +148,8 @@ class Bank:
             items = list(src.items()) if self.places[src_cat] else [(e.get("group", e["id"]), e) for e in src]
             index = [(k, candidates(item["names"])) for k, item in items]
             cached = self._index[src_cat] = (src, len(src), index, dict(items))
-        key = find(text, cached[2], prefer)
+        # Vtuber 的 B 站昵称常带日常用语（「嘉然今天吃什么」「喵西早点睡」），说出一段就算会误伤闲聊，只认全名
+        key = find(text, cached[2], prefer, loose=cat not in EXACT_ONLY)
         return key, cached[3].get(key)
 
     async def image(self, entry: dict) -> bytes:
@@ -191,7 +200,7 @@ class Bank:
         return self._shapes
 
     def _size(self, cat: str) -> int:
-        return self.config.get(f"{cat}_pool_size", 1000 if cat == "anime" else 500)
+        return self.config.get(f"{cat}_pool_size", {"anime": 1000, "vtuber": 300}.get(cat, 500))
 
     def _media_on(self, cat: str) -> bool:
         """动画、宝可梦、国家轮廓免 key，游戏要 IGDB 的 key，地点要 Google 街景的 key，听歌猜番要 ffmpeg。"""
@@ -212,6 +221,8 @@ class Bank:
             return [c.get("pokemon_main_gen", 4), POKEMON_VERSION]
         if cat == "mecha":
             return [MECHA_VERSION]
+        if cat == "vtuber":
+            return [self._size("vtuber"), VTUBER_VERSION]
         if cat == "anisong":  # 猜动画题库重建了，这边跟着换
             return [ANISONG_VERSION, self.meta["anime"].get("built_at")]
         if cat == "geo":
@@ -263,6 +274,7 @@ class Bank:
             "game": self._build_games, "pokemon": self._build_pokemon, "country": self._build_country,
             "geo": self._build_geo, "jpgeo": self._build_jpgeo, "anime": self._build_anime,
             "anisong": self._build_anisong, "mecha": self._build_mecha,
+            "vtuber": self._build_vtuber,
         }
         while True:
             for cat, build in builders.items():
@@ -368,6 +380,52 @@ class Bank:
             save_json(cache_path, cache)
             save_json(chars_path, chars)
         self._commit("anime", entries, complete=complete)
+
+    async def _build_vtuber(self) -> None:
+        """猜Vtuber：vtbs.moe 的虚拟主播名单按 B 站粉丝数排，国内（主要说中文的）取三分之二、国外取三分之一。
+        B 站粉丝数正好反映国内群友熟不熟；每边前六成算大众题。题图是 B 站头像。"""
+        self.status["vtuber"] = "正在从 vtbs.moe 拉虚拟主播名单"
+        vdb, info = await vtubers(self._http())
+        teams = {v["uuid"]: v["name"].get(v["name"].get("default", "cn")) or "" for v in vdb if v.get("type") == "group"}
+        skip, skip_words = {norm(x) for x in vtuber_data.EXCLUDE}, [norm(x) for x in vtuber_data.SKIP_WORDS]
+        skip_teams = {norm(x) for x in vtuber_data.EXCLUDE_GROUPS}
+        rows = []
+        for v in vdb:
+            if v.get("type") != "vtuber" or v.get("bot"):
+                continue
+            accounts = [info[str(a["id"])] for a in v.get("accounts") or [] if a.get("platform") == "bilibili"
+                        and str(a.get("id")) in info]
+            if not accounts:
+                continue
+            acc = max(accounts, key=lambda a: a.get("follower") or 0)
+            names = [x for x in v["name"].values() if isinstance(x, str)] + (v["name"].get("extra") or [])
+            words = [norm(x) for x in names + [acc.get("uname") or ""]]
+            if (any(w in skip for w in words) or any(s in w for s in skip_words for w in words)
+                    or norm(teams.get(v.get("group"), "")) in skip_teams):
+                continue
+            rows.append((v, acc))
+        rows.sort(key=lambda r: r[1].get("follower") or 0, reverse=True)
+        mates = defaultdict(list)  # 团体 → 成员名，粉丝多的在前
+        for v, acc in rows:
+            if v.get("group") in teams:
+                mates[v["group"]].append(vt_title(v, acc))
+
+        size = self._size("vtuber")
+        local = [r for r in rows if vt_lang(r[0]) == "中文"]
+        foreign = [r for r in rows if vt_lang(r[0]) != "中文"]
+        entries = []
+        for part, n in ((local, round(size * 2 / 3)), (foreign, size - round(size * 2 / 3))):
+            picked = []
+            for v, acc in part:
+                if len(picked) >= n:
+                    break
+                team = teams.get(v.get("group"), "")
+                title = vt_title(v, acc)
+                others = [m for m in mates.get(v.get("group"), []) if m != title and norm(m) != norm(team)]
+                if entry := vtuber_entry(v, acc, team, others):
+                    picked.append(entry)
+            entries += [{**e, "tier": "main" if i < len(picked) * 0.6 else "niche"} for i, e in enumerate(picked)]
+        self._commit("vtuber", entries)
 
     async def _build_mecha(self) -> None:
         """猜萝卜：Bangumi 上高达系列动画和超级机器人大战系列游戏里的「机体」。高达再按型号、日文名对上

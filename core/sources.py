@@ -1,5 +1,5 @@
 """外部数据源：Wikidata（各地区译名、跨站 ID）、B 站 / AniList（动画）、AnimeThemes（动画 OP / ED）、
-IGDB / Steam（游戏）、PokeAPI（宝可梦）、Gundam Wiki（高达机体资料和设定图）。"""
+IGDB / Steam（游戏）、PokeAPI（宝可梦）、Gundam Wiki（高达机体资料和设定图）、vtbs.moe（虚拟主播）。"""
 
 import asyncio
 import json
@@ -38,6 +38,9 @@ IGDB_SKIP_TYPES = {1, 2, 3, 5, 6, 7, 13, 14}
 # 重制 / 加强版 / 移植：本体也在候选里时不出（截图和本体一样，热度也算在本体上）
 IGDB_EDITION_TYPES = {9, 10, 11}
 STEAM_API = "https://store.steampowered.com/api/appdetails"
+# vtbs.moe：社区维护的虚拟主播名单（VTuber Database，含团体和各语言的名字）和 B 站账号数据（粉丝数、头像），免 key
+VTB_LIST = "https://vdb.vtbs.moe/json/list.json"
+VTB_INFO = "https://api.vtbs.moe/v1/info"
 POKEAPI = "https://beta.pokeapi.co/graphql/v1beta"
 POKEMON_ART = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/{}.png"
 # PokeAPI 的语言 ID：1 日文假名、2 日文罗马音、4 繁中、9 英文、11 日文、12 简中
@@ -426,6 +429,18 @@ async def pokemon_species(session: aiohttp.ClientSession) -> list[dict]:
     if data.get("errors"):
         raise RuntimeError(f"PokeAPI: {data['errors'][0].get('message')}")
     return data["data"]["pokemon_v2_pokemonspecies"]
+
+
+async def vtubers(session: aiohttp.ClientSession) -> tuple[list[dict], dict[str, dict]]:
+    """(VTuber Database 的全部条目, {B 站 mid: vtbs.moe 的账号数据})。两个都是几 MB 的 JSON，各一次请求。"""
+    timeout = aiohttp.ClientTimeout(total=120)
+    data = []
+    for url in (VTB_LIST, VTB_INFO):
+        async with session.get(url, headers={"User-Agent": UA}, timeout=timeout) as r:
+            if r.status >= 400:
+                raise HttpError("vtbs.moe", r.status)
+            data.append(await r.json(content_type=None))
+    return data[0]["vtbs"], {str(x["mid"]): x for x in data[1] if x.get("mid")}
 
 
 async def steam_shots(session: aiohttp.ClientSession, appid: str, ua: str) -> list[str]:

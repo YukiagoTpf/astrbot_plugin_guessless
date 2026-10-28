@@ -11,7 +11,7 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, StarTools
 
-from .core import audio, cards, geo
+from .core import audio, cards, geo, members
 from .core.answer import candidates, is_correct
 from .core.bank import Bank
 from .core.entries import (
@@ -28,21 +28,33 @@ from .core.store import load_json, save_json
 # 题型 -> 开题指令，也是卡片标题；排行榜指令去掉开头的「猜」
 MODES = {
     "game": "猜游戏", "anime": "猜动画", "anisong": "听歌猜番", "pokemon": "猜宝可梦", "pokedle": "盲猜宝可梦",
-    "mecha": "猜萝卜", "mechadle": "盲猜萝卜", "geo": "猜地点", "country": "猜国家", "jpgeo": "猜日本地点",
+    "mecha": "猜萝卜", "mechadle": "盲猜萝卜", "vtuber": "猜Vtuber", "member": "猜群友", "geo": "猜地点",
+    "country": "猜国家", "jpgeo": "猜日本地点",
 }
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
-GRID = {"game", "anime", "pokemon", "mecha"}  # 九宫格逐格揭开的题型
+OFFLINE = {"country"}  # 暂时下线的题型：开题和排行榜都只回一句，不出题、不播报
+GRID = {"game", "anime", "pokemon", "mecha", "vtuber"}  # 九宫格逐格揭开的题型
 # 盲猜：不给图，每猜一个回一行对比。题型 -> (表头第一列, 对比的列, 「提示」给的线索, 算一行的函数)
 BLIND = {
     "pokedle": ("宝可梦", POKEDLE_COLUMNS, POKEDLE_CLUES, pokedle_row),
     "mechadle": ("机体", MECHADLE_COLUMNS, MECHADLE_CLUES, mechadle_row),
 }
-# 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对
-BY_KEY = {"mecha", "mechadle"}
+# 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对；
+# Vtuber 的名字也常互相包含；群友按 @、QQ 号、名片认人
+BY_KEY = {"mecha", "mechadle", "vtuber", "member"}
 GEO_ALIASES = {"猜街景"}
 JPGEO_ALIASES = {"猜日本街景"}
-COMMANDS = set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始"} | GEO_ALIASES | JPGEO_ALIASES
+VTUBER_ALIASES = {"猜vtuber", "猜VTuber", "猜V", "猜v"}
+VTUBER_BOARD_ALIASES = {"vtuber排行榜", "VTuber排行榜", "V排行榜"}
+COMMANDS = (
+    set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始"} | GEO_ALIASES | JPGEO_ALIASES | VTUBER_ALIASES
+    | VTUBER_BOARD_ALIASES
+)
+# @bot 说「猜xx」「盲猜xx」「听歌猜xx」但没有这个题型时回一句
+UNKNOWN_MODE = re.compile(r"^(?:盲猜|听歌猜|猜)\S{1,12}$")
+AT_TEXT = re.compile(r"\s*@[^@]*?\(\d+\)\s*")  # message_str 里 @ 别人的部分：「 @名片(QQ号) 」
 HOUR = 3600
+BOARD_TOP = 5  # 整点排行榜每个题型列前几名
 
 
 @dataclass
@@ -67,6 +79,9 @@ class Round:
     pcm: bytes = b""  # 听歌猜番：解码好的音频，见 audio.decode
     peek: object = None  # 盲猜萝卜：对比表旁边放的一格设定图，整道题不变
     song: str = ""  # 听歌猜番：答案卡上写的歌名和歌手
+    avatar: object = None  # 猜群友：头像（只在内存里）
+    plan: list = field(default_factory=list)  # 猜群友：每段露哪几格，见 members.plan
+    roster: object = None  # 猜群友：开题时的群成员，认人用，见 members.Roster
 
     def left(self) -> int:
         return max(0, round(self.deadline - time.monotonic()))
@@ -92,6 +107,13 @@ class GuessPlugin(Star):
         # 群号 -> 管理员额外放开的题数，每小时额度用完后再扣，不过期
         self.bonus: dict[str, int] = load_json(self.data_dir / "bonus.json") or {}
         self._announcer: asyncio.Task | None = None
+        # 群号 -> 发消息用的 unified_msg_origin，整点播报排行榜要用；群里有人说话就记下
+        self.origins: dict[str, str] = load_json(self.data_dir / "origins.json") or {}
+        # 群号 -> 上次播报时各题型的答对次数 {题型: {用户: 次数}}，算「这段时间新增」，没变就不播
+        self.broadcasts: dict[str, dict] = load_json(self.data_dir / "broadcasts.json") or {}
+        self._slot, self._due = self._board_slot(), set()
+        self._broadcaster: asyncio.Task | None = None
+        self.member_bags: dict[str, set] = {}  # 群号 -> 这一轮猜群友出过题的人，都出过了再清空
 
     async def initialize(self):
         self.bank.start()
@@ -101,13 +123,15 @@ class GuessPlugin(Star):
                 self._quota_refund(gid, rec.get("paid", ""))
             save_json(self.data_dir / "rounds.json", {})
             self._announcer = asyncio.create_task(self._announce_void(voided))
+        self._broadcaster = asyncio.create_task(self._broadcast_loop())
 
     async def terminate(self):
         for rnd in self.rounds.values():
             if rnd.timer:
                 rnd.timer.cancel()
-        if self._announcer:
-            self._announcer.cancel()
+        for task in (self._announcer, self._broadcaster):
+            if task:
+                task.cancel()
         await self.bank.close()
 
     @filter.command("猜游戏")
@@ -152,6 +176,18 @@ class GuessPlugin(Star):
         async for r in self._start(event, "mechadle"):
             yield r
 
+    @filter.command("猜Vtuber", alias=VTUBER_ALIASES)
+    async def guess_vtuber(self, event: AstrMessageEvent):
+        """开一道猜Vtuber（B 站上国内外的虚拟主播）"""
+        async for r in self._start(event, "vtuber"):
+            yield r
+
+    @filter.command("猜群友")
+    async def guess_member(self, event: AstrMessageEvent):
+        """开一道猜群友（看头像的一小块）"""
+        async for r in self._start(event, "member"):
+            yield r
+
     @filter.command("猜地点", alias=GEO_ALIASES)
     async def guess_geo(self, event: AstrMessageEvent):
         """开一道猜地点（Google 街景，猜国家）"""
@@ -160,7 +196,7 @@ class GuessPlugin(Star):
 
     @filter.command("猜国家")
     async def guess_country(self, event: AstrMessageEvent):
-        """开一道猜国家（看国家轮廓）"""
+        """猜国家（暂时下线）"""
         async for r in self._start(event, "country"):
             yield r
 
@@ -205,6 +241,16 @@ class GuessPlugin(Star):
         """盲猜萝卜答对次数排行"""
         yield self._board(event, "mechadle")
 
+    @filter.command("Vtuber排行榜", alias=VTUBER_BOARD_ALIASES)
+    async def vtuber_board(self, event: AstrMessageEvent):
+        """猜Vtuber答对次数排行"""
+        yield self._board(event, "vtuber")
+
+    @filter.command("群友排行榜")
+    async def member_board(self, event: AstrMessageEvent):
+        """猜群友答对次数排行"""
+        yield self._board(event, "member")
+
     @filter.command("地点排行榜")
     async def geo_board(self, event: AstrMessageEvent):
         """猜地点答对次数排行"""
@@ -212,7 +258,7 @@ class GuessPlugin(Star):
 
     @filter.command("国家排行榜")
     async def country_board(self, event: AstrMessageEvent):
-        """猜国家答对次数排行"""
+        """猜国家答对次数排行（暂时下线）"""
         yield self._board(event, "country")
 
     @filter.command("日本地点排行榜")
@@ -275,13 +321,22 @@ class GuessPlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def on_group_message(self, event: AstrMessageEvent):
-        """题目进行中处理「提示」和答案，不需要 @。"""
+        """题目进行中处理「提示」和答案，不需要 @。另外记下群的 unified_msg_origin（整点播报用），
+        @bot 说了不存在的「猜xx」回一句。"""
         gid = event.get_group_id()
-        rnd = self.rounds.get(gid)
-        if not rnd or rnd.entry is None or event.get_sender_id() == event.get_self_id():
+        if not gid or event.get_sender_id() == event.get_self_id():
             return
+        if self.origins.get(gid) != event.unified_msg_origin:
+            self.origins[gid] = event.unified_msg_origin
+            save_json(self.data_dir / "origins.json", self.origins)
+        rnd = self.rounds.get(gid)
         text = event.message_str.strip()
-        if not text or text in COMMANDS:
+        if not text or text.split()[0] in COMMANDS:
+            return
+        if not rnd or rnd.entry is None:
+            if self._unknown_mode(event, text):
+                yield event.plain_result(say("unknown_mode"))
+                event.stop_event()
             return
 
         if text == "提示":
@@ -306,13 +361,15 @@ class GuessPlugin(Star):
             return
 
         uid, cat = event.get_sender_id(), rnd.category
+        if cat == "member" and uid == rnd.key:
+            return  # 被猜的群友本人说什么都不算
         wrong = rnd.wrong.setdefault(uid, set())
         limit = self._limit(cat)
         if limit and len(wrong) >= limit:
             return  # 次数用完了，说对了也不算
-        key, item = self.bank.match(cat, text, prefer=rnd.key)
+        key, item = self._match(rnd, event, text)
         # 地点类按「说的是哪个地方」判，「几内亚」不算「赤道几内亚」；萝卜同理；其他题型按答案的各种说法判
-        if (key == rnd.key) if self.bank.places[cat] or cat in BY_KEY else is_correct(text, rnd.cands):
+        if (key == rnd.key) if self.bank.places.get(cat) or cat in BY_KEY else is_correct(text, rnd.cands):
             chain = self._finish(gid, rnd, uid, event.get_sender_name())
             if chain:
                 yield event.chain_result(chain)
@@ -320,6 +377,9 @@ class GuessPlugin(Star):
             return
         # 闲聊、说的不是任何一道题的答案，不算次数
         if key is None:
+            if self._unknown_mode(event, text):
+                yield event.plain_result(say("unknown_mode"))
+                event.stop_event()
             return
         if seen := next((h for h in rnd.history if h["key"] == key), None):
             yield event.plain_result(self._repeat(rnd, seen))
@@ -344,6 +404,9 @@ class GuessPlugin(Star):
         if not gid:
             yield event.plain_result(say("group_only"))
             return
+        if cat in OFFLINE:
+            yield event.plain_result(say("offline"))
+            return
         if gid in self.paused:
             yield event.plain_result(say("paused"))
             return
@@ -353,7 +416,7 @@ class GuessPlugin(Star):
             else:
                 yield event.plain_result(say("busy", kind=MODES[cur.category], left=cur.left()))
             return
-        if not self.bank.ready(cat):
+        if cat != "member" and not self.bank.ready(cat):
             yield event.plain_result(say("not_ready", kind=MODES[cat], status=self.bank.status[cat]))
             return
         if not (paid := self._quota_take(gid)):
@@ -363,12 +426,14 @@ class GuessPlugin(Star):
         # 先占位再下载图片，防止下载期间被重复开题
         rnd = self.rounds[gid] = Round(cat, event.unified_msg_origin, paid=paid)
         try:
-            await self._prepare(rnd)
+            found = await (self._prepare_member(rnd, event) if cat == "member" else self._prepare(rnd))
         except Exception as e:
+            logger.error(f"[guess] picking {cat} failed: {e}")
+            found = None
+        if not found:
             self.rounds.pop(gid, None)
             self._quota_refund(gid, paid)  # 没出成题不算
-            logger.error(f"[guess] picking {cat} failed: {e}")
-            yield event.plain_result(say("pick_failed"))
+            yield event.plain_result(say("pick_failed" if found is None else "member_none"))
             return
         if self.rounds.get(gid) is not rnd:  # 下载期间被暂停了
             yield event.plain_result(say("paused"))
@@ -385,7 +450,7 @@ class GuessPlugin(Star):
         for chain in self._question(rnd):
             yield event.chain_result(chain)
 
-    async def _prepare(self, rnd: Round) -> None:
+    async def _prepare(self, rnd: Round) -> bool:
         """抽题，备好题图、答案卡的图、提示（听歌猜番还有音频）。素材下载失败换一道，最多 3 次。"""
         cat = rnd.category
         for _ in range(3):
@@ -396,8 +461,37 @@ class GuessPlugin(Star):
                 logger.warning(f"[guess] media of {entry['id']} failed: {e}")
                 continue
             self.recent[cat].append(entry.get("group", entry["id"]))
-            return
+            return True
         raise RuntimeError("连续 3 道题的素材都没下载下来")
+
+    async def _prepare_member(self, rnd: Round, event: AstrMessageEvent) -> bool:
+        """猜群友：现拉群成员，开题的人和 bot 不出；本轮出过的先不出，都出过了重来。
+        挨个试头像，默认头像、纯色的跳过，试 members.TRIES 个都不行返回 False。"""
+        bot = getattr(event, "bot", None)
+        if bot is None:
+            raise RuntimeError("猜群友只支持 OneBot（QQ）")
+        gid = event.get_group_id()
+        rows = await bot.call_action("get_group_member_list", group_id=int(gid))
+        rows = [m for m in rows or [] if isinstance(m, dict) and m.get("user_id")]
+        exclude = {str(event.get_self_id()), str(event.get_sender_id())}
+        bag = self.member_bags.setdefault(gid, set())
+        if not (pool := members.pick(rows, exclude | bag)):
+            bag.clear()
+            pool = members.pick(rows, exclude)
+        session = self.bank._http()
+        for m in pool[: members.TRIES]:
+            uid = str(m["user_id"])
+            if (face := await members.avatar(session, uid)) is None:
+                continue
+            name = members.display_name(m)
+            joined = time.localtime(m["join_time"]) if m.get("join_time") else None
+            rnd.hints = [["入群", f"{joined.tm_year} 年 {joined.tm_mon} 月"]] if joined else []
+            rnd.avatar, rnd.plan, rnd.roster = face, members.plan(face), members.Roster(rows)
+            rnd.reveal = cards.mosaic(face)
+            rnd.entry = {"id": uid, "title": name, "answer": name, "names": [name], "hints": rnd.hints}
+            bag.add(uid)
+            return True
+        return False
 
     async def _load(self, rnd: Round, entry: dict) -> None:
         cat = rnd.category
@@ -498,9 +592,11 @@ class GuessPlugin(Star):
         save_json(self.data_dir / "bonus.json", self.bonus)
 
     def _steps(self, rnd: Round) -> int:
-        """九宫格 9 格；听歌猜番按片段数；街景、轮廓、盲猜宝可梦是整图直接给，「提示」只加文字线索。"""
+        """九宫格 9 格；听歌猜番按片段数；猜群友 4 段；街景、轮廓、盲猜宝可梦是整图直接给，「提示」只加文字线索。"""
         if rnd.category in GRID:
             return 9
+        if rnd.category == "member":
+            return len(members.STAGES)
         if rnd.category == "anisong":
             return len(audio.CLIPS)
         return len(rnd.hints)
@@ -524,12 +620,29 @@ class GuessPlugin(Star):
         image, status = rnd.image, f"{rnd.shown}/{self._steps(rnd)} · 剩 {rnd.left()} 秒"
         if rnd.category in BLIND:
             status = f"已猜 {len(rnd.history)} 次 · 剩 {rnd.left()} 秒"
+        if rnd.category == "member":
+            image = cards.mosaic(rnd.avatar, *rnd.plan[rnd.shown - 1])
+            status = f"露出 {members.LABELS[rnd.shown - 1]} · 剩 {rnd.left()} 秒"
         if rnd.category == "anisong":
             sec = audio.CLIPS[rnd.shown - 1]
             image = cards.music(audio.CLIPS, rnd.shown, say("song_step", n=rnd.shown, sec=sec))
             voice = [Comp.Record.fromBase64(audio.clip(rnd.pcm, sec))]
             return [self._card(rnd, image, status, rnd.hints[: rnd.shown]), voice]
         return [self._card(rnd, image, status, rnd.hints[: rnd.shown])]
+
+    def _match(self, rnd: Round, event: AstrMessageEvent, text: str) -> tuple[str | None, dict | None]:
+        """这句话猜的是谁 / 哪个，同 Bank.match。猜群友按开题时的群成员认，@ 了谁就是猜谁。"""
+        if rnd.category != "member":
+            return self.bank.match(rnd.category, text, prefer=rnd.key)
+        self_id = str(event.get_self_id())
+        ats = [str(c.qq) for c in event.get_messages() if isinstance(c, Comp.At) and str(c.qq) not in (self_id, "all")]
+        key = rnd.roster.find(AT_TEXT.sub(" ", text), ats, rnd.key)
+        return key, ({} if key else None)
+
+    def _unknown_mode(self, event: AstrMessageEvent, text: str) -> bool:
+        """@bot 说了「猜xx」，但没有这个题型（有的话指令已经接走了）。暂停中的群不理。"""
+        return (event.is_at_or_wake_command and bool(UNKNOWN_MODE.match(text))
+                and event.get_group_id() not in self.paused)
 
     def _feedback(self, rnd: Round, key: str, item: dict) -> tuple[str, list]:
         """猜错时回什么，(文字, 卡片)：地点类报距离，猜国家再附一张按远近上色的世界地图；
@@ -569,7 +682,7 @@ class GuessPlugin(Star):
         n, steps = rnd.shown, self._steps(rnd)
         edge = max(1, round(steps * 2 / 9))  # 九宫格是 ≤ 2 格算快、≥ 7 格算慢，其他按比例
         tier = "correct_fast" if n <= edge else "correct_slow" if n > steps - edge else "correct"
-        unit = "格" if rnd.category in GRID else "段" if rnd.category == "anisong" else "条线索"
+        unit = {"anisong": "段", "member": "段提示"}.get(rnd.category, "格" if rnd.category in GRID else "条线索")
         return tier, f"{n} {unit}"
 
     def _finish(self, gid: str, rnd: Round, uid: str | None = None, name: str = "") -> list | None:
@@ -612,6 +725,8 @@ class GuessPlugin(Star):
 
     def _board(self, event: AstrMessageEvent, cat: str):
         gid = event.get_group_id()
+        if cat in OFFLINE:
+            return event.plain_result(say("offline"))
         if gid in self.paused:
             return event.plain_result(say("paused"))
         board = self.scores.get(gid, {}).get(cat, {})
@@ -621,3 +736,52 @@ class GuessPlugin(Star):
         lines = [say("board_title", kind=MODES[cat])]
         lines += [f"{i}. {r['name']}  {r['count']}" for i, r in enumerate(top, 1)]
         return event.plain_result("\n".join(lines))
+
+    def _board_slot(self) -> str:
+        """现在属于哪一段播报时间：按本地时间每 board_interval_hours 小时一段。"""
+        hours = max(1, self.config.get("board_interval_hours", 1))
+        now = time.localtime()
+        return f"{now.tm_year}-{now.tm_yday}-{now.tm_hour // hours}"
+
+    async def _broadcast_loop(self) -> None:
+        """每分钟看一次：进了新的一段，就给每个有排行的群播一次；正在出题的群等这道题结束再播。"""
+        while True:
+            await asyncio.sleep(60)
+            if not self.config.get("board_interval_hours", 1):
+                continue
+            if (slot := self._board_slot()) != self._slot:
+                self._slot, self._due = slot, set(self.scores)
+            for gid in list(self._due):
+                if gid in self.rounds:
+                    continue
+                self._due.discard(gid)
+                try:
+                    await self._broadcast(gid)
+                except Exception as e:
+                    logger.error(f"[guess] broadcasting boards to {gid} failed: {e}")
+
+    async def _broadcast(self, gid: str) -> None:
+        """一张图列出各题型的前几名，名字后面标上次播报以来新答对几次。没人新答对就不播（第一次播除外）。"""
+        if gid in self.paused or not (origin := self.origins.get(gid)):
+            return
+        board = self.scores.get(gid, {})
+        now = {cat: {uid: rec["count"] for uid, rec in recs.items()} for cat, recs in board.items()}
+        last = self.broadcasts.get(gid)
+        if now == last:
+            return
+        sections = []
+        for cat, name in MODES.items():
+            if cat in OFFLINE or not board.get(cat):
+                continue
+            top = sorted(board[cat].items(), key=lambda kv: kv[1]["count"], reverse=True)[:BOARD_TOP]
+            # 第一次播没有上次的数，不标新增
+            before = (last or {}).get(cat, {})
+            rows = [(rank, rec["name"], rec["count"], rec["count"] - before.get(uid, 0) if last else 0)
+                    for rank, (uid, rec) in enumerate(top, 1)]
+            sections.append((name.removeprefix("猜"), rows))
+        if not sections:
+            return
+        card = cards.leaderboard(say("board_broadcast", time=time.strftime("%H:00")), sections)
+        if await self.context.send_message(origin, MessageChain([Comp.Image.fromBase64(card)])):
+            self.broadcasts[gid] = now
+            save_json(self.data_dir / "broadcasts.json", self.broadcasts)

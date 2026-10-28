@@ -12,13 +12,15 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `max_guesses` | 5 | 每人每题最多猜几次，怎么算一次见[玩法](usage.md#猜的次数和距离)；0 为不限 |
 | `mechadle_max_guesses` | 10 | 盲猜萝卜每人每题最多猜几次；0 为不限 |
 | `hourly_limit` | 10 | 每个群每小时最多开几道题，所有题型共用；0 为不限 |
+| `board_interval_hours` | 1 | 每隔几小时在玩过的群里播报一张各题型排行榜的图，这段时间没人答对就不发；0 关闭，见[玩法](usage.md#整点排行榜) |
 | `anime_pool_size` | 1000 | 动画题库大小 |
-| `niche_ratio` | 0.2 | 每道题出小众题的概率，0.2 大约五题一道；0 只出大众题。游戏、宝可梦、国家分档，动画、地点不分档 |
+| `niche_ratio` | 0.2 | 每道题出小众题的概率，0.2 大约五题一道；0 只出大众题。游戏、宝可梦、萝卜、Vtuber 分档，动画、地点不分档 |
 | `game_pool_size` | 500 | 游戏大众题数量 |
 | `game_niche_size` | 300 | 游戏小众题数量 |
 | `game_min_score` | 75 | 游戏最低 Metacritic 分 |
 | `game_min_reviews` | 10 | 游戏最少媒体评测数 |
 | `pokemon_main_gen` | 4 | 第 1 到第 N 世代的宝可梦算大众题 |
+| `vtuber_pool_size` | 300 | Vtuber 题库大小，国内（主要说中文的）三分之二、国外三分之一，按 B 站粉丝数取 |
 | `refresh_days` | 7 | 题库定期刷新的间隔（天） |
 | `igdb_client_id` / `igdb_client_secret` | 空 | 游戏截图、热度和别名，见下文 |
 | `google_maps_key` | 空 | 猜地点、猜日本地点用的街景，见下文 |
@@ -66,3 +68,4 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `paused.json` | 暂停中的群 |
 | `quota.json` / `bonus.json` | 每小时额度、管理员加的题 |
 | `rounds.json` | 进行中的题，重启后收尾用 |
+| `origins.json` / `broadcasts.json` | 整点播报用：往各群发消息的地址、上次播报时的答对次数 |

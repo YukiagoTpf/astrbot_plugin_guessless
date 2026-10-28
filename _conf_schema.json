@@ -34,6 +34,12 @@
     "default": 10,
     "hint": "按群算，所有题型共用这个额度，按最近一小时滚动计。0 不限"
   },
+  "board_interval_hours": {
+    "description": "整点播报排行榜的间隔（小时）",
+    "type": "int",
+    "default": 1,
+    "hint": "每隔这么多小时在玩过的群里发一张各题型排行榜的图；这段时间没人答对就不发。填 0 关闭"
+  },
   "anime_pool_size": {
     "description": "动画题库大小",
     "type": "int",
@@ -75,6 +81,12 @@
     "type": "int",
     "default": 4,
     "hint": "第 1 到第 N 世代算大众题，之后的算小众题（按小众题比例出）"
+  },
+  "vtuber_pool_size": {
+    "description": "Vtuber 题库大小",
+    "type": "int",
+    "default": 300,
+    "hint": "按 B 站粉丝数取，国内（主要说中文的）三分之二、国外三分之一；每边前六成算大众题"
   },
   "refresh_days": {
     "description": "题库刷新间隔（天）",

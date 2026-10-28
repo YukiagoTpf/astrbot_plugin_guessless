@@ -12,6 +12,8 @@ LINES = {
     "card_note_anisong": ["说番名，{tries} · 「提示」听长一点"],
     "card_note_mecha": ["说机体名，{tries} · 「提示」开一格"],
     "card_note_mechadle": ["说机体名，{tries} · 「提示」加线索"],
+    "card_note_vtuber": ["说名字，{tries} · 「提示」开一格"],
+    "card_note_member": ["名片或 @TA，{tries} ·「提示」放大"],
     "tries": ["每人 {limit} 次"],
     "tries_free": ["不限次数"],
     # 地点类猜错报距离：{dist} 是 dist_*，猜国家是两国中心之间，猜地点、猜日本地点是你猜的地方离拍摄地最近的城镇
@@ -46,6 +48,10 @@ LINES = {
     ],
     "hint_exhausted_pokedle": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
     "hint_exhausted_mechadle": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
+    "hint_exhausted_member": [
+        "头像都露出一大块了还认不出？平时水群光看字不看人。剩 {left} 秒",
+        "没有更大的格子了，剩下的靠你们对群友的了解——如果有的话。剩 {left} 秒",
+    ],
     "hint_exhausted_clue": [
         "线索全给完了，再猜不出来就去补地理课。剩 {left} 秒",
         "提示都念完了，剩下的只能靠阅历——如果有的话。剩 {left} 秒",
@@ -100,6 +106,16 @@ LINES = {
         "两分钟，零人答对。建议回真新镇重新领一次初始宝可梦",
         "时间到。各位的宝可梦知识大概停在了第一世代",
     ],
+    "timeout_vtuber": [
+        "时间到，全群没一个认出来的。各位的 DD 含量有待提高",
+        "两分钟，零人答对。建议去直播间多挂几小时再来",
+        "时间到。看来本群和这位的粉丝圈没有交集",
+    ],
+    "timeout_member": [
+        "时间到，没人认出来。天天在群里聊，原来谁都不认识谁",
+        "两分钟，零人答对。建议多看看群友的头像，少看点别的",
+        "时间到。本群的网友含量，比我想的还高",
+    ],
     "timeout_geo": [
         "时间到，全群没一个认出来的。各位的出国经验主要靠纪录片吧",
         "两分钟，零人答对。建议多刷几小时 GeoGuessr 再来",
@@ -152,10 +168,16 @@ LINES = {
     "board_empty_anisong": ["还没人听歌猜中过番，全员跳 OP 党"],
     "board_empty_mecha": ["还没人猜对过萝卜，全员门外汉"],
     "board_empty_mechadle": ["还没人盲猜中过萝卜，全员靠看图"],
+    "board_empty_vtuber": ["还没人猜对过 Vtuber，全员单推不看别家"],
+    "board_empty_member": ["还没人猜中过群友，大家果然只是网友"],
     "board_empty_geo": ["还没人猜对过地点，全员宅家，可喜可贺"],
     "board_empty_country": ["还没人猜对过国家，地理老师哭晕在厕所"],
     "board_empty_jpgeo": ["还没人猜对过日本地点，全员只认识东京"],
     "group_only": ["私聊玩什么，去群里"],
+    "member_none": ["没挑到能猜的头像，大家都是默认头像？换个时候再来"],
+    "offline": ["好危险，不踩啦"],
+    "unknown_mode": ["哪来的功能"],
+    "board_broadcast": ["{time} 整点战斗力榜"],
 }
 
 

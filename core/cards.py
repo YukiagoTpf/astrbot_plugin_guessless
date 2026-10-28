@@ -79,6 +79,68 @@ def load_panels(images: list[bytes]) -> Image.Image:
     return out
 
 
+def mosaic(img: Image.Image, grid: int | None = None, cells: list[int] = ()) -> Image.Image:
+    """猜群友：正方形头像放在图区正中，切成 grid×grid，只露 cells 那几格，其余盖色块打问号。
+    grid 为 None 是答案卡，整张头像都露出来。"""
+    out = Image.new("RGB", (SIZE, PIC_H), BG)
+    x0 = (SIZE - PIC_H) // 2
+    out.paste(img.convert("RGB").resize((PIC_H, PIC_H), Image.Resampling.LANCZOS), (x0, 0))
+    if grid:
+        draw = ImageDraw.Draw(out)
+        edges = [x0 + round(PIC_H * i / grid) for i in range(grid + 1)]
+        mark = font(PIC_H // (grid * 2), bold=True)
+        for i in range(grid * grid):
+            if i in cells:
+                continue
+            row, col = divmod(i, grid)
+            box = (edges[col], edges[row] - x0, edges[col + 1], edges[row + 1] - x0)
+            draw.rectangle(box, fill=COVER)
+            draw.text(((box[0] + box[2]) / 2, (box[1] + box[3]) / 2), "?", fill=MARK, font=mark, anchor="mm")
+        for e in edges[1:-1]:
+            draw.rectangle((e - GAP // 2, 0, e + GAP // 2 - 1, PIC_H - 1), fill=BG)
+            draw.rectangle((x0, e - x0 - GAP // 2, x0 + PIC_H - 1, e - x0 + GAP // 2 - 1), fill=BG)
+    out.info["grid"] = None
+    return out
+
+
+def leaderboard(title: str, sections: list) -> str:
+    """整点播报的排行榜，返回 base64 JPEG。sections 是 [(题型名, [(名次, 名字, 答对次数, 这段时间新增), ...]), ...]，
+    两列排，新增的次数用黄字标在后面。"""
+    m, gap, head_h, row_h, rows = PAD, 24, 58, 44, max((len(r) for _, r in sections), default=0)
+    box_w = (SIZE - m * 2 - gap) / 2
+    box_h = head_h + rows * row_h + 16
+    lines = math.ceil(len(sections) / 2)
+    out = Image.new("RGB", (SIZE, 130 + lines * (box_h + gap) + m - gap), BG)
+    draw = ImageDraw.Draw(out)
+    draw.text((m, 70), title, fill=TEXT, font=font(46, bold=True), anchor="ls")
+    name_font, num_font = font(28), font(28, bold=True)
+    for k, (kind, board) in enumerate(sections):
+        x, y = m + (k % 2) * (box_w + gap), 110 + (k // 2) * (box_h + gap)
+        draw.rounded_rectangle((x, y, x + box_w, y + box_h), 12, fill=COVER)
+        draw.text((x + 20, y + 36), kind, fill=KEY, font=font(30, bold=True), anchor="ls")
+        for i, (rank, name, count, gained) in enumerate(board):
+            ry = y + head_h + i * row_h + row_h / 2
+            draw.text((x + 20, ry), f"{rank}", fill=DIM, font=num_font, anchor="lm")
+            right = f"+{gained}" if gained else ""
+            right_w = num_font.getlength(right) + 12 if right else 0
+            count_x = x + box_w - 20 - right_w
+            if right:
+                draw.text((x + box_w - 20, ry), right, fill=KEY, font=num_font, anchor="rm")
+            draw.text((count_x, ry), str(count), fill=TEXT, font=num_font, anchor="rm")
+            name_w = count_x - num_font.getlength(str(count)) - 16 - (x + 62)
+            draw.text((x + 62, ry), fit(printable(name), name_font, name_w), fill=TEXT, font=name_font, anchor="lm")
+    return encode(out)
+
+
+def printable(text: str) -> str:
+    """去掉思源黑体里没有的 emoji、变体选择符这类字符，免得画成方框。"""
+    def drawable(ch: str) -> bool:
+        cp = ord(ch)
+        return cp < 0x1F000 and not 0xD800 <= cp < 0xF900 and ch not in "‍︎️"
+
+    return "".join(ch for ch in text if drawable(ch)).strip() or "?"
+
+
 def load_outline(rings: list, world: dict | None = None, target: str = "") -> Image.Image:
     """猜国家：国家剪影居中，不画九宫格。rings 见 geo.outline()；按中心纬度压缩经度，近似等积，不至于高纬国家变胖。
 

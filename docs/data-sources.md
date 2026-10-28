@@ -12,6 +12,8 @@
 | [AniList](https://anilist.co) | 动画横幅、罗马音和英文名；听歌猜番补 ID | GraphQL，约每分钟 30 次 |
 | [AnimeThemes](https://animethemes.moe) | 听歌猜番的 OP / ED 音频、歌名和歌手 | 免 key，约每分钟 90 次；音频出题时现下、不存盘 |
 | [Gundam Wiki](https://gundam.fandom.com) | 高达机体的设定图、世界观、阵营、机型、机械设计、全高 | Fandom 上的 MediaWiki API，免 key；文字 CC BY-SA |
+| [vtbs.moe](https://vtbs.moe) | 猜Vtuber的名单（VTuber Database：各语言的名字、所属团体）和 B 站账号数据（粉丝数、大航海人数、头像） | 社区维护的公开接口，免 key；头像从 B 站图床下载 |
+| QQ 头像、群成员列表 | 猜群友：群成员（名片、昵称、入群时间、最近发言时间）走 OneBot 的 `get_group_member_list`，头像走 QQ 公开头像接口 `q1.qlogo.cn` | 都在开题时现拉，头像只在内存里出图，不存盘 |
 | [Wikidata](https://www.wikidata.org) | 译名、国家资料（大洲、行驶方向、货币、首都、人口、面积） | SPARQL，CC0 |
 | [PokeAPI](https://pokeapi.co) | 宝可梦资料；立绘取自 GitHub 上的 PokeAPI/sprites | GraphQL，免 key |
 | [GeoNames](https://www.geonames.org) | 城市坐标、一级行政区、国家主要语言 | CC BY 4.0 |
