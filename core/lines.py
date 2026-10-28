@@ -178,6 +178,9 @@ LINES = {
     "offline": ["好危险，不踩啦"],
     "unknown_mode": ["哪来的功能"],
     "board_broadcast": ["{time} 整点战斗力榜"],
+    "board_now": ["{time} 战斗力榜"],
+    "board_empty_all": ["还没人答对过任何一道题，榜单空空如也"],
+    "not_admin_board": ["整点自己会发，急什么，想看去求管理员", "提前发榜是管理员的活，你就等整点吧"],
 }
 
 

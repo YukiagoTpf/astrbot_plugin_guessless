@@ -46,9 +46,10 @@ GEO_ALIASES = {"猜街景"}
 JPGEO_ALIASES = {"猜日本街景"}
 VTUBER_ALIASES = {"猜vtuber", "猜VTuber", "猜V", "猜v"}
 VTUBER_BOARD_ALIASES = {"vtuber排行榜", "VTuber排行榜", "V排行榜"}
+ALL_BOARDS_ALIASES = {"战斗力榜", "总排行榜"}  # 管理员提前发整点排行榜，指令本身是「排行榜」
 COMMANDS = (
-    set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始"} | GEO_ALIASES | JPGEO_ALIASES | VTUBER_ALIASES
-    | VTUBER_BOARD_ALIASES
+    set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始", "排行榜"} | GEO_ALIASES | JPGEO_ALIASES
+    | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | ALL_BOARDS_ALIASES
 )
 # @bot 说「猜xx」「盲猜xx」「听歌猜xx」但没有这个题型时回一句
 UNKNOWN_MODE = re.compile(r"^(?:盲猜|听歌猜|猜)\S{1,12}$")
@@ -265,6 +266,24 @@ class GuessPlugin(Star):
     async def jpgeo_board(self, event: AstrMessageEvent):
         """猜日本地点答对次数排行"""
         yield self._board(event, "jpgeo")
+
+    @filter.command("排行榜", alias=ALL_BOARDS_ALIASES)
+    async def all_boards(self, event: AstrMessageEvent):
+        """管理员：马上发一张各题型的排行榜图，和整点播报的一样，下次整点从这次算新增"""
+        gid = event.get_group_id()
+        if not gid:
+            return
+        if not event.is_admin():
+            yield event.plain_result(say("not_admin_board"))
+            return
+        if gid in self.paused:
+            yield event.plain_result(say("paused"))
+            return
+        if not (card := self._all_boards(gid, say("board_now", time=time.strftime("%H:%M")))):
+            yield event.plain_result(say("board_empty_all"))
+            return
+        self._mark_broadcast(gid)
+        yield event.chain_result([Comp.Image.fromBase64(card)])
 
     @filter.regex(r"^(?:增加|加)\s*(\d+)\s*道?题$")
     async def add_quota(self, event: AstrMessageEvent):
@@ -761,14 +780,29 @@ class GuessPlugin(Star):
                     logger.error(f"[guess] broadcasting boards to {gid} failed: {e}")
 
     async def _broadcast(self, gid: str) -> None:
-        """一张图列出各题型的前几名，名字后面标上次播报以来新答对几次。没人新答对就不播（第一次播除外）。"""
+        """整点播报。没人新答对就不播（第一次播除外）。"""
         if gid in self.paused or not (origin := self.origins.get(gid)):
             return
-        board = self.scores.get(gid, {})
-        now = {cat: {uid: rec["count"] for uid, rec in recs.items()} for cat, recs in board.items()}
-        last = self.broadcasts.get(gid)
-        if now == last:
+        if self._snapshot(gid) == self.broadcasts.get(gid):
             return
+        if not (card := self._all_boards(gid, say("board_broadcast", time=time.strftime("%H:00")))):
+            return
+        if await self.context.send_message(origin, MessageChain([Comp.Image.fromBase64(card)])):
+            self._mark_broadcast(gid)
+
+    def _snapshot(self, gid: str) -> dict:
+        """本群现在各题型的答对次数 {题型: {用户: 次数}}。"""
+        return {cat: {uid: rec["count"] for uid, rec in recs.items()} for cat, recs in self.scores.get(gid, {}).items()}
+
+    def _mark_broadcast(self, gid: str) -> None:
+        """记下这次播报时的答对次数，下次播报的「新增」从这里算。"""
+        self.broadcasts[gid] = self._snapshot(gid)
+        save_json(self.data_dir / "broadcasts.json", self.broadcasts)
+
+    def _all_boards(self, gid: str, title: str) -> str | None:
+        """一张图列出各题型的前几名，名字后面标上次播报以来新答对几次；一个人都没答对过返回 None。"""
+        board = self.scores.get(gid, {})
+        last = self.broadcasts.get(gid)
         sections = []
         for cat, name in MODES.items():
             if cat in OFFLINE or not board.get(cat):
@@ -779,9 +813,4 @@ class GuessPlugin(Star):
             rows = [(rank, rec["name"], rec["count"], rec["count"] - before.get(uid, 0) if last else 0)
                     for rank, (uid, rec) in enumerate(top, 1)]
             sections.append((name.removeprefix("猜"), rows))
-        if not sections:
-            return
-        card = cards.leaderboard(say("board_broadcast", time=time.strftime("%H:00")), sections)
-        if await self.context.send_message(origin, MessageChain([Comp.Image.fromBase64(card)])):
-            self.broadcasts[gid] = now
-            save_json(self.data_dir / "broadcasts.json", self.broadcasts)
+        return cards.leaderboard(title, sections) if sections else None
