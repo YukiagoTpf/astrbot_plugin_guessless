@@ -34,6 +34,12 @@
     "default": 10,
     "hint": "按群算，所有题型共用这个额度，按最近一小时滚动计。0 不限"
   },
+  "group_hourly_limits": {
+    "description": "按群单独设每小时题数",
+    "type": "list",
+    "default": [],
+    "hint": "每行一个「群号:题数」，比如 123456:3；0 不限。没写的群用上面的每小时题数"
+  },
   "board_interval_hours": {
     "description": "整点播报排行榜的间隔（小时）",
     "type": "int",

@@ -439,7 +439,7 @@ class GuessPlugin(Star):
             yield event.plain_result(say("not_ready", kind=MODES[cat], status=self.bank.status[cat]))
             return
         if not (paid := self._quota_take(gid)):
-            yield event.plain_result(say("quota", limit=self.config.get("hourly_limit", 10), wait=self._quota_wait(gid)))
+            yield event.plain_result(say("quota", limit=self._hourly_limit(gid), wait=self._quota_wait(gid)))
             return
 
         # 先占位再下载图片，防止下载期间被重复开题
@@ -544,14 +544,21 @@ class GuessPlugin(Star):
             rnd.order = cards.reveal_order(rnd.image)
         rnd.entry = entry
 
+    def _hourly_limit(self, gid: str) -> int:
+        """本群每小时能开几道：group_hourly_limits 里写了「群号:题数」的按它，没写的用 hourly_limit。0 不限。"""
+        for item in self.config.get("group_hourly_limits") or []:
+            if (m := re.fullmatch(r"\s*(\d+)\s*[:：]\s*(\d+)\s*", str(item))) and m[1] == gid:
+                return int(m[2])
+        return self.config.get("hourly_limit", 10)
+
     def _quota_used(self, gid: str) -> list[float]:
         now = time.time()
         used = self.quota[gid] = [t for t in self.quota.get(gid, []) if now - t < HOUR]
         return used
 
     def _quota_take(self, gid: str) -> str:
-        """开题扣额度：先扣每小时额度，用完了扣管理员加的题，都没有返回空串。hourly_limit 为 0 不限。"""
-        limit = self.config.get("hourly_limit", 10)
+        """开题扣额度：先扣每小时额度，用完了扣管理员加的题，都没有返回空串。每小时额度为 0 不限。"""
+        limit = self._hourly_limit(gid)
         used = self._quota_used(gid)
         if not limit or len(used) < limit:
             used.append(time.time())
@@ -573,7 +580,7 @@ class GuessPlugin(Star):
 
     def _quota_wait(self, gid: str) -> int:
         """每小时额度最早空出一道还要几分钟。"""
-        limit = self.config.get("hourly_limit", 10)
+        limit = self._hourly_limit(gid)
         used = self._quota_used(gid)
         if not limit or len(used) < limit:
             return 0
@@ -581,7 +588,7 @@ class GuessPlugin(Star):
 
     def _quota_left(self, gid: str) -> int:
         """现在还能开几道（这小时剩下的 + 管理员加的）。"""
-        limit = self.config.get("hourly_limit", 10)
+        limit = self._hourly_limit(gid)
         return max(0, limit - len(self._quota_used(gid))) + self.bonus.get(gid, 0)
 
     def _rounds_save(self) -> None:

@@ -12,6 +12,7 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `max_guesses` | 5 | 每人每题最多猜几次，怎么算一次见[玩法](usage.md#猜的次数和距离)；0 为不限 |
 | `mechadle_max_guesses` | 10 | 盲猜萝卜每人每题最多猜几次；0 为不限 |
 | `hourly_limit` | 10 | 每个群每小时最多开几道题，所有题型共用；0 为不限 |
+| `group_hourly_limits` | 空 | 按群单独设每小时题数，每行一个「群号:题数」（如 `123456:3`），0 为不限；没写的群用 `hourly_limit` |
 | `board_interval_hours` | 1 | 每隔几小时在玩过的群里播报一张各题型排行榜的图，这段时间没人答对就不发；0 关闭，见[玩法](usage.md#整点排行榜) |
 | `anime_pool_size` | 1000 | 动画题库大小 |
 | `niche_ratio` | 0.2 | 每道题出小众题的概率，0.2 大约五题一道；0 只出大众题。游戏、宝可梦、萝卜、Vtuber 分档，动画、地点不分档 |
