@@ -4,7 +4,7 @@
 地点和日本地点是 Google 街景随机取景，国家是 Natural Earth 轮廓。找不到图的作品不进题库。
 听歌猜番是猜动画题库里在 AnimeThemes 有 OP / ED 的作品；猜萝卜是 Bangumi 上高达系列动画和超级机器人大战里的机体；
 猜Vtuber是 vtbs.moe 名单里 B 站粉丝最多的国内和国外虚拟主播。
-盲猜宝可梦、盲猜萝卜不单独建题库，用宝可梦、萝卜题库里带对比属性的条目。
+盲猜宝可梦、盲猜萝卜不单独建题库，用宝可梦、萝卜题库里带对比属性的条目；盲猜地点每个国家一道题，不用街景。
 题库、各数据源的查询结果和图片都缓存在插件数据目录，出题时只有首次用到的图片和街景需要联网。
 """
 
@@ -25,6 +25,7 @@ from .answer import candidates, find, norm
 from .entries import (
     ANIME_KINDS,
     GAME_INFO,
+    GEODLE_VERSION,
     MECHA_VERSION,
     POKEMON_VERSION,
     VTUBER_VERSION,
@@ -39,6 +40,8 @@ from .entries import (
     country_entry,
     game_entry,
     geo_entry,
+    geodle_attrs,
+    geodle_entry,
     infobox,
     match_gundam_wiki,
     mecha_entry,
@@ -96,7 +99,7 @@ class Bank:
         self.config = config
         self.entries: dict[str, list] = {
             "anime": [], "anisong": [], "game": [], "pokemon": [], "pokedle": [], "mecha": [], "mechadle": [],
-            "vtuber": [], "geo": [], "country": [], "jpgeo": [],
+            "vtuber": [], "geo": [], "geodle": [], "country": [], "jpgeo": [],
         }
         self.meta: dict[str, dict] = {cat: {} for cat in self.entries}
         # 地点类可以猜的国家 / 都道府县 {代码: {"title", "names", "points"}}，没街景、不出题的也在里面；
@@ -229,6 +232,8 @@ class Bank:
             return [geo.PANOS_PER_COUNTRY, geo.MIN_PANOS, sorted(geo.EXCLUDE), geo.SAMPLING, geo.HINTS_VERSION]
         if cat == "country":
             return [geo.OUTLINE_VERSION, sorted(geo.EXCLUDE), geo.HINTS_VERSION]
+        if cat == "geodle":
+            return [GEODLE_VERSION, sorted(geo.EXCLUDE), geo.HINTS_VERSION]
         if cat == "jpgeo":
             return [geo.PANOS_PER_PREF, geo.MIN_PANOS, geo.SAMPLING, geo.HINTS_VERSION]
         return [
@@ -269,11 +274,11 @@ class Bank:
                     self.status[cat] = f"{len(self.entries[cat])} 题"
 
     async def _refresh_loop(self) -> None:
-        # 游戏有缓存时一两分钟就建完，动画要等 B 站慢慢搜，放后面
+        # 游戏有缓存时一两分钟就建完，动画要等 B 站慢慢搜，放后面；盲猜地点不找街景，放在猜地点前面
         builders = {
             "game": self._build_games, "pokemon": self._build_pokemon, "country": self._build_country,
-            "geo": self._build_geo, "jpgeo": self._build_jpgeo, "anime": self._build_anime,
-            "anisong": self._build_anisong, "mecha": self._build_mecha,
+            "geodle": self._build_geodle, "geo": self._build_geo, "jpgeo": self._build_jpgeo,
+            "anime": self._build_anime, "anisong": self._build_anisong, "mecha": self._build_mecha,
             "vtuber": self._build_vtuber,
         }
         while True:
@@ -810,6 +815,19 @@ class Bank:
         await self._sample_all(
             "geo", "geo_panos.json", targets, lambda cc, panos: [geo_entry(cc, p, basics[cc]) for p in panos], places
         )
+
+    async def _build_geodle(self) -> None:
+        """盲猜地点：每个国家一道题，可以猜的国家同猜地点；只查 Wikidata 和 GeoNames，不用街景的 key。"""
+        cities = await self._cities("geodle")
+        codes, basics = await self._countries("geodle", cities)
+        entries, places = [], {}
+        for cc in codes:
+            attrs = geodle_attrs(cc, cities[cc], basics[cc]["stats"])
+            entries.append(entry := geodle_entry(cc, basics[cc], attrs))
+            places[cc] = {"title": entry["title"], "names": entry["names"], "attrs": attrs}
+        if missing := [cc for cc in codes if cc not in geo.REGION_OF]:
+            logger.warning(f"[guess] no region in geo.REGIONS for {missing}")
+        self._commit("geodle", entries, places=places)
 
     async def _build_jpgeo(self) -> None:
         """街景只在日本，猜都道府县。GeoNames 的一级行政区代码通过 geonameid 对上 Wikidata 的都道府县。"""

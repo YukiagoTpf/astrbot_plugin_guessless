@@ -16,6 +16,6 @@
 | QQ 头像、群成员列表 | 猜群友：群成员（名片、昵称、入群时间、最近发言时间）走 OneBot 的 `get_group_member_list`，头像走 QQ 公开头像接口 `q1.qlogo.cn` | 都在开题时现拉，头像只在内存里出图，不存盘 |
 | [Wikidata](https://www.wikidata.org) | 译名、国家资料（大洲、行驶方向、货币、首都、人口、面积） | SPARQL，CC0 |
 | [PokeAPI](https://pokeapi.co) | 宝可梦资料；立绘取自 GitHub 上的 PokeAPI/sprites | GraphQL，免 key |
-| [GeoNames](https://www.geonames.org) | 城市坐标、一级行政区、国家主要语言 | CC BY 4.0 |
+| [GeoNames](https://www.geonames.org) | 城市坐标、一级行政区、国家主要语言、陆上邻国 | CC BY 4.0 |
 | [Natural Earth](https://www.naturalearthdata.com) | 国家轮廓、邻国底图和世界地图（10m，CHN 视角版本） | 公有领域 |
 | Google Street View Static API | 街景图片；找全景用免费的元数据接口 | 图片按张计费，遵守 Google Maps Platform 条款，图片不落盘 |

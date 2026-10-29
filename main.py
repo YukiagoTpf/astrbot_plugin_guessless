@@ -15,10 +15,13 @@ from .core import audio, cards, geo, members
 from .core.answer import candidates, is_correct
 from .core.bank import Bank
 from .core.entries import (
+    GEODLE_CLUES,
+    GEODLE_COLUMNS,
     MECHADLE_CLUES,
     MECHADLE_COLUMNS,
     POKEDLE_CLUES,
     POKEDLE_COLUMNS,
+    geodle_row,
     mechadle_row,
     pokedle_row,
 )
@@ -29,7 +32,7 @@ from .core.store import load_json, save_json
 MODES = {
     "game": "猜游戏", "anime": "猜动画", "anisong": "听歌猜番", "pokemon": "猜宝可梦", "pokedle": "盲猜宝可梦",
     "mecha": "猜萝卜", "mechadle": "盲猜萝卜", "vtuber": "猜Vtuber", "member": "猜群友", "geo": "猜地点",
-    "country": "猜国家", "jpgeo": "猜日本地点",
+    "geodle": "盲猜地点", "country": "猜国家", "jpgeo": "猜日本地点",
 }
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
 OFFLINE = {"country"}  # 暂时下线的题型：开题和排行榜都只回一句，不出题、不播报
@@ -38,6 +41,7 @@ GRID = {"game", "anime", "pokemon", "mecha", "vtuber"}  # 九宫格逐格揭开�
 BLIND = {
     "pokedle": ("宝可梦", POKEDLE_COLUMNS, POKEDLE_CLUES, pokedle_row),
     "mechadle": ("机体", MECHADLE_COLUMNS, MECHADLE_CLUES, mechadle_row),
+    "geodle": ("国家", GEODLE_COLUMNS, GEODLE_CLUES, geodle_row),
 }
 # 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对；
 # Vtuber 的名字也常互相包含；群友按 @、QQ 号、名片认人
@@ -75,7 +79,7 @@ class Round:
     timer: asyncio.Task | None = None
     paid: str = ""  # 这道题扣的是每小时额度（hourly）还是管理员加的题（bonus），没出成时退回去
     wrong: dict = field(default_factory=dict)  # 用户 -> 猜错过的答案（Bank.match 的键），每人最多 _limit 个
-    # 有反馈的题型（地点类、盲猜宝可梦）本题猜错过的：{"key", "title", "km" 或 "row"}，再猜一次不扣次数
+    # 有反馈的题型（地点类、盲猜）本题猜错过的：{"key", "title", "km" 或 "row"}，再猜一次不扣次数
     history: list = field(default_factory=list)
     pcm: bytes = b""  # 听歌猜番：解码好的音频，见 audio.decode
     peek: object = None  # 盲猜萝卜：对比表旁边放的一格设定图，整道题不变
@@ -195,6 +199,12 @@ class GuessPlugin(Star):
         async for r in self._start(event, "geo"):
             yield r
 
+    @filter.command("盲猜地点")
+    async def guess_geodle(self, event: AstrMessageEvent):
+        """开一道盲猜地点（不给图，猜一个国家看地区、方位、人口等对比）"""
+        async for r in self._start(event, "geodle"):
+            yield r
+
     @filter.command("猜国家")
     async def guess_country(self, event: AstrMessageEvent):
         """猜国家（暂时下线）"""
@@ -256,6 +266,11 @@ class GuessPlugin(Star):
     async def geo_board(self, event: AstrMessageEvent):
         """猜地点答对次数排行"""
         yield self._board(event, "geo")
+
+    @filter.command("盲猜地点排行榜")
+    async def geodle_board(self, event: AstrMessageEvent):
+        """盲猜地点答对次数排行"""
+        yield self._board(event, "geodle")
 
     @filter.command("国家排行榜")
     async def country_board(self, event: AstrMessageEvent):
@@ -524,7 +539,8 @@ class GuessPlugin(Star):
             clues = {k: v for k, v in entry["hints"]}
             rnd.hints = [[k, clues[k]] for k in clue_keys if clues.get(k)]
             rnd.shown = 0
-            rnd.reveal = cards.load(await self.bank.image(entry), contain=True)
+            if entry.get("images"):  # 盲猜地点没有图，答案卡用对比表，见 _finish
+                rnd.reveal = cards.load(await self.bank.image(entry), contain=True)
             if cat == "mechadle":  # 高达资料列多，只看表太难，旁边放一格设定图，不会揭开
                 rnd.peek = cards.peek(rnd.reveal)
             rnd.image = cards.compare_table(name, columns, [], say(f"{cat}_empty"), rnd.peek)
@@ -746,12 +762,16 @@ class GuessPlugin(Star):
             text = say(tier, name=name, progress=progress) + "\n" + say("score", answer=answer, count=count)
         else:
             text = say(f"timeout_{rnd.category}") + "\n" + say("answer", answer=answer)
-        # 答案卡：整图公开，标题写答案，右上角写原名；猜国家这时才画邻国，听歌猜番写上歌名
+        # 答案卡：整图公开，标题写答案，右上角写原名；猜国家这时才画邻国，听歌猜番写上歌名；
+        # 没有图的盲猜（盲猜地点）用对比表，最上面加一行答案自己的资料
         original = entry.get("original", "")
         hints = [["歌曲", rnd.song], *entry["hints"]] if rnd.song else entry["hints"]
-        card = cards.render(
-            rnd.reveal or rnd.image, None, entry["title"], original if original != entry["title"] else "答案", hints
-        )
+        image = rnd.reveal or rnd.image
+        if rnd.category in BLIND and rnd.reveal is None:
+            name, columns, _, row = BLIND[rnd.category]
+            rows = [(h["title"], h["row"]) for h in rnd.history]
+            image = cards.compare_table(name, columns, [(entry["title"], row(entry["attrs"], entry["attrs"])), *rows])
+        card = cards.render(image, None, entry["title"], original if original != entry["title"] else "答案", hints)
         return [Comp.Plain(text), Comp.Image.fromBase64(card)]
 
     async def _expire(self, gid: str, rnd: Round, seconds: int):

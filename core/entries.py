@@ -64,6 +64,11 @@ MECHA_VERSION = "srw-v2"  # 猜萝卜的选题和条目规则改了就换个名�
 # 盲猜萝卜对比表的列（只出 Gundam Wiki 上有资料的高达机体）和「提示」给的线索
 MECHADLE_COLUMNS = ("世界观", "登场年份", "阵营", "机型", "机械设计", "型号开头")
 MECHADLE_CLUES = ("出自", "全高", "首字")
+GEODLE_VERSION = "regions-v1"  # 盲猜地点的条目格式、对比规则、地区划分（geo.REGIONS）改了就换个名字，题库重建
+# 盲猜地点对比表的列，每列都能排除一大片；货币、美食、名胜在表里比不出来，放进「提示」
+GEODLE_COLUMNS = ("地区", "方位", "人口", "面积", "语言", "行驶")
+GEODLE_CLUES = ("货币", "美食", "名胜", "首字")
+NEAR_KM = 1000  # 盲猜地点：两国最近的城镇相距这么近以内，方位格标黄
 # 高达模型系列的世界观：这些作品里的机体是改造的模型，和原作机体同名
 VTUBER_VERSION = "vtbs-v1"  # 猜Vtuber的选题和条目规则、vtuber_data.py 改了就换个名字，题库重建
 VT_LANGS = {"cn": "中文", "zh": "中文", "ch": "中文", "jp": "日语", "en": "英语", "id": "印尼语", "kr": "韩语"}
@@ -638,6 +643,25 @@ def place_words(names: list[str], capital: str) -> list[str]:
     return words
 
 
+def currency_hint(currencies: list[str], words: list[str], title: str) -> str:
+    """货币名多是「国名 + 单位」（印度卢比、瑞士法郎），去掉国名，剩下的单位（卢比、法郎）照样有用；
+    剩不到两个字的（日元、美元）和拿国名首字的（泰铢、韩圆）不要。用好几种货币的（津巴布韦、萨尔瓦多）
+    只认带本国国名的那种，没有就不给，免得抽到印度卢比、比特币。"""
+    if len(currencies) > 1:
+        currencies = [c for c in currencies if any(c.startswith(w) for w in words)]
+    if len(currencies) != 1:
+        return ""
+    value = currencies[0]
+    if len(value) <= 2 and value.startswith(title[:1]):
+        return ""
+    for w in sorted(words, key=len, reverse=True):
+        if value.startswith(w):
+            value = value[len(w):]
+            break
+    value = scrub(value, words, title)
+    return value if len(value) >= 2 else ""
+
+
 def country_basics(cc: str, facts: dict, wd: dict, info: dict, languages: dict) -> dict | None:
     """猜地点、猜国家共用的国名和国家层面的提示（不含半球，半球看具体位置）。
 
@@ -658,7 +682,7 @@ def country_basics(cc: str, facts: dict, wd: dict, info: dict, languages: dict) 
     hints = [
         ["大洲", facts.get("continent") or geo.CONTINENTS.get(info.get("continent"), "")],
         ["行驶方向", facts.get("driving") or ""],
-        ["货币", scrub(facts.get("currency") or "", words, zh)],
+        ["货币", currency_hint(facts.get("currencies") or [], words, zh)],
         ["名胜", sights[1] if len(sights) > 1 else ""],
         ["主要语言", scrub(lang, words, zh)],
         ["美食", " / ".join(foods[:2])],
@@ -670,7 +694,13 @@ def country_basics(cc: str, facts: dict, wd: dict, info: dict, languages: dict) 
             ["面积", fmt_area(facts.get("area") or 0)],
             ["首都", f"「{capital[0]}」开头" if capital else ""],
         ]
-    return {"zh": zh, "en": en, "names": names, "hints": hints, "big": (
+    # 盲猜地点对比用的原始数据，见 geodle_attrs；语言只留前三种，印度的语言表里连法语都有，全算上就比不出东西了
+    stats = {
+        "pop": facts.get("population") or 0, "area": facts.get("area") or 0,
+        "langs": list(dict.fromkeys(languages[c] for c in info.get("languages", []) if c in languages))[:3],
+        "drive": (facts.get("driving") or "").removesuffix("行驶"), "neighbours": info.get("neighbours", []),
+    }
+    return {"zh": zh, "en": en, "names": names, "hints": hints, "stats": stats, "big": (
         (facts.get("population") or 0) >= 1e7 or (facts.get("area") or 0) >= 5e5
     )}
 
@@ -717,6 +747,86 @@ def country_entry(cc: str, rings: list, basics: dict) -> dict:
         "tier": "main" if basics["big"] else "niche",
         "hints": hints,
     })
+
+
+def geodle_attrs(cc: str, rows: list, stats: dict) -> dict:
+    """盲猜地点对比用的资料，见 geodle_row。rows 是 GeoNames 里这个国家的城镇，stats 见 country_basics。"""
+    region, continent = geo.REGION_OF.get(cc, ("", ""))
+    return {
+        "cc": cc, "region": region, "continent": continent, **stats,
+        "center": geo.center(rows), "points": geo.thin(rows),
+    }
+
+
+def geodle_entry(cc: str, basics: dict, attrs: dict) -> dict:
+    """盲猜地点：一个国家一道题，不要图。人口过千万或面积过 50 万平方公里的是大众题，同猜国家。"""
+    zh, en = basics["zh"], basics["en"]
+    return finish_entry({
+        "id": f"gd-{cc}",
+        "group": cc,
+        "title": zh,
+        "original": en,
+        "answer": f"{zh}（{en}）" if en else zh,
+        "names": basics["names"],
+        "tier": "main" if basics["big"] else "niche",
+        "hints": basics["hints"],
+        "attrs": attrs,
+    })
+
+
+def _short(n: float, unit: str = "") -> str:
+    """表格里放得下的数，两位有效数字：14亿、1.3亿、5100万、1.1万、800。"""
+    n = float(f"{n:.2g}")
+    for size, name in ((1e8, "亿"), (1e4, "万")):
+        if n >= size:
+            return f"{n / size:g}{name}{unit}"
+    return f"{n:g}{unit}"
+
+
+def _ratio(x: float, y: float, text: str) -> list[str]:
+    """人口、面积跨好几个数量级，按倍数比：大的不到小的 1.5 倍算接近。"""
+    if not x or not y:
+        return ["—", "none", ""]
+    return _num(x, y, text, max(x, y) <= min(x, y) * 1.5)
+
+
+def geodle_row(guess: dict, answer: dict) -> list[list[str]]:
+    """盲猜地点对比表的一行，按 GEODLE_COLUMNS，格式同 pokedle_row。
+    地区：同地区绿，同大洲黄。方位：两国最近的城镇相距多远，箭头是从猜的国家看答案在哪个方向；
+    接壤的写「接壤」，接壤或 NEAR_KM 以内标黄。人口、面积：箭头指答案更多（↑）还是更少（↓）。
+    语言比第一语言：一样绿；答案的前三种语言里有它，或者猜的国家也说答案的第一语言，黄。"""
+    if guess["cc"] == answer["cc"]:  # 答案卡上答案自己那一行
+        place = ["就是这里", "hit", ""]
+    else:
+        way = geo.arrow(guess["center"], answer["center"])
+        if answer["cc"] in guess["neighbours"] or guess["cc"] in answer["neighbours"]:
+            place = ["接壤", "near", way]
+        else:
+            km = geo.gap(guess["points"], answer["points"])
+            place = [f"{km} 公里", "near" if km <= NEAR_KM else "miss", way]
+    if not guess["region"]:
+        region = ["—", "none", ""]
+    elif guess["region"] == answer["region"]:
+        region = [guess["region"], "hit", ""]
+    else:
+        region = [guess["region"], "near" if guess["continent"] == answer["continent"] else "miss", ""]
+    mine, theirs = (guess["langs"] or [""])[0], (answer["langs"] or [""])[0]
+    if not mine:
+        lang = ["—", "none", ""]
+    else:
+        close = mine in answer["langs"] or (theirs and theirs in guess["langs"])
+        lang = [mine, "hit" if mine == theirs else "near" if close else "miss", ""]
+    drive = ["—", "none", ""]
+    if guess["drive"]:
+        drive = [guess["drive"], "hit" if guess["drive"] == answer["drive"] else "miss", ""]
+    return [
+        region,
+        place,
+        _ratio(guess["pop"], answer["pop"], _short(guess["pop"])),
+        _ratio(guess["area"], answer["area"], _short(guess["area"], "km²")),
+        lang,
+        drive,
+    ]
 
 
 def pref_names(pref: dict, wd: dict) -> list[str]:

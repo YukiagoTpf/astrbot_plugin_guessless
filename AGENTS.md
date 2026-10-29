@@ -14,7 +14,7 @@ core/
   bank.py             题库：各题型的构建（Bank._build_*）、定期刷新和重建判断（_settings / _stale）、出题（pick）
   entries.py          题目条目和提示（*_entry、country_basics、scrub），纯函数、不联网
   sources.py          外部数据源：Wikidata、B 站、AniList、AnimeThemes、IGDB、Steam、PokeAPI、Gundam Wiki、vtbs.moe；HttpError
-  geo.py              地理：GeoNames、Wikidata 国家资料、街景取景、Natural Earth 轮廓，以及各种版本常量
+  geo.py              地理：GeoNames、Wikidata 国家资料、街景取景、Natural Earth 轮廓、盲猜地点的地区划分和方位，以及各种版本常量
   cards.py            卡片渲染（Pillow）：九宫格、街景三联、国家轮廓（答案卡带邻国底图）、世界地图、对比表、听歌进度条、
                       猜群友的头像棋盘、整点排行榜长图
   members.py          猜群友：挑人、拉 QQ 头像、每段露哪几格、认群友说的是谁（Roster）
@@ -70,6 +70,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 宝可梦条目格式（盲猜宝可梦的 `attrs`） | `entries.POKEMON_VERSION` |
   | 萝卜的选题、条目格式、`mecha_data.py` | `entries.MECHA_VERSION` |
   | Vtuber 的选题、条目格式、`vtuber_data.py` | `entries.VTUBER_VERSION` |
+  | 盲猜地点的条目格式、对比规则、地区划分（`geo.REGIONS`） | `entries.GEODLE_VERSION` |
   | 听歌猜番的选曲规则（`sources.anime_themes`） | `bank.ANISONG_VERSION` |
   | 街景取景规则（全景缓存作废重找） | `geo.SAMPLING` |
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |

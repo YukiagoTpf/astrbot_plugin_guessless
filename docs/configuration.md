@@ -7,7 +7,7 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | 配置 | 默认 | 说明 |
 |---|---|---|
 | `round_seconds` | 120 | 每道题限时（秒） |
-| `blind_round_seconds` | 300 | 盲猜宝可梦、盲猜萝卜限时（秒），要一个个推，比其他题型久 |
+| `blind_round_seconds` | 300 | 盲猜宝可梦、盲猜萝卜、盲猜地点限时（秒），要一个个推，比其他题型久 |
 | `hint_cooldown_seconds` | 5 | 两次「提示」的最短间隔（秒） |
 | `max_guesses` | 5 | 每人每题最多猜几次，怎么算一次见[玩法](usage.md#猜的次数和距离)；0 为不限 |
 | `mechadle_max_guesses` | 10 | 盲猜萝卜每人每题最多猜几次；0 为不限 |
@@ -16,7 +16,7 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `group_curfews` | 空 | 按群设宵禁，每行一个「群号:开始-结束」（如 `123456:00:00-07:00`，跨午夜写 `23:00-07:00`）；这段时间不能开新题，进行中的照常答完 |
 | `board_interval_hours` | 1 | 每隔几小时在玩过的群里播报一张各题型排行榜的图，这段时间没人答对就不发；0 关闭，见[玩法](usage.md#整点排行榜) |
 | `anime_pool_size` | 1000 | 动画题库大小 |
-| `niche_ratio` | 0.2 | 每道题出小众题的概率，0.2 大约五题一道；0 只出大众题。游戏、宝可梦、萝卜、Vtuber 分档，动画、地点不分档 |
+| `niche_ratio` | 0.2 | 每道题出小众题的概率，0.2 大约五题一道；0 只出大众题。游戏、宝可梦、萝卜、Vtuber、盲猜地点分档，动画、地点不分档 |
 | `game_pool_size` | 500 | 游戏大众题数量 |
 | `game_niche_size` | 300 | 游戏小众题数量 |
 | `game_min_score` | 75 | 游戏最低 Metacritic 分 |

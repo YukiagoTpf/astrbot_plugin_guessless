@@ -6,6 +6,7 @@ LINES = {
     # 卡片右下角，宽度只够十七八个字；{tries} 是 tries / tries_free
     "card_note": ["说答案，{tries} · 喊「提示」开一格"],
     "card_note_geo": ["说国家名，{tries} · 「提示」加线索"],
+    "card_note_geodle": ["说国家名，{tries} · 「提示」加线索"],
     "card_note_country": ["说国家名，{tries} · 「提示」加线索"],
     "card_note_jpgeo": ["说都道府县，{tries}·「提示」加线索"],
     "card_note_pokedle": ["说宝可梦名，{tries} · 「提示」加线索"],
@@ -26,6 +27,7 @@ LINES = {
     "blind_wrong": ["{place} 不对，看表", "不是 {place}，对照一下表", "{place}？差点意思，看表"],
     "pokedle_empty": ["随便说一只宝可梦，看看它和答案差在哪"],
     "mechadle_empty": ["随便说一台高达机体，看看它和答案差在哪"],
+    "geodle_empty": ["随便说一个国家，看看它和答案差在哪"],
     "song_step": ["第 {n} 段 · {sec} 秒"],
     "guess_left": ["{name} 还能猜 {left} 次"],
     "guess_used_up": [
@@ -48,6 +50,7 @@ LINES = {
     ],
     "hint_exhausted_pokedle": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
     "hint_exhausted_mechadle": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
+    "hint_exhausted_geodle": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
     "hint_exhausted_member": [
         "头像都露出一大块了还认不出？平时水群光看字不看人。剩 {left} 秒",
         "没有更大的格子了，剩下的靠你们对群友的了解——如果有的话。剩 {left} 秒",
@@ -121,6 +124,10 @@ LINES = {
         "两分钟，零人答对。建议多刷几小时 GeoGuessr 再来",
         "时间到。护照新得能当镜子照",
     ],
+    "timeout_geodle": [
+        "时间到，表都快填满了还没人猜中。地图是一眼没看过",
+        "时间到，零人答对。建议把地球仪买回来，每天转一圈",
+    ],
     "timeout_country": [
         "时间到，全群没一个认出来的。地理课都在睡觉吧",
         "两分钟，零人答对。建议把地球仪买回来摆桌上",
@@ -175,6 +182,7 @@ LINES = {
     "board_empty_vtuber": ["还没人猜对过 Vtuber，全员单推不看别家"],
     "board_empty_member": ["还没人猜中过群友，大家果然只是网友"],
     "board_empty_geo": ["还没人猜对过地点，全员宅家，可喜可贺"],
+    "board_empty_geodle": ["还没人盲猜中过国家，全员靠街景"],
     "board_empty_country": ["还没人猜对过国家，地理老师哭晕在厕所"],
     "board_empty_jpgeo": ["还没人猜对过日本地点，全员只认识东京"],
     "group_only": ["私聊玩什么，去群里"],

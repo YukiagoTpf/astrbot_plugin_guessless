@@ -5,7 +5,7 @@
     "default": 120
   },
   "blind_round_seconds": {
-    "description": "盲猜宝可梦、盲猜萝卜限时（秒）",
+    "description": "盲猜宝可梦、盲猜萝卜、盲猜地点限时（秒）",
     "type": "int",
     "default": 300,
     "hint": "要一个个猜、看表推理，比其他题型久"

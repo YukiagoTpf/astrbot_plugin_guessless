@@ -1,6 +1,6 @@
-"""猜地点 / 猜日本地点：Google 街景随机取景，猜国家或都道府县；猜国家：看国家轮廓猜。
+"""猜地点 / 猜日本地点：Google 街景随机取景，猜国家或都道府县；猜国家：看国家轮廓猜；盲猜地点：不给图，按资料对比猜国家。
 
-国家资料：Wikidata（大洲、行驶方向、人口、面积、首都、英文名）、GeoNames（主要语言、人口 1.5 万以上的城市坐标）。
+国家资料：Wikidata（大洲、行驶方向、人口、面积、首都、英文名）、GeoNames（主要语言、邻国、人口 1.5 万以上的城市坐标）。
 取景：在城镇中心 1 公里内随机撒点，用街景元数据接口（免费）找 600 米内的 Google 官方全景，离全景最近的城市还在这个国家才算数。
 撒得太散会全是郊外公路和农田，城里才有招牌、车牌、建筑这些能猜的东西。
 街景图片按张计费，出题时现取、不存盘（Google 的条款不允许长期缓存）。
@@ -16,6 +16,7 @@ import zipfile
 
 import aiohttp
 import shapefile
+from zhconv import convert
 
 from .sources import UA, WIKIDATA, HttpError
 
@@ -34,7 +35,7 @@ SOVEREIGN_EXTRA = {"DK"}
 # Wikidata 的中文 label 是正式全称的，改用日常叫法
 TITLES = {"NL": "荷兰", "KR": "韩国", "ML": "马里", "KP": "朝鲜"}
 # 提示规则（hint_data、scrub）或猜错报距离用的位置（towns、centroid）改了就换个名字，地点和国家题库重建
-HINTS_VERSION = "distance-v1"
+HINTS_VERSION = "zh-labels-v1"
 CONTINENTS = {"AF": "非洲", "AS": "亚洲", "EU": "欧洲", "NA": "北美洲", "OC": "大洋洲", "SA": "南美洲", "AN": "南极洲"}
 DRIVING = {"Q14565199": "靠右行驶", "Q11920728": "靠左行驶"}
 PANOS_PER_COUNTRY = 6
@@ -44,6 +45,32 @@ PANOS_PER_PREF = 4
 # 日本都道府县按 JIS 编号分八地方（冲绳归九州地方）
 JP_REGIONS = [(1, "北海道"), (7, "东北"), (14, "关东"), (23, "中部"), (30, "近畿"), (35, "中国地方"), (39, "四国"), (47, "九州")]
 MIN_PANOS = 3  # 只找到一两个的多半是边境误差，不出题
+# 盲猜地点的「地区」：按国内地理课本的分法（中欧单列，波罗的海三国算东欧，伊朗、阿富汗算西亚，
+# 墨西哥算北美），玩家凭常识就能对上。地区 -> (大洲, 国家代码)；同地区是绿格，同大洲是黄格
+REGIONS = {
+    "东亚": ("亚洲", "JP KR KP MN"),
+    "东南亚": ("亚洲", "BN KH ID LA MY MM PH SG TH TL VN"),
+    "南亚": ("亚洲", "BD BT IN LK MV NP PK"),
+    "中亚": ("亚洲", "KG KZ TJ TM UZ"),
+    "西亚": ("亚洲", "AE AF AM AZ BH CY GE IL IQ IR JO KW LB OM PS QA SA SY TR YE"),
+    "北欧": ("欧洲", "DK FI IS NO SE"),
+    "西欧": ("欧洲", "BE FR GB IE LU MC NL"),
+    "中欧": ("欧洲", "AT CH CZ DE HU LI PL SK"),
+    "南欧": ("欧洲", "AD AL BA BG ES GR HR IT ME MK MT PT RO RS SI SM VA"),
+    "东欧": ("欧洲", "BY EE LT LV MD RU UA"),
+    "北非": ("非洲", "DZ EG LY MA SD TN"),
+    "西非": ("非洲", "BF BJ CI CV GH GM GN GW LR ML MR NE NG SL SN TG"),
+    "中非": ("非洲", "CD CF CG CM GA GQ ST TD"),
+    "东非": ("非洲", "BI DJ ER ET KE RW SC SO SS TZ UG"),
+    "南部非洲": ("非洲", "AO BW KM LS MG MU MW MZ NA SZ ZA ZM ZW"),
+    "北美": ("北美洲", "CA MX US"),
+    "中美洲": ("北美洲", "BZ CR GT HN NI PA SV"),
+    "加勒比": ("北美洲", "AG BB BS CU DM DO GD HT JM KN LC TT VC"),
+    "南美": ("南美洲", "AR BO BR CL CO EC GY PE PY SR UY VE"),
+    "澳新": ("大洋洲", "AU NZ"),
+    "太平洋岛国": ("大洋洲", "FJ FM KI MH NR PG PW SB TO TV VU WS"),
+}
+REGION_OF = {cc: (region, continent) for region, (continent, codes) in REGIONS.items() for cc in codes.split()}
 # 三张图的请求尺寸：左边一张大图，右边上下两张小图（cards.load_panels 再缩放拼版）
 PANELS = ((640, 540), (356, 302), (356, 302))
 
@@ -77,15 +104,23 @@ async def fetch_admin1(session: aiohttp.ClientSession, country: str) -> dict[str
 
 
 async def fetch_country_info(session: aiohttp.ClientSession) -> dict[str, dict]:
-    """GeoNames 的国家表：大洲代码和按使用人数排的语言代码。"""
+    """GeoNames 的国家表：大洲代码、按使用人数排的语言代码、陆上邻国的代码。"""
     out = {}
     for row in (await _download(session, GEONAMES + "countryInfo.txt")).decode().splitlines():
         if row.startswith("#") or not row.strip():
             continue
         f = row.split("\t")
         langs = [code.split("-")[0] for code in f[15].split(",") if code]
-        out[f[0]] = {"continent": f[8], "languages": list(dict.fromkeys(langs))}
+        neighbours = [c for c in f[17].split(",") if c]
+        out[f[0]] = {"continent": f[8], "languages": list(dict.fromkeys(langs)), "neighbours": neighbours}
     return out
+
+
+# 中文标签：很多货币、语言只有 zh 或 zh-hans 的标签，没有 zh-cn（只认 zh-cn 时三分之二的国家查不到货币），
+# 按 zh-cn、zh-hans、zh 的顺序取，取到的再转简体
+ZH_LABEL = """OPTIONAL {{ {item} rdfs:label ?l1 FILTER(LANG(?l1) = "zh-cn") }}
+      OPTIONAL {{ {item} rdfs:label ?l2 FILTER(LANG(?l2) = "zh-hans") }}
+      OPTIONAL {{ {item} rdfs:label ?l3 FILTER(LANG(?l3) = "zh") }} BIND(COALESCE(?l1, ?l2, ?l3) AS {label})"""
 
 
 async def _sparql(session: aiohttp.ClientSession, query: str) -> list:
@@ -96,11 +131,11 @@ async def _sparql(session: aiohttp.ClientSession, query: str) -> list:
 
 
 async def fetch_facts(session: aiohttp.ClientSession, codes: list[str]) -> dict[str, dict]:
-    """按 ISO 国家代码查 Wikidata：是否主权国家、英文名、行驶方向、人口、面积、首都、大洲、货币。"""
+    """按 ISO 国家代码查 Wikidata：是否主权国家、英文名、行驶方向、人口、面积、首都、大洲、货币（可能有好几种）。"""
     values = " ".join(json.dumps(c) for c in codes)
     # 只按 ?iso 分组：多值属性（行驶方向、大洲…）会把一个国家拆成好几行
     rows = await _sparql(session, f"""SELECT ?iso (SAMPLE(?label) AS ?en) (SAMPLE(?side) AS ?driving) (MAX(?flag) AS ?sovereign)
-      (MAX(?pop) AS ?population) (MAX(?area) AS ?size) (SAMPLE(?cur) AS ?currency)
+      (MAX(?pop) AS ?population) (MAX(?area) AS ?size) (GROUP_CONCAT(DISTINCT ?cur; separator="|") AS ?curs)
       (GROUP_CONCAT(DISTINCT ?cap; separator="|") AS ?caps) (GROUP_CONCAT(DISTINCT ?cont; separator="|") AS ?conts) WHERE {{
       VALUES ?iso {{ {values} }} ?item wdt:P297 ?iso . FILTER NOT EXISTS {{ ?item wdt:P576 ?end }}
       OPTIONAL {{ ?item rdfs:label ?label FILTER(LANG(?label) = "en") }}
@@ -109,7 +144,7 @@ async def fetch_facts(session: aiohttp.ClientSession, codes: list[str]) -> dict[
       OPTIONAL {{ ?item wdt:P1082 ?pop }} OPTIONAL {{ ?item wdt:P2046 ?area }}
       OPTIONAL {{ ?item wdt:P36 ?c . ?c rdfs:label ?cap FILTER(LANG(?cap) = "zh-cn") }}
       OPTIONAL {{ ?item wdt:P30 ?ct . ?ct rdfs:label ?cont FILTER(LANG(?cont) = "zh-cn") }}
-      OPTIONAL {{ ?item wdt:P38 ?cu . ?cu rdfs:label ?cur FILTER(LANG(?cur) = "zh-cn") }}
+      OPTIONAL {{ ?item wdt:P38 ?cu . {ZH_LABEL.format(item="?cu", label="?cur")} }}
     }} GROUP BY ?iso""")
     out = {}
     for r in rows:
@@ -122,7 +157,7 @@ async def fetch_facts(session: aiohttp.ClientSession, codes: list[str]) -> dict[
             "area": float(v["size"]) if v.get("size") else 0,
             "capital": (v.get("caps") or "").split("|")[0],
             "continent": " / ".join(c for c in (v.get("conts") or "").split("|") if c),
-            "currency": v.get("currency", ""),
+            "currencies": [convert(c, "zh-cn") for c in (v.get("curs") or "").split("|") if c],
         })
     return out
 
@@ -146,9 +181,9 @@ async def fetch_prefectures(session: aiohttp.ClientSession, geonames: list[str])
 
 async def fetch_languages(session: aiohttp.ClientSession) -> dict[str, str]:
     """ISO 639-1 语言代码 → 中文名。"""
-    rows = await _sparql(session, """SELECT ?code ?name WHERE {
-      ?l wdt:P218 ?code . ?l rdfs:label ?name FILTER(LANG(?name) = "zh-cn") }""")
-    return {r["code"]["value"]: r["name"]["value"] for r in rows}
+    rows = await _sparql(session, f"""SELECT ?code ?name WHERE {{
+      ?l wdt:P218 ?code . {ZH_LABEL.format(item="?l", label="?name")} FILTER(BOUND(?name)) }}""")
+    return {r["code"]["value"]: convert(r["name"]["value"], "zh-cn") for r in rows}
 
 
 def _km(a: list, b: list) -> float:
@@ -168,6 +203,41 @@ def towns(rows: list) -> list:
     """猜地点、猜日本地点报距离用的位置：这个国家 / 都道府县所有城镇的坐标，报最近一个到拍摄地的距离。
     用中心的话，猜俄罗斯离北海道的拍摄地有六千多公里，跟直觉对不上。"""
     return [[round(r[0], 2), round(r[1], 2)] for r in rows]
+
+
+def thin(rows: list, step: float = 0.5) -> list:
+    """盲猜地点算两国最近距离用的城镇坐标：每 step 度见方的格子只留一个，美国三千多个城镇抽成几百个，两两比也快。"""
+    cells = {}
+    for r in rows:
+        cells.setdefault((math.floor(r[0] / step), math.floor(r[1] / step)), [round(r[0], 2), round(r[1], 2)])
+    return list(cells.values())
+
+
+def gap(a: list, b: list) -> int:
+    """两组城镇坐标之间最近的一对有多远（公里），取整规则同 distance。"""
+    return min(distance(a, p) for p in b)
+
+
+def center(rows: list) -> list[float]:
+    """按人口加权的城镇中心 [纬度, 经度]，盲猜地点指方向用。在三维单位球上平均，斐济、俄罗斯这种跨 180° 经线的也对。"""
+    x = y = z = 0.0
+    for lat, lng, pop, *_ in rows:
+        la, lo, w = math.radians(lat), math.radians(lng), max(pop, 1)
+        x, y, z = x + w * math.cos(la) * math.cos(lo), y + w * math.cos(la) * math.sin(lo), z + w * math.sin(la)
+    return [round(math.degrees(math.atan2(z, math.hypot(x, y))), 2), round(math.degrees(math.atan2(y, x)), 2)]
+
+
+ARROWS = "↑↗→↘↓↙←↖"
+
+
+def arrow(a: list, b: list) -> str:
+    """从 a 看 b 在哪个方向（八方位）。按墨卡托地图上的直线（恒向线）算，经度取差得少的那边，
+    和中文世界地图（太平洋居中）上看到的一致：从美国看日本是往左，不是大圆航线那样先往北。"""
+    (lat1, lng1), (lat2, lng2) = (map(math.radians, p) for p in (a, b))
+    dlng = (lng2 - lng1 + math.pi) % (2 * math.pi) - math.pi
+    dpsi = math.log(math.tan(math.pi / 4 + lat2 / 2) / math.tan(math.pi / 4 + lat1 / 2))
+    deg = math.degrees(math.atan2(dlng, dpsi)) % 360
+    return ARROWS[round(deg / 45) % 8]
 
 
 def _wrap(lng: float) -> float:
