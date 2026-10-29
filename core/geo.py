@@ -1,5 +1,5 @@
 """猜地点 / 猜日本地点：Google 街景随机取景，猜国家或都道府县；猜国家：看国家轮廓猜；盲猜地点：不给图，按资料对比猜国家；
-盲猜日本地点：同样按资料对比，猜到市町村。
+盲猜日本地点：同样按资料对比，猜到市町村；盲猜中国地点：猜地级市。
 
 国家资料：Wikidata（大洲、行驶方向、人口、面积、首都、英文名）、GeoNames（主要语言、邻国、人口 1.5 万以上的城市坐标）。
 取景：在城镇中心 1 公里内随机撒点，用街景元数据接口（免费）找 600 米内的 Google 官方全景，离全景最近的城市还在这个国家才算数。
@@ -87,6 +87,28 @@ JP_CITY_WARD = "Q137773"  # 政令市下面的行政区（京都市东山区）�
 def disputed(lat: float, lng: float) -> bool:
     """Wikidata 把北方四岛上的 6 个村也算成日本的村，按坐标去掉：不出题，也不能猜。"""
     return lng > 145.7 and lat > 43.5
+
+
+# 盲猜中国地点：Wikidata 里的地级行政区，只出地级市（含副省级市），直辖市、自治州、地区、盟只能拿来猜。
+# 哈尔滨只挂了副省级市、没挂地级市的类；南京还挂着民国时的直辖市，所以直辖市看行政区划代码，不看类
+CN_TYPES = {
+    "Q748149": "地级市", "Q250811": "副省级市", "Q1208802": "直辖市", "Q788104": "自治州", "Q1045608": "地区",
+    "Q288653": "盟",
+}
+CN_RANKS = {"地级市": 0, "自治州": 0, "地区": 0, "盟": 0, "副省级市": 1, "直辖市": 2}
+# 行政区划代码（P442，「13 01」）前两位 -> (省份简称, 大区)；港澳台没有地级市，不在这里
+CN_PROVINCES = {
+    "11": ("北京", "华北"), "12": ("天津", "华北"), "13": ("河北", "华北"), "14": ("山西", "华北"), "15": ("内蒙古", "华北"),
+    "21": ("辽宁", "东北"), "22": ("吉林", "东北"), "23": ("黑龙江", "东北"),
+    "31": ("上海", "华东"), "32": ("江苏", "华东"), "33": ("浙江", "华东"), "34": ("安徽", "华东"), "35": ("福建", "华东"),
+    "36": ("江西", "华东"), "37": ("山东", "华东"),
+    "41": ("河南", "华中"), "42": ("湖北", "华中"), "43": ("湖南", "华中"),
+    "44": ("广东", "华南"), "45": ("广西", "华南"), "46": ("海南", "华南"),
+    "50": ("重庆", "西南"), "51": ("四川", "西南"), "52": ("贵州", "西南"), "53": ("云南", "西南"), "54": ("西藏", "西南"),
+    "61": ("陕西", "西北"), "62": ("甘肃", "西北"), "63": ("青海", "西北"), "64": ("宁夏", "西北"), "65": ("新疆", "西北"),
+}
+CN_EXCLUDE = {"4603"}  # 三沙市：南海诸岛，有争议，不出题也不能猜
+CN_SCENIC = "Q6838244"  # 国家 5A 级旅游景区，名胜提示从这里挑
 # 三张图的请求尺寸：左边一张大图，右边上下两张小图（cards.load_panels 再缩放拼版）
 PANELS = ((640, 540), (356, 302), (356, 302))
 
@@ -320,6 +342,83 @@ async def fetch_landmarks(session: aiohttp.ClientSession, places: dict[str, list
         if x in labels and rec["key"] not in failed:
             out.setdefault(rec["key"], []).append([rec["n"], labels[x], sorted(labels[c] for c in rec["classes"] if c in labels)])
     return out, failed
+
+
+async def fetch_cn_prefectures(session: aiohttp.ClientSession) -> dict[str, dict]:
+    """中国的地级行政区和直辖市：{Wikidata ID: {zh, level, pop, area, lat, lng, code, prov, capital, wiki, plates, dial}}。
+    code 是行政区划代码的前四位（直辖市两位），prov 是前两位，capital 是不是省会（代码后两位是 01），plates 是车牌代码，dial 是长途区号。
+    人口取首选的、最新的一条（多是 2020 年七普）。缺坐标、人口、代码的不要。"""
+    qid = lambda r, k="x": r[k]["value"].rsplit("/", 1)[-1]  # noqa: E731
+    types = " ".join(f"wd:{t}" for t in CN_TYPES)
+    found: dict[str, dict] = {}
+    for r in await _sparql(session, f"""SELECT ?x ?t ?code WHERE {{ VALUES ?t {{ {types} }}
+      ?x wdt:P31 ?t ; wdt:P442 ?code . FILTER NOT EXISTS {{ ?x wdt:P576 ?end }} }}"""):
+        rec = found.setdefault(qid(r), {"types": set(), "code": ""})
+        rec["types"].add(qid(r, "t"))
+        rec["code"] = rec["code"] or "".join(c for c in r["code"]["value"] if c.isdigit())[:4]
+    found = {k: v for k, v in found.items() if v["code"][:2] in CN_PROVINCES and v["code"] not in CN_EXCLUDE}
+    values = " ".join(f"wd:{k}" for k in sorted(found))
+    pops: dict[str, tuple] = {}
+    for r in await _sparql(session, f"""SELECT ?x ?pop ?rank ?when WHERE {{ VALUES ?x {{ {values} }}
+      ?x p:P1082 ?st . ?st ps:P1082 ?pop ; wikibase:rank ?rank . FILTER(?rank != wikibase:DeprecatedRank)
+      OPTIONAL {{ ?st pq:P585 ?when }} }}"""):
+        best = (r["rank"]["value"].endswith("PreferredRank"), r.get("when", {}).get("value", ""), float(r["pop"]["value"]))
+        pops[qid(r)] = max(pops.get(qid(r), best), best)
+    # 面积同日本的市町村，取换算成平方米的值（psn）
+    for r in await _sparql(session, f"""SELECT ?x ?area ?coord WHERE {{ VALUES ?x {{ {values} }}
+      OPTIONAL {{ ?x wdt:P625 ?coord }} OPTIONAL {{ ?x p:P2046 ?st . ?st psn:P2046/wikibase:quantityAmount ?area ;
+        wikibase:rank ?rank FILTER(?rank != wikibase:DeprecatedRank) }} }}"""):
+        rec = found[qid(r)]
+        rec["area"] = max(rec.get("area", 0.0), float(r.get("area", {}).get("value") or 0) / 1e6)
+        rec["coord"] = rec.get("coord") or r.get("coord", {}).get("value", "")
+    for r in await _sparql(session, f"""SELECT ?x ?plate ?dial WHERE {{ VALUES ?x {{ {values} }}
+      OPTIONAL {{ ?x wdt:P395 ?plate }} OPTIONAL {{ ?x wdt:P473 ?dial }} }}"""):
+        rec = found[qid(r)]
+        if plate := r.get("plate", {}).get("value", "").strip():
+            rec.setdefault("plates", set()).add(plate)
+        if dial := "".join(c for c in r.get("dial", {}).get("value", "") if c.isdigit()).removeprefix("86"):
+            rec["dial"] = rec.get("dial") or "0" + dial.lstrip("0")
+    for r in await _sparql(session, f"""SELECT ?x ?title WHERE {{ VALUES ?x {{ {values} }}
+      ?page schema:about ?x ; schema:isPartOf <https://zh.wikipedia.org/> ; schema:name ?title }}"""):
+        found[qid(r)]["wiki"] = r["title"]["value"]
+    labels = await _zh_labels(session, sorted(found))
+    out = {}
+    for key, rec in found.items():
+        if not (rec.get("coord") and key in pops and labels.get(key)):
+            continue
+        code, kinds = rec["code"], [CN_TYPES[t] for t in CN_TYPES if t in rec["types"]]
+        level = "直辖市" if len(code) == 2 else "副省级市" if "副省级市" in kinds else kinds[0]
+        if level == "直辖市" and len(code) != 2:  # 只挂了直辖市的类、代码却是地级的，数据不对
+            continue
+        lng, lat = (float(x) for x in rec["coord"].removeprefix("Point(").removesuffix(")").split())
+        out[key] = {
+            "zh": labels[key], "level": level, "pop": pops[key][2], "area": rec.get("area", 0.0),
+            "lat": round(lat, 4), "lng": round(lng, 4), "code": code, "prov": code[:2], "capital": code[2:] == "01",
+            "wiki": rec.get("wiki", ""), "plates": sorted(rec.get("plates", [])), "dial": rec.get("dial", ""),
+        }
+    return out
+
+
+async def fetch_cn_scenic(session: aiohttp.ClientSession) -> list[dict]:
+    """国家 5A 级旅游景区：[{zh, n（语言版本数）, up（往上三层的 P131）, codes（这几层的行政区划代码）, spot}]。
+    在哪个市看 codes 和 up，都没有的再看坐标，见 entries.cn_sights。"""
+    rows = await _sparql(session, f"""SELECT ?x ?n ?coord ?a ?b ?c ?ac ?bc ?cc WHERE {{
+      ?x wdt:P31 wd:{CN_SCENIC} ; wikibase:sitelinks ?n . OPTIONAL {{ ?x wdt:P625 ?coord }}
+      OPTIONAL {{ ?x wdt:P131 ?a . OPTIONAL {{ ?a wdt:P442 ?ac }} OPTIONAL {{ ?a wdt:P131 ?b . OPTIONAL {{ ?b wdt:P442 ?bc }}
+        OPTIONAL {{ ?b wdt:P131 ?c . OPTIONAL {{ ?c wdt:P442 ?cc }} }} }} }} }}""")
+    found: dict[str, dict] = {}
+    for r in rows:
+        rec = found.setdefault(r["x"]["value"].rsplit("/", 1)[-1], {
+            "n": int(r["n"]["value"]), "up": set(), "codes": set(), "spot": None,
+        })
+        rec["up"] |= {r[k]["value"].rsplit("/", 1)[-1] for k in ("a", "b", "c") if k in r}
+        rec["codes"] |= {"".join(ch for ch in r[k]["value"] if ch.isdigit()) for k in ("ac", "bc", "cc") if k in r}
+        if "coord" in r and not rec["spot"]:
+            lng, lat = (float(x) for x in r["coord"]["value"].removeprefix("Point(").removesuffix(")").split())
+            rec["spot"] = [lat, lng]
+    labels = await _zh_labels(session, sorted(found))
+    return [{"zh": labels[x], "n": rec["n"], "up": sorted(rec["up"]), "codes": sorted(rec["codes"]), "spot": rec["spot"]}
+            for x, rec in found.items() if x in labels]
 
 
 async def fetch_city_wards(session: aiohttp.ClientSession, cities: list[str]) -> dict[str, list[str]]:

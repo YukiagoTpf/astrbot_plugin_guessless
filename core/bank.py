@@ -4,7 +4,8 @@
 地点和日本地点是 Google 街景随机取景，国家是 Natural Earth 轮廓。找不到图的作品不进题库。
 听歌猜番是猜动画题库里在 AnimeThemes 有 OP / ED 的作品；猜萝卜是 Bangumi 上高达系列动画和超级机器人大战里的机体；
 猜Vtuber是 vtbs.moe 名单里 B 站粉丝最多的国内和国外虚拟主播。
-盲猜宝可梦、盲猜萝卜不单独建题库，用宝可梦、萝卜题库里带对比属性的条目；盲猜地点每个国家一道题，不用街景。
+盲猜宝可梦、盲猜萝卜不单独建题库，用宝可梦、萝卜题库里带对比属性的条目；盲猜地点每个国家一道题，不用街景；
+盲猜日本地点、盲猜中国地点是 Wikidata 里的市町村和地级市。
 题库、各数据源的查询结果和图片都缓存在插件数据目录，出题时只有首次用到的图片和街景需要联网。
 """
 
@@ -24,6 +25,8 @@ from . import audio, cards, geo, vtuber_data
 from .answer import candidates, find, norm
 from .entries import (
     ANIME_KINDS,
+    CNGEODLE_MAIN,
+    CNGEODLE_VERSION,
     GAME_INFO,
     GEODLE_MAIN,
     GEODLE_VERSION,
@@ -41,6 +44,11 @@ from .entries import (
     bgm_tags,
     clean_mc_title,
     clip,
+    cn_names,
+    cn_sight_hint,
+    cn_sights,
+    cngeodle_attrs,
+    cngeodle_entry,
     country_basics,
     country_entry,
     game_entry,
@@ -101,8 +109,9 @@ WEB_UA = (
 MIN_POOL = 20
 # 盲猜题型 -> 用哪个题库（只出带 attrs 的条目）
 DERIVED = {"pokedle": "pokemon", "mechadle": "mecha"}
-# 只认完整说出某个名字的题型，见 match。盲猜日本地点能猜的有一千七百多个市町村，按一大段算会把闲聊当成猜
-EXACT_ONLY = {"vtuber", "jpgeodle"}
+# 只认完整说出某个名字的题型，见 match。盲猜日本地点能猜的有一千七百多个市町村，按一大段算会把闲聊当成猜；
+# 盲猜中国地点同理，「我在苏州」不算猜苏州
+EXACT_ONLY = {"vtuber", "jpgeodle", "cngeodle"}
 
 
 class Bank:
@@ -113,7 +122,7 @@ class Bank:
         self.config = config
         self.entries: dict[str, list] = {
             "anime": [], "anisong": [], "game": [], "pokemon": [], "pokedle": [], "mecha": [], "mechadle": [],
-            "vtuber": [], "geo": [], "geodle": [], "country": [], "jpgeo": [], "jpgeodle": [],
+            "vtuber": [], "geo": [], "geodle": [], "country": [], "jpgeo": [], "jpgeodle": [], "cngeodle": [],
         }
         self.meta: dict[str, dict] = {cat: {} for cat in self.entries}
         # 地点类可以猜的国家 / 都道府县 {代码: {"title", "names", "points"}}，没街景、不出题的也在里面；
@@ -250,6 +259,8 @@ class Bank:
             return [GEODLE_VERSION, sorted(geo.EXCLUDE), geo.HINTS_VERSION]
         if cat == "jpgeodle":
             return [JPGEODLE_VERSION]
+        if cat == "cngeodle":
+            return [CNGEODLE_VERSION]
         if cat == "jpgeo":
             return [geo.PANOS_PER_PREF, geo.MIN_PANOS, geo.SAMPLING, geo.HINTS_VERSION]
         return [
@@ -293,7 +304,8 @@ class Bank:
         # 游戏有缓存时一两分钟就建完，动画要等 B 站慢慢搜，放后面；盲猜地点不找街景，放在猜地点前面
         builders = {
             "game": self._build_games, "pokemon": self._build_pokemon, "country": self._build_country,
-            "geodle": self._build_geodle, "jpgeodle": self._build_jpgeodle, "geo": self._build_geo, "jpgeo": self._build_jpgeo,
+            "geodle": self._build_geodle, "jpgeodle": self._build_jpgeodle, "cngeodle": self._build_cngeodle,
+            "geo": self._build_geo, "jpgeo": self._build_jpgeo,
             "anime": self._build_anime, "anisong": self._build_anisong, "mecha": self._build_mecha,
             "vtuber": self._build_vtuber,
         }
@@ -880,7 +892,8 @@ class Bank:
             for k, m in munis.items()
         }
         places = {k: {"title": munis[k]["zh"], "names": names[k], "attrs": attrs[k]} for k in order if names[k]}
-        pool = [k for k in order if k in places][:JPGEODLE_POOL]
+        # 村不出题（白马村、小笠原村都有人反馈太难），只能拿来猜
+        pool = [k for k in order if k in places and munis[k]["level"] != "村"][:JPGEODLE_POOL]
 
         def make(landmarks: dict) -> list:
             entries = []
@@ -903,6 +916,41 @@ class Bank:
         wards = await geo.fetch_city_wards(session, [k for k in pool if munis[k]["rank"] == geo.JP_LEVELS["Q1749269"][1]])
         landmarks = await self._landmarks({k: munis[k].get("wards") or [k, *wards.get(k, [])] for k in pool})
         self._commit("jpgeodle", make(landmarks), places=places, complete=len(landmarks) == len(pool))
+
+    async def _build_cngeodle(self) -> None:
+        """盲猜中国地点：Wikidata 里的地级行政区和直辖市都能猜，只出地级市（含副省级市），中文维基浏览量前
+        CNGEODLE_MAIN 个是大众题。名胜从 5A 景区里挑，查不到就只少这一条提示，一小时后再查。"""
+        session = self._http()
+        self.status["cngeodle"] = "正在查中国的地级市"
+        prefs = await geo.fetch_cn_prefectures(session)
+        views = await self._views("cngeodle", [m["wiki"] for m in prefs.values()], monthly=True)
+        fame = {k: views.get(m["wiki"], 0) for k, m in prefs.items()}
+        order = sorted(prefs, key=lambda k: (-fame[k], -prefs[k]["pop"]))
+        titles, names = {}, {}
+        for k in order:
+            titles[k], names[k] = cn_names(prefs[k])
+        names = assign_names(names, order)
+        attrs = {k: cngeodle_attrs(k, m) for k, m in prefs.items()}
+        places = {k: {"title": titles[k], "names": names[k], "attrs": attrs[k]} for k in order if names[k]}
+        try:
+            sights = cn_sights(await geo.fetch_cn_scenic(session), prefs)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+            logger.warning(f"[guess] 5A scenic areas failed: {e!r}")
+            sights = None
+        pool = [k for k in order if k in places and prefs[k]["level"] in ("地级市", "副省级市")]
+        entries = []
+        for i, k in enumerate(pool):
+            m = prefs[k]
+            # 附近：离得最近的三个里挑浏览量最高的两个，比只给最近的两个好认
+            near = sorted((geo.distance([[o["lat"], o["lng"]]], [m["lat"], m["lng"]]), n) for n, o in prefs.items() if n != k)
+            near = sorted((n for _, n in near[:3]), key=lambda n: -fame[n])[:2]
+            words = [n for n in names[k] if not n.isascii()]
+            hints = [
+                ["区号", m["dial"]], ["车牌", "、".join(m["plates"][:2])], ["附近", "、".join(titles[n] for n in near)],
+                ["名胜", cn_sight_hint((sights or {}).get(k, []), words, titles[k])],
+            ]
+            entries.append(cngeodle_entry(k, titles[k], names[k], attrs[k], hints, i < CNGEODLE_MAIN))
+        self._commit("cngeodle", entries, places=places, complete=sights is not None)
 
     async def _build_jpgeo(self) -> None:
         """街景只在日本，猜都道府县。GeoNames 的一级行政区代码通过 geonameid 对上 Wikidata 的都道府县。"""

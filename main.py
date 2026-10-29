@@ -15,6 +15,8 @@ from .core import audio, cards, geo, members
 from .core.answer import candidates, is_correct
 from .core.bank import Bank
 from .core.entries import (
+    CNGEODLE_CLUES,
+    CNGEODLE_COLUMNS,
     GEODLE_CLUES,
     GEODLE_COLUMNS,
     JPGEODLE_CLUES,
@@ -23,6 +25,7 @@ from .core.entries import (
     MECHADLE_COLUMNS,
     POKEDLE_CLUES,
     POKEDLE_COLUMNS,
+    cngeodle_row,
     geodle_row,
     jpgeodle_row,
     mechadle_row,
@@ -36,6 +39,7 @@ MODES = {
     "game": "猜游戏", "anime": "猜动画", "anisong": "听歌猜番", "pokemon": "猜宝可梦", "pokedle": "盲猜宝可梦",
     "mecha": "猜萝卜", "mechadle": "盲猜萝卜", "vtuber": "猜Vtuber", "member": "猜群友", "geo": "猜地点",
     "geodle": "盲猜地点", "country": "猜国家", "jpgeo": "猜日本地点", "jpgeodle": "盲猜日本地点",
+    "cngeodle": "盲猜中国地点",
 }
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
 OFFLINE = {"country"}  # 暂时下线的题型：开题和排行榜都只回一句，不出题、不播报
@@ -46,6 +50,7 @@ BLIND = {
     "mechadle": ("机体", MECHADLE_COLUMNS, MECHADLE_CLUES, mechadle_row),
     "geodle": ("国家", GEODLE_COLUMNS, GEODLE_CLUES, geodle_row),
     "jpgeodle": ("市町村", JPGEODLE_COLUMNS, JPGEODLE_CLUES, jpgeodle_row),
+    "cngeodle": ("地级市", CNGEODLE_COLUMNS, CNGEODLE_CLUES, cngeodle_row),
 }
 # 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对；
 # Vtuber 的名字也常互相包含；群友按 @、QQ 号、名片认人
@@ -57,7 +62,7 @@ VTUBER_ALIASES = {"猜vtuber", "猜VTuber", "猜V", "猜v"}
 VTUBER_BOARD_ALIASES = {"vtuber排行榜", "VTuber排行榜", "V排行榜"}
 ALL_BOARDS_ALIASES = {"战斗力榜", "总排行榜"}  # 管理员提前发整点排行榜，指令本身是「排行榜」
 COMMANDS = (
-    set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始", "排行榜"} | GEO_ALIASES | GEODLE_ALIASES | JPGEO_ALIASES
+    set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始", "排行榜", "宵禁", "取消宵禁", "恢复宵禁"} | GEO_ALIASES | GEODLE_ALIASES | JPGEO_ALIASES
     | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | ALL_BOARDS_ALIASES
 )
 # @bot 说「猜xx」「盲猜xx」「听歌猜xx」但没有这个题型时回一句
@@ -116,6 +121,8 @@ class GuessPlugin(Star):
         self.quota: dict[str, list[float]] = load_json(self.data_dir / "quota.json") or {}
         # 群号 -> 管理员额外放开的题数，每小时额度用完后再扣，不过期
         self.bonus: dict[str, int] = load_json(self.data_dir / "bonus.json") or {}
+        # 群号 -> 管理员临时解禁宵禁到什么时候（时间戳），过了就照常宵禁
+        self.curfew_lifts: dict[str, float] = load_json(self.data_dir / "curfew_lifts.json") or {}
         self._announcer: asyncio.Task | None = None
         # 群号 -> 发消息用的 unified_msg_origin，整点播报排行榜要用；群里有人说话就记下
         self.origins: dict[str, str] = load_json(self.data_dir / "origins.json") or {}
@@ -228,6 +235,12 @@ class GuessPlugin(Star):
         async for r in self._start(event, "jpgeodle"):
             yield r
 
+    @filter.command("盲猜中国地点")
+    async def guess_cngeodle(self, event: AstrMessageEvent):
+        """开一道盲猜中国地点（不给图，猜一个地级市看省份、方位、人口等对比）"""
+        async for r in self._start(event, "cngeodle"):
+            yield r
+
     @filter.command("游戏排行榜")
     async def game_board(self, event: AstrMessageEvent):
         """猜游戏答对次数排行"""
@@ -298,6 +311,11 @@ class GuessPlugin(Star):
         """盲猜日本地点答对次数排行"""
         yield self._board(event, "jpgeodle")
 
+    @filter.command("盲猜中国地点排行榜")
+    async def cngeodle_board(self, event: AstrMessageEvent):
+        """盲猜中国地点答对次数排行"""
+        yield self._board(event, "cngeodle")
+
     @filter.command("排行榜", alias=ALL_BOARDS_ALIASES)
     async def all_boards(self, event: AstrMessageEvent):
         """管理员：马上发一张各题型的排行榜图，和整点播报的一样，下次整点从这次算新增"""
@@ -333,6 +351,60 @@ class GuessPlugin(Star):
         self.bonus[gid] = self.bonus.get(gid, 0) + n
         save_json(self.data_dir / "bonus.json", self.bonus)
         yield event.plain_result(say("bonus_added", n=n, left=self._quota_left(gid)))
+
+    @filter.regex(r"^\s*(?:宵禁|取消宵禁|恢复宵禁|解禁\s*\d)")
+    async def curfew_admin(self, event: AstrMessageEvent):
+        """@bot 发「宵禁」看本群的宵禁时间；管理员还可以发「宵禁 00:00-07:00」改时间、「取消宵禁」、
+        「宵禁解禁 N 小时」临时放开 N 小时（过了自动恢复）、「恢复宵禁」提前结束解禁。
+        改时间直接改插件配置里的 group_curfews，WebUI 里看到的是同一份。"""
+        gid = event.get_group_id()
+        if not gid or not event.is_at_or_wake_command:
+            return
+        event.stop_event()
+        text = re.sub(r"\s+", "", event.message_str)
+        span = self._curfew_span(gid)
+        if text == "宵禁":
+            yield event.plain_result(say("curfew_show", start=span[0], end=span[1]) if span else say("curfew_none"))
+            return
+        if not event.is_admin():
+            yield event.plain_result(say("not_admin_curfew"))
+            return
+        if m := re.fullmatch(r"(?:宵禁)?解禁(\d+)个?小时", text):
+            hours = int(m[1])
+            if not span:
+                yield event.plain_result(say("curfew_none"))
+            elif not 0 < hours <= 24:
+                yield event.plain_result(say("curfew_lift_range"))
+            else:
+                self.curfew_lifts[gid] = time.time() + hours * HOUR
+                save_json(self.data_dir / "curfew_lifts.json", self.curfew_lifts)
+                until = time.strftime("%H:%M", time.localtime(self.curfew_lifts[gid]))
+                yield event.plain_result(say("curfew_lifted", n=hours, until=until))
+        elif text in ("恢复宵禁", "宵禁恢复"):
+            lifted = self.curfew_lifts.pop(gid, 0) > time.time()
+            save_json(self.data_dir / "curfew_lifts.json", self.curfew_lifts)
+            yield event.plain_result(say("curfew_restored") if lifted and span else say("curfew_not_lifted"))
+        elif text in ("取消宵禁", "宵禁关", "宵禁取消", "宵禁关闭"):
+            self._set_curfew(gid, "")
+            yield event.plain_result(say("curfew_off"))
+        elif m := re.fullmatch(r"宵禁(\d{1,2})(?:[:：](\d{2}))?[-~～到](\d{1,2})(?:[:：](\d{2}))?", text):
+            start, end = (int(m[1]), int(m[2] or 0)), (int(m[3]), int(m[4] or 0))
+            if start == end or any(h > 24 or mm > 59 for h, mm in (start, end)):
+                yield event.plain_result(say("curfew_usage"))
+                return
+            start, end = (f"{h % 24:02d}:{mm:02d}" for h, mm in (start, end))
+            self._set_curfew(gid, f"{start}-{end}")
+            yield event.plain_result(say("curfew_set", start=start, end=end))
+        else:
+            yield event.plain_result(say("curfew_usage"))
+
+    def _set_curfew(self, gid: str, span: str) -> None:
+        """改插件配置里本群的宵禁（span 空串是取消），存回配置文件；临时解禁一并作废。"""
+        items = [x for x in self.config.get("group_curfews") or [] if not re.match(rf"\s*{gid}\s*[:：]", str(x))]
+        self.config["group_curfews"] = [*items, f"{gid}:{span}"] if span else items
+        self.config.save_config()
+        if self.curfew_lifts.pop(gid, None):
+            save_json(self.data_dir / "curfew_lifts.json", self.curfew_lifts)
 
     # 权限自己判断而不用 permission_type，好回自定义文案
     @filter.command("暂停")
@@ -492,10 +564,10 @@ class GuessPlugin(Star):
             yield event.plain_result(say("paused"))
             return
 
-        # 盲猜要一个个推，两分钟不够；日本的市町村有一千七百多个，再多给点
+        # 盲猜要一个个推，两分钟不够；日本的市町村有一千七百多个、中国的地级行政区三百多个，再多给点
         seconds = self.config.get("round_seconds", 120)
-        if cat == "jpgeodle":
-            seconds = self.config.get("jpgeodle_round_seconds", 420)
+        if cat in ("jpgeodle", "cngeodle"):
+            seconds = self.config.get(f"{cat}_round_seconds", 420)
         elif cat in BLIND:
             seconds = self.config.get("blind_round_seconds", 300)
         rnd.cands = candidates(rnd.entry["names"])
@@ -588,22 +660,26 @@ class GuessPlugin(Star):
                 return int(m[2])
         return self.config.get("hourly_limit", 10)
 
-    def _curfew(self, gid: str) -> tuple[str, str] | None:
-        """本群现在在不在宵禁里：group_curfews 里写了「群号:开始-结束」的，在这段时间里返回 (开始, 结束)，否则 None。
-        开始晚于结束就是跨午夜（23:00-07:00）；分钟可以不写（0-7）。"""
-        now = time.localtime()
-        minute = now.tm_hour * 60 + now.tm_min
+    def _curfew_span(self, gid: str) -> tuple[str, str] | None:
+        """本群设的宵禁 (开始, 结束)，没设返回 None。group_curfews 里每行「群号:开始-结束」，分钟可以不写（0-7）。"""
         for item in self.config.get("group_curfews") or []:
             m = re.fullmatch(
                 r"\s*(\d+)\s*[:：]\s*(\d{1,2})(?:[:：](\d{2}))?\s*[-~～]\s*(\d{1,2})(?:[:：](\d{2}))?\s*", str(item)
             )
-            if not m or m[1] != gid:
-                continue
-            start, end = int(m[2]) * 60 + int(m[3] or 0), int(m[4]) * 60 + int(m[5] or 0)
-            inside = start <= minute < end if start <= end else (minute >= start or minute < end)
-            if inside:
-                return f"{start // 60:02d}:{start % 60:02d}", f"{end // 60:02d}:{end % 60:02d}"
+            if m and m[1] == gid:
+                return f"{int(m[2]) % 24:02d}:{int(m[3] or 0):02d}", f"{int(m[4]) % 24:02d}:{int(m[5] or 0):02d}"
         return None
+
+    def _curfew(self, gid: str) -> tuple[str, str] | None:
+        """本群现在在不在宵禁里：在就返回 (开始, 结束)，否则 None。开始晚于结束就是跨午夜（23:00-07:00）；
+        管理员临时解禁（curfew_lifts）期间不算。"""
+        if not (span := self._curfew_span(gid)) or self.curfew_lifts.get(gid, 0) > time.time():
+            return None
+        now = time.localtime()
+        minute = now.tm_hour * 60 + now.tm_min
+        start, end = (int(x[:2]) * 60 + int(x[3:]) for x in span)
+        inside = start <= minute < end if start <= end else (minute >= start or minute < end)
+        return span if inside else None
 
     @staticmethod
     def _hour_start(now: float) -> float:
@@ -689,8 +765,8 @@ class GuessPlugin(Star):
         return len(rnd.hints)
 
     def _limit(self, cat: str) -> int:
-        """每人每题最多猜几次，0 不限。盲猜萝卜、盲猜日本地点要多猜几个才推得出来，单独设。"""
-        if cat in ("mechadle", "jpgeodle"):
+        """每人每题最多猜几次，0 不限。盲猜萝卜、盲猜日本 / 中国地点要多猜几个才推得出来，单独设。"""
+        if cat in ("mechadle", "jpgeodle", "cngeodle"):
             return self.config.get(f"{cat}_max_guesses", 10)
         return self.config.get("max_guesses", 5)
 

@@ -70,7 +70,7 @@ GEODLE_MAIN = 60  # 中文维基浏览量前这么多的国家是大众题；按
 GEODLE_COLUMNS = ("地区", "方位", "人口", "面积", "语言", "行驶")
 GEODLE_CLUES = ("货币", "美食", "名胜", "首字")
 NEAR_KM = 1000  # 盲猜地点：两国最近的城镇相距这么近以内，方位格标黄
-JPGEODLE_VERSION = "munis-v4"  # 盲猜日本地点的选题、条目格式、提示规则改了就换个名字，题库重建
+JPGEODLE_VERSION = "munis-v5"  # 盲猜日本地点的选题、条目格式、提示规则改了就换个名字，题库重建
 JPGEODLE_COLUMNS = ("都道府县", "方位", "人口", "面积", "级别", "县厅")
 JPGEODLE_CLUES = ("景点", "邻居", "名胜", "首字")  # 景点是次有名的名胜，名胜是最有名的；同名的键在 _load 里会并成一条
 JPGEODLE_MAIN, JPGEODLE_POOL = 100, 300  # 中文维基浏览量前 100 个是大众题，前 300 个出题，其余只能拿来猜
@@ -87,6 +87,19 @@ LANDMARK_CLASS_BLOCK = re.compile(r"城市|城镇|行政区|站|机场|大学|�
 LANDMARK_BLOCK = re.compile(
     r"原爆|原子|核|和平|战|军|舰|靖国|护国|慰灵|空袭|遇刺|暗杀|事件|案|端岛|竹岛|独岛|尖阁|钓鱼|北方|皇|御所|陵|墓|"
     r"刑|监狱|收容|纪念|遗址|大学|站|线|政|议|厅|署"
+)
+CNGEODLE_VERSION = "prefs-v1"  # 盲猜中国地点的选题、条目格式、提示规则（CN_SIGHT_BLOCK）改了就换个名字，题库重建
+CNGEODLE_COLUMNS = ("省份", "方位", "人口", "面积", "级别", "省会")
+CNGEODLE_CLUES = ("区号", "车牌", "附近", "名胜", "首字")
+CNGEODLE_MAIN = 100  # 中文维基浏览量前 100 个地级市是大众题
+CN_NEAR_KM = 100  # 盲猜中国地点：相距这么近以内（东部挨着的两个市多在这个距离），方位格标黄
+# 自治州名里的民族，去掉才是平时的叫法（「大理白族自治州」→「大理」）；蒙古、柯尔克孜、哈萨克不带「族」
+CN_ETHNIC = "朝鲜|土家|苗|侗|布依|彝|哈尼|壮|傣|白|景颇|傈僳|藏|羌|回|蒙古|柯尔克孜|哈萨克"
+# 名胜不要红色景点、陵墓、领导人和战争相关的，也不要广场、纪念馆这类（只能加不能删）
+CN_SIGHT_BLOCK = re.compile(
+    r"革命|红色|红旗|红军|长征|烈士|纪念|故居|旧址|会址|会议|抗日|抗战|侵华|屠杀|战|军|兵|核|导弹|发射|航天|卫星|基地|"
+    r"监狱|陵|墓|坟|冢|广场|政府|党|主席|领袖|毛泽东|周恩来|邓小平|朱德|刘少奇|孙中山|中山陵|井冈山|西柏坡|韶山|"
+    r"延安|遵义|瑞金|古田|沙家浜|南泥湾|南湖|雨花台|花明楼|台儿庄|刘公岛|伪满|皇宫|达赖|班禅|活佛|事件|灾|地震|大学"
 )
 # 高达模型系列的世界观：这些作品里的机体是改造的模型，和原作机体同名
 VTUBER_VERSION = "vtbs-v1"  # 猜Vtuber的选题和条目规则、vtuber_data.py 改了就换个名字，题库重建
@@ -961,6 +974,110 @@ def jpgeodle_row(guess: dict, answer: dict) -> list[list[str]]:
         _ratio(guess["area"], answer["area"], _short(guess["area"], "km²")),
         _num(guess["rank"], answer["rank"], guess["level"]),
         ["是" if guess["capital"] else "否", "hit" if guess["capital"] == answer["capital"] else "miss", ""],
+    ]
+
+
+def cn_names(m: dict) -> tuple[str, list[str]]:
+    """地级行政区的 (表里写的名字, 能猜的叫法)。去掉「市」「地区」「盟」也算（「苏州」「喀什」）；
+    自治州写成「大理州」，说「大理州」「大理」都算，但只说「海南」不算海南州，那是省。"""
+    zh = m["zh"]
+    if m["level"] == "自治州" and (found := re.match(f"^(.+?)(?:(?:{CN_ETHNIC})族?)+自治州$", zh)):
+        title, bases = found[1] + "州", [found[1] + "州", found[1]]
+    else:
+        title, bases = zh, [re.sub("(?:市|地区|盟)$", "", zh)]
+    provinces = {name for name, _ in geo.CN_PROVINCES.values()}
+    if m["level"] in ("自治州", "地区", "盟"):
+        bases = [b for b in bases if b not in provinces]
+    return title, usable_names([zh, *bases])
+
+
+def cn_sights(scenic: list[dict], prefs: dict) -> dict[str, list[str]]:
+    """5A 景区归到地级行政区，{键: [景区名, ...]}，按语言版本数从多到少。先看往上三层的行政区划代码（县的代码前四位
+    就是所属的市），再看这几层里有没有哪个市；都没有的（庐山、衡山只有坐标）看离哪个市最近：50 公里内、
+    第二近的远出一半以上才算。赤水丹霞离泸州比离遵义近，放宽了就会归错，挂到省的只在省内找。"""
+    by_code = {m["code"]: k for k, m in prefs.items()}
+    out: dict[str, list[str]] = {}
+    for s in sorted(scenic, key=lambda s: -s["n"]):
+        owner = next((by_code[c[:4]] for c in s["codes"] if c[:4] in by_code), None)
+        owner = owner or next((q for q in s["up"] if q in prefs), None)
+        if not owner and s["spot"]:
+            provs = {c[:2] for c in s["codes"]}
+            near = sorted(
+                (geo.distance([[m["lat"], m["lng"]]], s["spot"]), k) for k, m in prefs.items()
+                if not provs or m["prov"] in provs
+            )[:2]
+            if len(near) == 2 and near[0][0] <= 50 and near[1][0] >= near[0][0] * 1.5:
+                owner = near[0][1]
+        if owner:
+            out.setdefault(owner, []).append(s["zh"])
+    return out
+
+
+def cn_sight_hint(sights: list[str], words: list[str], title: str) -> str:
+    """挑一个名胜：名字不碰 CN_SIGHT_BLOCK，也不带答案的地名（「苏州园林」盖掉就只剩「园林」了）。"""
+    for name in sights:
+        name = re.sub(r"\s*[（(][^）)]*[）)]$", "", name)
+        name = name[:-1] if name.endswith("镇镇") else name  # 乌镇的条目叫「乌镇镇」
+        if name and not CN_SIGHT_BLOCK.search(name) and scrub(name, words, title) == name:
+            return name
+    return ""
+
+
+def cngeodle_attrs(key: str, m: dict) -> dict:
+    """盲猜中国地点对比用的资料，见 cngeodle_row。直辖市不分省会不省会，记 None。"""
+    prov, region = geo.CN_PROVINCES[m["prov"]]
+    return {
+        "key": key, "prov": prov, "region": region, "pop": m["pop"], "area": m["area"], "level": m["level"],
+        "rank": geo.CN_RANKS[m["level"]], "capital": None if m["level"] == "直辖市" else m["capital"],
+        "spot": [m["lat"], m["lng"]],
+    }
+
+
+def cngeodle_entry(key: str, title: str, names: list[str], attrs: dict, hints: list, main: bool) -> dict:
+    """盲猜中国地点：一个地级市一道题，不要图。hints 是 [[名, 值], ...]，main 是不是大众题。"""
+    return finish_entry({
+        "id": f"cd-{key}",
+        "group": key,
+        "title": title,
+        "original": f"{attrs['prov']} · {attrs['level']}",
+        "answer": f"{title}（{attrs['prov']}）",
+        "names": names,
+        "tier": "main" if main else "niche",
+        "hints": hints,
+        "attrs": attrs,
+    })
+
+
+def cngeodle_row(guess: dict, answer: dict) -> list[list[str]]:
+    """盲猜中国地点对比表的一行，按 CNGEODLE_COLUMNS，格式同 pokedle_row。
+    省份：同省绿、同大区黄。方位：两地相距多远，CN_NEAR_KM 以内标黄，箭头是从猜的地方看答案在哪个方向
+    （Wikidata 的接壤关系只有三成的市有，不写「接壤」）。人口、面积同盲猜地点。
+    级别：地级（地级市、自治州、地区、盟）< 副省级市 < 直辖市，一样的绿；不一样的红，级别不同带箭头。
+    省会：是不是省会，直辖市写「—」。"""
+    if guess["key"] == answer["key"]:
+        place = ["就是这里", "hit", ""]
+    else:
+        km = geo.distance([guess["spot"]], answer["spot"])
+        place = [f"{km} 公里", "near" if km <= CN_NEAR_KM else "miss", geo.arrow(guess["spot"], answer["spot"])]
+    if guess["prov"] == answer["prov"]:
+        prov = [guess["prov"], "hit", ""]
+    else:
+        prov = [guess["prov"], "near" if guess["region"] == answer["region"] else "miss", ""]
+    if guess["level"] == answer["level"]:
+        level = [guess["level"], "hit", ""]
+    else:
+        way = "" if guess["rank"] == answer["rank"] else "↑" if answer["rank"] > guess["rank"] else "↓"
+        level = [guess["level"], "miss", way]
+    capital = ["—", "none", ""]
+    if guess["capital"] is not None:
+        capital = ["是" if guess["capital"] else "否", "hit" if guess["capital"] == answer["capital"] else "miss", ""]
+    return [
+        prov,
+        place,
+        _ratio(guess["pop"], answer["pop"], _short(guess["pop"])),
+        _ratio(guess["area"], answer["area"], _short(guess["area"], "km²")),
+        level,
+        capital,
     ]
 
 

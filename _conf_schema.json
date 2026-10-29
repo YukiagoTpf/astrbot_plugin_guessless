@@ -40,6 +40,18 @@
     "default": 10,
     "hint": "能猜的有一千七百多个市町村，要多猜几个才推得出来。0 不限"
   },
+  "cngeodle_round_seconds": {
+    "description": "盲猜中国地点限时（秒）",
+    "type": "int",
+    "default": 420,
+    "hint": "能猜的有三百多个地级市、自治州，比其他盲猜多给两分钟"
+  },
+  "cngeodle_max_guesses": {
+    "description": "盲猜中国地点每人每题最多猜几次",
+    "type": "int",
+    "default": 10,
+    "hint": "能猜的有三百多个地级市、自治州，要多猜几个才推得出来。0 不限"
+  },
   "hourly_limit": {
     "description": "每小时最多开几道题",
     "type": "int",
