@@ -1,0 +1,6 @@
+# 写给编程助手和开发工具的文件不打进插件包（git archive / 插件市场构建）
+AGENTS.md export-ignore
+CLAUDE.md export-ignore
+pyproject.toml export-ignore
+.gitignore export-ignore
+.gitattributes export-ignore

@@ -1,9 +1,16 @@
 name: astrbot_plugin_guessless
 display_name: Guessless
+short_desc: 群聊猜题：九宫格看图、听 OP 猜番、盲猜宝可梦和地点、猜群友，按群排行，不需要 LLM
 desc: 九宫格看图猜游戏、动画、宝可梦、高达和超级机器人大战的机体、虚拟主播，看头像猜群友，听 OP 猜番，盲猜宝可梦、高达、国家、日本的市町村和中国的地级市，看 Google 街景猜国家 / 日本都道府县；按群记录答对排行并整点播报，每小时限量。不需要 LLM。
 version: 0.5.0
 author: YukiagoTpf
 repo: https://github.com/YukiagoTpf/astrbot_plugin_guessless
 support_platforms:
   - aiocqhttp
-astrbot_version: ">=4.29"
+astrbot_version: ">=4.29,<5"
+tags:
+  - 猜题
+  - 小游戏
+  - 群聊
+  - 动画
+  - 地理

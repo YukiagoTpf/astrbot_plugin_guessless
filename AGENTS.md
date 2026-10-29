@@ -6,7 +6,8 @@ AstrBot 群聊猜题插件（Guessless）。功能和用法见 [README](README.m
 
 ```
 main.py               插件入口 GuessPlugin：指令、一道题的生命周期（Round）、额度、排行榜和整点播报、暂停、重启收尾
-metadata.yaml         AstrBot 插件元数据
+metadata.yaml         AstrBot 插件元数据（插件市场也读它：short_desc、tags）
+CHANGELOG.md          更新日志，插件市场的「更新日志」页显示它
 _conf_schema.json     插件配置项（AstrBot WebUI 读这个）
 requirements.txt      运行依赖，AstrBot 加载插件时自动安装
 pyproject.toml        开发工具配置（ruff）
@@ -108,4 +109,5 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
 - `main` 由仓库规则集保护：任何人都不能强推或删除；改动要走 PR 并经 1 人批准，只有仓库所有者（admin）可以绕过、直接推。
 - 替所有者干活时直接提交到 `main`，推送前先征得同意；其他人 fork 后提 PR。
 - 提交信息用英文：祈使句标题，正文写为什么改。
-- 发版时更新 `metadata.yaml` 里的 `version`。
+- 发版时更新 `metadata.yaml` 里的 `version`，在 `CHANGELOG.md` 里记一笔（写给用户看的，按版本倒序）。
+- 插件市场在 AstrBot Cloud（https://cloud.astrbot.app/publish）：从 GitHub 仓库解析 `metadata.yaml` 提交，每个版本都要重新提交审核，版本号用过就不能再用。`AGENTS.md`、`CLAUDE.md` 等开发文件用 `.gitattributes` 的 `export-ignore` 排除出插件包。
