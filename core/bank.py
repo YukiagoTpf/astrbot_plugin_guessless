@@ -25,7 +25,11 @@ from .answer import candidates, find, norm
 from .entries import (
     ANIME_KINDS,
     GAME_INFO,
+    GEODLE_MAIN,
     GEODLE_VERSION,
+    JPGEODLE_MAIN,
+    JPGEODLE_POOL,
+    JPGEODLE_VERSION,
     MECHA_VERSION,
     POKEMON_VERSION,
     VTUBER_VERSION,
@@ -33,6 +37,7 @@ from .entries import (
     TagStats,
     aliases,
     anime_entry,
+    assign_names,
     bgm_tags,
     clean_mc_title,
     clip,
@@ -43,8 +48,13 @@ from .entries import (
     geodle_attrs,
     geodle_entry,
     infobox,
+    jp_names,
+    jpgeodle_attrs,
+    jpgeodle_entry,
+    landmark_hints,
     match_gundam_wiki,
     mecha_entry,
+    merge_tokyo,
     people,
     pokemon_entry,
     popularity,
@@ -72,6 +82,9 @@ from .sources import (
     vtubers,
     wikidata,
     year_close,
+    zhwiki_monthly,
+    zhwiki_titles,
+    zhwiki_views,
 )
 from .store import load_json, save_json
 
@@ -88,7 +101,8 @@ WEB_UA = (
 MIN_POOL = 20
 # 盲猜题型 -> 用哪个题库（只出带 attrs 的条目）
 DERIVED = {"pokedle": "pokemon", "mechadle": "mecha"}
-EXACT_ONLY = {"vtuber"}  # 只认完整说出某个名字的题型，见 match
+# 只认完整说出某个名字的题型，见 match。盲猜日本地点能猜的有一千七百多个市町村，按一大段算会把闲聊当成猜
+EXACT_ONLY = {"vtuber", "jpgeodle"}
 
 
 class Bank:
@@ -99,7 +113,7 @@ class Bank:
         self.config = config
         self.entries: dict[str, list] = {
             "anime": [], "anisong": [], "game": [], "pokemon": [], "pokedle": [], "mecha": [], "mechadle": [],
-            "vtuber": [], "geo": [], "geodle": [], "country": [], "jpgeo": [],
+            "vtuber": [], "geo": [], "geodle": [], "country": [], "jpgeo": [], "jpgeodle": [],
         }
         self.meta: dict[str, dict] = {cat: {} for cat in self.entries}
         # 地点类可以猜的国家 / 都道府县 {代码: {"title", "names", "points"}}，没街景、不出题的也在里面；
@@ -234,6 +248,8 @@ class Bank:
             return [geo.OUTLINE_VERSION, sorted(geo.EXCLUDE), geo.HINTS_VERSION]
         if cat == "geodle":
             return [GEODLE_VERSION, sorted(geo.EXCLUDE), geo.HINTS_VERSION]
+        if cat == "jpgeodle":
+            return [JPGEODLE_VERSION]
         if cat == "jpgeo":
             return [geo.PANOS_PER_PREF, geo.MIN_PANOS, geo.SAMPLING, geo.HINTS_VERSION]
         return [
@@ -277,7 +293,7 @@ class Bank:
         # 游戏有缓存时一两分钟就建完，动画要等 B 站慢慢搜，放后面；盲猜地点不找街景，放在猜地点前面
         builders = {
             "game": self._build_games, "pokemon": self._build_pokemon, "country": self._build_country,
-            "geodle": self._build_geodle, "geo": self._build_geo, "jpgeo": self._build_jpgeo,
+            "geodle": self._build_geodle, "jpgeodle": self._build_jpgeodle, "geo": self._build_geo, "jpgeo": self._build_jpgeo,
             "anime": self._build_anime, "anisong": self._build_anisong, "mecha": self._build_mecha,
             "vtuber": self._build_vtuber,
         }
@@ -820,14 +836,72 @@ class Bank:
         """盲猜地点：每个国家一道题，可以猜的国家同猜地点；只查 Wikidata 和 GeoNames，不用街景的 key。"""
         cities = await self._cities("geodle")
         codes, basics = await self._countries("geodle", cities)
+        # 大众题按中文维基的浏览量挑（国内的知名度）；一条都没查到就退回人口面积
+        try:
+            titles = await zhwiki_titles(self._http(), "P297", codes)
+        except Exception as e:
+            logger.warning(f"[guess] zhwiki titles for geodle failed: {e}")
+            titles = {}
+        # 国家代码对上的条目不一定是常说的那个：NL 只对上「荷兰王国」，「荷兰」条目没挂代码。日常叫法（geo.TITLES）也查一下
+        for cc in codes:
+            titles.setdefault(cc, []).append(basics[cc]["zh"])
+        views = await self._views("geodle", [t for ts in titles.values() for t in ts], monthly=True)
+        fame = {cc: max(views.get(t, 0) for t in ts) for cc, ts in titles.items()}
+        if any(fame.values()):
+            main = set(sorted(codes, key=lambda cc: fame.get(cc, 0), reverse=True)[:GEODLE_MAIN])
+        else:
+            main = {cc for cc in codes if basics[cc]["big"]}
         entries, places = [], {}
         for cc in codes:
             attrs = geodle_attrs(cc, cities[cc], basics[cc]["stats"])
-            entries.append(entry := geodle_entry(cc, basics[cc], attrs))
+            entries.append(entry := geodle_entry(cc, basics[cc], attrs, cc in main))
             places[cc] = {"title": entry["title"], "names": entry["names"], "attrs": attrs}
         if missing := [cc for cc in codes if cc not in geo.REGION_OF]:
             logger.warning(f"[guess] no region in geo.REGIONS for {missing}")
         self._commit("geodle", entries, places=places)
+
+    async def _build_jpgeodle(self) -> None:
+        """盲猜日本地点：Wikidata 里日本的市町村，东京 23 区并成一个。中文维基浏览量前 JPGEODLE_POOL 个出题
+        （前 JPGEODLE_MAIN 个是大众题），其余只能拿来猜。只查 Wikidata 和维基百科，不用街景的 key。"""
+        session = self._http()
+        self.status["jpgeodle"] = "正在查日本的市町村"
+        munis = merge_tokyo(await geo.fetch_municipalities(session))
+        prefs = await geo.fetch_jp_prefectures(session)
+        munis = {k: m for k, m in munis.items() if m["pref"] in prefs}
+        views = await self._views("jpgeodle", [t for m in munis.values() for t in [m["wiki"], *m.get("wikis", [])]])
+        # 东京 23 区的浏览量是各区加起来
+        fame = {k: sum(views.get(t, 0) for t in [m["wiki"], *m.get("wikis", [])]) for k, m in munis.items()}
+        order = sorted(munis, key=lambda k: (-fame[k], -munis[k]["pop"]))
+        names = assign_names({k: jp_names(m) for k, m in munis.items()}, order)
+        capitals = {p["capital"] for p in prefs.values()}
+        # 东京都厅在新宿区，并进了东京23区
+        attrs = {
+            k: jpgeodle_attrs(k, m, prefs[m["pref"]], k in capitals or bool(capitals & set(m.get("wards", []))))
+            for k, m in munis.items()
+        }
+        places = {k: {"title": munis[k]["zh"], "names": names[k], "attrs": attrs[k]} for k in order if names[k]}
+        pool = [k for k in order if k in places][:JPGEODLE_POOL]
+
+        def make(landmarks: dict) -> list:
+            entries = []
+            for i, k in enumerate(pool):
+                m = munis[k]
+                words = [n for n in names[k] if not n.isascii()]
+                sights = landmark_hints(landmarks.get(k, []), words, m["zh"])
+                near = [munis[n]["zh"] for n in sorted(m["neighbours"], key=lambda n: -fame.get(n, 0)) if n in munis][:2]
+                hints = [
+                    ["景点", sights[1] if len(sights) > 1 else ""], ["邻居", "、".join(near)],
+                    ["名胜", sights[0] if sights else ""],
+                ]
+                entries.append(jpgeodle_entry(k, m, names[k], attrs[k], hints, i < JPGEODLE_MAIN))
+            return entries
+
+        # 名胜要查很久（大城市底下的条目上千），先用缓存里有的出题，查完再换一版
+        cached = load_json(self.dir / "jp_landmarks.json") or {}
+        self._commit("jpgeodle", make({k: v[1] for k, v in cached.items()}), places=places)
+        wards = await geo.fetch_city_wards(session, [k for k in pool if munis[k]["rank"] == geo.JP_LEVELS["Q1749269"][1]])
+        landmarks = await self._landmarks({k: munis[k].get("wards") or [k, *wards.get(k, [])] for k in pool})
+        self._commit("jpgeodle", make(landmarks), places=places)
 
     async def _build_jpgeo(self) -> None:
         """街景只在日本，猜都道府县。GeoNames 的一级行政区代码通过 geonameid 对上 Wikidata 的都道府县。"""
@@ -917,6 +991,39 @@ class Bank:
         finally:
             save_json(path, cache)
         return cache
+
+    async def _views(self, cat: str, titles: list[str], monthly: bool = False) -> dict[str, int]:
+        """中文维基百科条目的浏览量，当国内的知名度用：默认是最近 60 天的总数（zhwiki_views，一千多条几分钟查完），
+        monthly 是过去一年月浏览量的中位数（zhwiki_monthly，不怕某个月上新闻，但要逐条查，国家这种几百条的才用）。
+        缓存在 zhwiki_views.json / zhwiki_monthly.json，一个月内查过的不再查；查不到的不在结果里，不影响出题。"""
+        path, now = self.dir / ("zhwiki_monthly.json" if monthly else "zhwiki_views.json"), time.time()
+        cache = load_json(path) or {}
+        if todo := sorted({t for t in titles if t and now - cache.get(t, [0, 0])[1] > 30 * 86400}):
+            self.status[cat] = f"正在查中文维基的浏览量（{len(todo)} 条）"
+            got = await (zhwiki_monthly if monthly else zhwiki_views)(self._http(), todo)
+            cache.update({t: [n, now] for t, n in got.items()})
+            save_json(path, cache)
+        return {t: cache[t][0] for t in titles if t in cache}
+
+    async def _landmarks(self, places: dict[str, list[str]]) -> dict[str, list]:
+        """盲猜日本地点的名胜候选（geo.fetch_landmarks），按市町村缓存在 jp_landmarks.json，一个月内查过的不再查。
+        Wikidata 一批查失败就跳过这批，那几个地方只是少了名胜提示。"""
+        path, now = self.dir / "jp_landmarks.json", time.time()
+        cache = load_json(path) or {}
+        todo = [k for k in places if now - cache.get(k, [0, []])[0] > 30 * 86400]
+        for i in range(0, len(todo), 10):
+            self.status["jpgeodle"] = f"正在查名胜 {i}/{len(todo)}"
+            batch = {k: places[k] for k in todo[i : i + 10]}
+            try:
+                found, failed = await geo.fetch_landmarks(self._http(), batch)
+            except Exception as e:
+                logger.warning(f"[guess] landmarks for {sorted(batch)} failed: {e!r}")
+                continue
+            if failed:
+                logger.warning(f"[guess] landmarks for {sorted(failed)} failed, will retry next build")
+            cache.update({k: [now, found.get(k, [])] for k in batch if k not in failed})
+            save_json(path, cache)
+        return {k: cache[k][1] for k in places if k in cache}
 
     async def _wikidata(self, cat: str, prop: str, ids: list[str], links: dict) -> dict:
         """查不到不影响出题，只是少一些译名，所以失败只记日志。"""

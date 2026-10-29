@@ -1,10 +1,11 @@
-"""外部数据源：Wikidata（各地区译名、跨站 ID）、B 站 / AniList（动画）、AnimeThemes（动画 OP / ED）、
+"""外部数据源：Wikidata（各地区译名、跨站 ID）、中文维基百科浏览量（国内知名度）、B 站 / AniList（动画）、AnimeThemes（动画 OP / ED）、
 IGDB / Steam（游戏）、PokeAPI（宝可梦）、Gundam Wiki（高达机体资料和设定图）、vtbs.moe（虚拟主播）。"""
 
 import asyncio
 import json
 import re
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 import aiohttp
 from zhconv import convert
@@ -13,6 +14,10 @@ from .answer import norm
 
 UA = "YukiagoTpf/astrbot_plugin_guessless"
 WIKIDATA = "https://query.wikidata.org/sparql"
+# 中文维基百科的浏览量，免 key；维基要求 UA 带联系方式
+ZH_API = "https://zh.wikipedia.org/w/api.php"
+ZH_MONTHLY = "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/zh.wikipedia/all-access/user/{}/monthly/{}/{}"
+WIKI_UA = f"{UA} (https://github.com/YukiagoTpf/astrbot_plugin_guessless)"
 # 中文 label 按这个顺序挑一个当题目的中文名，繁体会转成简体
 ZH_LANGS = ("zh-cn", "zh-hans", "zh", "zh-sg", "zh-my", "zh-hant", "zh-tw", "zh-hk", "zh-mo")
 NAME_LANGS = (*ZH_LANGS, "ja", "en", "mul")
@@ -137,6 +142,89 @@ async def gundam_wiki_images(session: aiohttp.ClientSession, files: list[str]) -
 
 def dedupe(names) -> list[str]:
     return [n for n in dict.fromkeys(n.strip() for n in names if isinstance(n, str)) if n]
+
+
+async def zhwiki_titles(session: aiohttp.ClientSession, prop: str, ids: list[str]) -> dict[str, list[str]]:
+    """按外部 ID 查中文维基百科的条目名，{外部 ID: [条目名, ...]}，没有中文条目的不在里面。
+    一个 ID 可能对上几个条目（NL 同时是「荷兰」和「荷兰王国」），都返回，用的人挑浏览量最高的。"""
+    values = " ".join(json.dumps(x) for x in ids)
+    query = f"""SELECT ?v ?title WHERE {{ VALUES ?v {{ {values} }} ?item wdt:{prop} ?v .
+      ?page schema:about ?item ; schema:isPartOf <https://zh.wikipedia.org/> ; schema:name ?title }}"""
+    headers = {"User-Agent": UA, "Accept": "application/sparql-results+json"}
+    for attempt in range(3):  # Wikidata 忙的时候回 429 / 5xx，等一会儿再试
+        async with session.post(WIKIDATA, data={"query": query}, headers=headers) as r:
+            if r.status in (429, 502, 503, 504) and attempt < 2:
+                await asyncio.sleep(15 * (attempt + 1))
+                continue
+            r.raise_for_status()
+            rows = (await r.json(content_type=None))["results"]["bindings"]
+            break
+    out: dict[str, list[str]] = {}
+    for row in rows:
+        out.setdefault(row["v"]["value"], []).append(row["title"]["value"])
+    return out
+
+
+async def zhwiki_views(session: aiohttp.ClientSession, titles: list[str]) -> dict[str, int]:
+    """中文维基百科条目最近 60 天的浏览量，拿来当国内的知名度。
+
+    用 MediaWiki 的 pageviews 属性，一次查 50 条、分几页回，挨个请求不并发。逐条查的 REST 接口
+    并发几个就 429、让等 100 秒。没有浏览数据的算 0；哪一批查失败了，那一批不在结果里。
+    """
+    out: dict[str, int] = {}
+    timeout = aiohttp.ClientTimeout(total=30)
+    for i in range(0, len(titles), 50):
+        batch, cont, views = titles[i : i + 50], {}, {}
+        try:
+            while True:
+                params = {
+                    "action": "query", "prop": "pageviews", "titles": "|".join(batch), "pvipdays": 60,
+                    "format": "json", "formatversion": 2, **cont,
+                }
+                async with session.get(ZH_API, params=params, headers={"User-Agent": WIKI_UA}, timeout=timeout) as r:
+                    r.raise_for_status()
+                    data = await r.json(content_type=None)
+                query = data.get("query") or {}
+                renamed = {n["to"]: n["from"] for n in query.get("normalized") or []}
+                for page in query.get("pages") or []:
+                    if "pageviews" in page:
+                        views[renamed.get(page["title"], page["title"])] = sum(v or 0 for v in page["pageviews"].values())
+                if "continue" not in data:
+                    break
+                cont = data["continue"]
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            continue
+        out.update({t: views.get(t, 0) for t in batch})
+    return out
+
+
+async def zhwiki_monthly(session: aiohttp.ClientSession, titles: list[str]) -> dict[str, int]:
+    """中文维基百科条目过去 12 个整月里，月浏览量的中位数。比 zhwiki_views 稳：斯威士兰有两个月冲到二十几万，
+    一年加起来比英国还多，中位数只有九千。逐条查，挨个请求、隔一会儿；被 429 就按它说的等。查失败的不在结果里。"""
+    now = datetime.now(timezone.utc)
+    end_year, end_month = (now.year, now.month - 1) if now.month > 1 else (now.year - 1, 12)
+    start_year, start_month = (end_year, end_month - 11) if end_month == 12 else (end_year - 1, end_month + 1)
+    start, end = f"{start_year}{start_month:02d}01", f"{end_year}{end_month:02d}28"
+    timeout = aiohttp.ClientTimeout(total=30)
+    out: dict[str, int] = {}
+    for title in titles:
+        url = ZH_MONTHLY.format(quote(title.replace(" ", "_"), safe=""), start, end)
+        for _ in range(2):
+            try:
+                async with session.get(url, headers={"User-Agent": WIKI_UA}, timeout=timeout) as r:
+                    if r.status == 429:
+                        await asyncio.sleep(min(120, int(r.headers.get("retry-after") or 60)))
+                        continue
+                    if r.status == 404:
+                        out[title] = 0
+                    elif r.status == 200:
+                        views = sorted(i["views"] for i in (await r.json(content_type=None))["items"])
+                        out[title] = views[len(views) // 2] if views else 0
+                    break
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                break
+        await asyncio.sleep(0.3)
+    return out
 
 
 async def wikidata(session: aiohttp.ClientSession, prop: str, ids: list[str], links: dict[str, str]) -> dict:

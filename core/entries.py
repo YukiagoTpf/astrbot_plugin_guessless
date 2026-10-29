@@ -64,11 +64,30 @@ MECHA_VERSION = "srw-v2"  # 猜萝卜的选题和条目规则改了就换个名�
 # 盲猜萝卜对比表的列（只出 Gundam Wiki 上有资料的高达机体）和「提示」给的线索
 MECHADLE_COLUMNS = ("世界观", "登场年份", "阵营", "机型", "机械设计", "型号开头")
 MECHADLE_CLUES = ("出自", "全高", "首字")
-GEODLE_VERSION = "regions-v1"  # 盲猜地点的条目格式、对比规则、地区划分（geo.REGIONS）改了就换个名字，题库重建
+GEODLE_VERSION = "views-v1"  # 盲猜地点的条目格式、选题分档、地区划分（geo.REGIONS）改了就换个名字，题库重建
+GEODLE_MAIN = 60  # 中文维基浏览量前这么多的国家是大众题；按人口面积分，布隆迪、布基纳法索都成了大众题
 # 盲猜地点对比表的列，每列都能排除一大片；货币、美食、名胜在表里比不出来，放进「提示」
 GEODLE_COLUMNS = ("地区", "方位", "人口", "面积", "语言", "行驶")
 GEODLE_CLUES = ("货币", "美食", "名胜", "首字")
 NEAR_KM = 1000  # 盲猜地点：两国最近的城镇相距这么近以内，方位格标黄
+JPGEODLE_VERSION = "munis-v2"  # 盲猜日本地点的选题、条目格式、提示规则改了就换个名字，题库重建
+JPGEODLE_COLUMNS = ("都道府县", "方位", "人口", "面积", "级别", "县厅")
+JPGEODLE_CLUES = ("景点", "邻居", "名胜", "首字")  # 景点是次有名的名胜，名胜是最有名的；同名的键在 _load 里会并成一条
+JPGEODLE_MAIN, JPGEODLE_POOL = 100, 300  # 中文维基浏览量前 100 个是大众题，前 300 个出题，其余只能拿来猜
+JP_NEAR_KM = 50  # 盲猜日本地点：相距这么近以内（差不多一个都市圈），方位格标黄
+TOKYO = "tokyo23"  # 东京 23 区并成一个，键用这个
+# 名胜只要这些类的（寺社、城、山水、温泉、公园、祭典……），车站、大学、行政区、事件不要
+LANDMARK_CLASS = re.compile(
+    r"寺|神社|大社|神宫|城|要塞|山|岳|峰|湖|岛|屿|温泉|公园|庭园|瀑布|海滩|滩|岬|湾|峡|溪谷|祭|桥|塔|"
+    r"天主堂|教堂|教会|正教|圣殿|聚落|古道|洞窟|高原|海岸|沙丘|游乐园|动物园|水族馆|景点|名胜"
+)
+# 类里有这些的不要，哪怕也对得上上面（「城市」「大学城」带城，炮台的类是「台场 (军事)」）
+LANDMARK_CLASS_BLOCK = re.compile(r"城市|城镇|行政区|站|机场|大学|学校|道路|公路|铁路|体育|医院|公司|企业|军|战")
+# 不涉政、不碰战争和核：和平公园、原爆、靖国、护国神社、端岛（军舰岛）、领土争议的岛、皇室、陵墓、事件都不要
+LANDMARK_BLOCK = re.compile(
+    r"原爆|原子|核|和平|战|军|舰|靖国|护国|慰灵|空袭|遇刺|暗杀|事件|案|端岛|竹岛|独岛|尖阁|钓鱼|北方|皇|御所|陵|墓|"
+    r"刑|监狱|收容|纪念|遗址|大学|站|线|政|议|厅|署"
+)
 # 高达模型系列的世界观：这些作品里的机体是改造的模型，和原作机体同名
 VTUBER_VERSION = "vtbs-v1"  # 猜Vtuber的选题和条目规则、vtuber_data.py 改了就换个名字，题库重建
 VT_LANGS = {"cn": "中文", "zh": "中文", "ch": "中文", "jp": "日语", "en": "英语", "id": "印尼语", "kr": "韩语"}
@@ -758,8 +777,8 @@ def geodle_attrs(cc: str, rows: list, stats: dict) -> dict:
     }
 
 
-def geodle_entry(cc: str, basics: dict, attrs: dict) -> dict:
-    """盲猜地点：一个国家一道题，不要图。人口过千万或面积过 50 万平方公里的是大众题，同猜国家。"""
+def geodle_entry(cc: str, basics: dict, attrs: dict, main: bool) -> dict:
+    """盲猜地点：一个国家一道题，不要图。main 是不是大众题，见 Bank._build_geodle。"""
     zh, en = basics["zh"], basics["en"]
     return finish_entry({
         "id": f"gd-{cc}",
@@ -768,7 +787,7 @@ def geodle_entry(cc: str, basics: dict, attrs: dict) -> dict:
         "original": en,
         "answer": f"{zh}（{en}）" if en else zh,
         "names": basics["names"],
-        "tier": "main" if basics["big"] else "niche",
+        "tier": "main" if main else "niche",
         "hints": basics["hints"],
         "attrs": attrs,
     })
@@ -794,7 +813,8 @@ def geodle_row(guess: dict, answer: dict) -> list[list[str]]:
     """盲猜地点对比表的一行，按 GEODLE_COLUMNS，格式同 pokedle_row。
     地区：同地区绿，同大洲黄。方位：两国最近的城镇相距多远，箭头是从猜的国家看答案在哪个方向；
     接壤的写「接壤」，接壤或 NEAR_KM 以内标黄。人口、面积：箭头指答案更多（↑）还是更少（↓）。
-    语言比第一语言：一样绿；答案的前三种语言里有它，或者猜的国家也说答案的第一语言，黄。"""
+    语言：第一语言一样绿；不一样但两国的前三种语言里有共同的，黄格写「也说 X」（X 按答案的排序挑）；
+    都不沾边红格写猜的国家的第一语言。只写猜的国家的第一语言再标黄，群友会以为英语和西班牙语算接近。"""
     if guess["cc"] == answer["cc"]:  # 答案卡上答案自己那一行
         place = ["就是这里", "hit", ""]
     else:
@@ -810,12 +830,15 @@ def geodle_row(guess: dict, answer: dict) -> list[list[str]]:
         region = [guess["region"], "hit", ""]
     else:
         region = [guess["region"], "near" if guess["continent"] == answer["continent"] else "miss", ""]
-    mine, theirs = (guess["langs"] or [""])[0], (answer["langs"] or [""])[0]
+    mine, theirs = guess["langs"], answer["langs"]
     if not mine:
         lang = ["—", "none", ""]
+    elif theirs and mine[0] == theirs[0]:
+        lang = [mine[0], "hit", ""]
+    elif shared := [x for x in theirs if x in mine]:
+        lang = [f"也说{shared[0]}", "near", ""]
     else:
-        close = mine in answer["langs"] or (theirs and theirs in guess["langs"])
-        lang = [mine, "hit" if mine == theirs else "near" if close else "miss", ""]
+        lang = [mine[0], "miss", ""]
     drive = ["—", "none", ""]
     if guess["drive"]:
         drive = [guess["drive"], "hit" if guess["drive"] == answer["drive"] else "miss", ""]
@@ -826,6 +849,118 @@ def geodle_row(guess: dict, answer: dict) -> list[list[str]]:
         _ratio(guess["area"], answer["area"], _short(guess["area"], "km²")),
         lang,
         drive,
+    ]
+
+
+def landmark_hints(found: list, words: list[str], title: str) -> list[str]:
+    """fetch_landmarks 查到的候选里挑名胜：类对得上 LANDMARK_CLASS、名字不碰 LANDMARK_BLOCK，
+    按条目数从多到少，最多两个。名字里带地名的（宇治上神社、京都御所）跳过，盖掉地名只剩半截没法看。"""
+    out = []
+    for _, name, classes in found:
+        if (
+            not any(LANDMARK_CLASS.search(c) for c in classes)
+            or any(LANDMARK_CLASS_BLOCK.search(c) for c in classes)
+            or LANDMARK_BLOCK.search(name)
+        ):
+            continue
+        name = re.sub(r"\s*[（(][^）)]*[）)]$", "", name)
+        if name and scrub(name, words, title) == name and name not in out:
+            out.append(name)
+        if len(out) == 2:
+            break
+    return out
+
+
+def merge_tokyo(munis: dict) -> dict:
+    """东京 23 区并成一个 TOKYO（群友说「东京」想的就是这一片）：人口面积相加，位置按人口加权，邻居是各区在 23 区外的邻居。
+    各区原来的键记在 wards 里（查名胜、判县厅用），中文维基条目在 wikis 里（浏览量相加），
+    名字在 names 里（「新宿」「涩谷」也算猜东京）。"""
+    wards = {k: m for k, m in munis.items() if m["level"] == "特别区"}
+    if not wards:
+        return munis
+    out = {k: m for k, m in munis.items() if k not in wards}
+    for m in out.values():
+        if any(n in wards for n in m["neighbours"]):
+            m["neighbours"] = [n for n in m["neighbours"] if n not in wards] + [TOKYO]
+    pop = sum(m["pop"] for m in wards.values())
+    out[TOKYO] = {
+        "zh": "东京23区", "ja": "東京都区部", "en": "Tokyo", "level": "特别区", "rank": geo.JP_LEVELS[geo.JP_WARD][1],
+        "pop": pop, "area": sum(m["area"] for m in wards.values()),
+        "lat": round(sum(m["lat"] * m["pop"] for m in wards.values()) / pop, 4),
+        "lng": round(sum(m["lng"] * m["pop"] for m in wards.values()) / pop, 4),
+        "pref": next(iter(wards.values()))["pref"], "wiki": "", "wikis": [m["wiki"] for m in wards.values() if m["wiki"]],
+        "neighbours": sorted({n for m in wards.values() for n in m["neighbours"] if n not in wards}),
+        "wards": sorted(wards), "names": ["东京", "東京", "东京都区部", *(n for m in wards.values() for n in jp_names(m))],
+    }
+    return out
+
+
+def assign_names(names: dict[str, list[str]], order: list[str]) -> dict[str, list[str]]:
+    """同名的市町村很多（府中市、伊达市、美里町……），一个叫法只归一个：order 里排在前面的（更出名的）拿走。"""
+    owner: dict[str, str] = {}
+    for key in order:
+        for n in names[key]:
+            owner.setdefault(norm(n), key)
+    return {key: [n for n in ns if owner.get(norm(n)) == key] for key, ns in names.items()}
+
+
+def jp_names(m: dict) -> list[str]:
+    """市町村的叫法：中文名、日文名、英文名，再加去掉市町村区后缀的（「京都」「箱根」，剩一个字的不要）。"""
+    labels = [m["zh"], m["ja"], m["en"]]
+    bases = [n[:-1] for n in labels[:2] if n and n[-1:] in "市町村区區"]
+    return usable_names([*labels, *bases, *m.get("names", [])])
+
+
+def jpgeodle_attrs(key: str, m: dict, pref: dict, capital: bool) -> dict:
+    """盲猜日本地点对比用的资料，见 jpgeodle_row。"""
+    region = next((name for last, name in geo.JP_REGIONS if pref["jis"] <= last), "")
+    return {
+        "key": key, "pref": pref["zh"], "region": region, "pop": m["pop"], "area": m["area"],
+        "level": m["level"], "rank": m["rank"], "capital": capital, "spot": [m["lat"], m["lng"]],
+        "neighbours": m["neighbours"],
+    }
+
+
+def jpgeodle_entry(key: str, m: dict, names: list[str], attrs: dict, hints: list, main: bool) -> dict:
+    """盲猜日本地点：一个市町村一道题，不要图。hints 是 [[名, 值], ...]，main 是不是大众题。"""
+    return finish_entry({
+        "id": f"jd-{key}",
+        "group": key,
+        "title": m["zh"],
+        "original": " · ".join(x for x in (m["ja"] if m["ja"] != m["zh"] else "", m["en"]) if x),
+        "answer": f"{m['zh']}（{attrs['pref']}）",
+        "names": names,
+        "tier": "main" if main else "niche",
+        "hints": hints,
+        "attrs": attrs,
+    })
+
+
+def jpgeodle_row(guess: dict, answer: dict) -> list[list[str]]:
+    """盲猜日本地点对比表的一行，按 JPGEODLE_COLUMNS，格式同 pokedle_row。
+    都道府县：同县绿、同地方（八地方）黄。方位：接壤写「接壤」，不接壤写两地相距多远，接壤或 JP_NEAR_KM 以内标黄，
+    箭头是从猜的地方看答案在哪个方向。人口、面积同盲猜地点。级别：村 < 町 < 市 < 中核市 < 政令市 < 特别区，
+    箭头指答案更高（↑）还是更低（↓）。县厅：是不是都道府县的县厅所在地。"""
+    if guess["key"] == answer["key"]:
+        place = ["就是这里", "hit", ""]
+    else:
+        way = geo.arrow(guess["spot"], answer["spot"])
+        if answer["key"] in guess["neighbours"] or guess["key"] in answer["neighbours"]:
+            place = ["接壤", "near", way]
+        else:
+            km = geo.distance([guess["spot"]], answer["spot"])
+            place = [f"{km} 公里", "near" if km <= JP_NEAR_KM else "miss", way]
+    if guess["pref"] == answer["pref"]:
+        pref = [guess["pref"], "hit", ""]
+    else:
+        pref = [guess["pref"], "near" if guess["region"] == answer["region"] else "miss", ""]
+    return [
+        pref,
+        place,
+        _ratio(guess["pop"], answer["pop"], _short(guess["pop"])),
+        _ratio(guess["area"], answer["area"], _short(guess["area"], "km²")),
+        _num(guess["rank"], answer["rank"], guess["level"]),
+        ["是" if guess["capital"] else "否", "hit" if guess["capital"] == answer["capital"] else "miss", ""],
     ]
 
 

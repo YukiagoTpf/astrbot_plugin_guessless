@@ -13,8 +13,8 @@ pyproject.toml        开发工具配置（ruff）
 core/
   bank.py             题库：各题型的构建（Bank._build_*）、定期刷新和重建判断（_settings / _stale）、出题（pick）
   entries.py          题目条目和提示（*_entry、country_basics、scrub），纯函数、不联网
-  sources.py          外部数据源：Wikidata、B 站、AniList、AnimeThemes、IGDB、Steam、PokeAPI、Gundam Wiki、vtbs.moe；HttpError
-  geo.py              地理：GeoNames、Wikidata 国家资料、街景取景、Natural Earth 轮廓、盲猜地点的地区划分和方位，以及各种版本常量
+  sources.py          外部数据源：Wikidata、中文维基浏览量、B 站、AniList、AnimeThemes、IGDB、Steam、PokeAPI、Gundam Wiki、vtbs.moe；HttpError
+  geo.py              地理：GeoNames、Wikidata 国家资料和日本市町村、街景取景、Natural Earth 轮廓、盲猜地点的地区划分和方位，以及各种版本常量
   cards.py            卡片渲染（Pillow）：九宫格、街景三联、国家轮廓（答案卡带邻国底图）、世界地图、对比表、听歌进度条、
                       猜群友的头像棋盘、整点排行榜长图
   members.py          猜群友：挑人、拉 QQ 头像、每段露哪几格、认群友说的是谁（Roster）
@@ -70,7 +70,8 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 宝可梦条目格式（盲猜宝可梦的 `attrs`） | `entries.POKEMON_VERSION` |
   | 萝卜的选题、条目格式、`mecha_data.py` | `entries.MECHA_VERSION` |
   | Vtuber 的选题、条目格式、`vtuber_data.py` | `entries.VTUBER_VERSION` |
-  | 盲猜地点的条目格式、对比规则、地区划分（`geo.REGIONS`） | `entries.GEODLE_VERSION` |
+  | 盲猜地点的条目格式、选题分档、地区划分（`geo.REGIONS`） | `entries.GEODLE_VERSION` |
+  | 盲猜日本地点的选题、条目格式、提示规则（`LANDMARK_CLASS` / `LANDMARK_BLOCK`） | `entries.JPGEODLE_VERSION` |
   | 听歌猜番的选曲规则（`sources.anime_themes`） | `bank.ANISONG_VERSION` |
   | 街景取景规则（全景缓存作废重找） | `geo.SAMPLING` |
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |
@@ -88,6 +89,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
 - 萝卜的阵营不翻 G 高达里以现实国家命名的（新香港、新中国……），对比表和提示里显示「—」。
 - 猜Vtuber不出 `vtuber_data.py` 里的账号；名单要扩只能往里加，不要删掉成人向和有争议的那几项。
 - 猜群友的头像只在内存里出图，不存盘；答案只公布群名片 / 昵称，不发 QQ 号。
+- 盲猜日本地点不出、不认北方四岛上的村（`geo.disputed`）；名胜过滤（`entries.LANDMARK_BLOCK`：和平公园、原爆、靖国和护国神社、端岛、领土争议的岛、皇室、陵墓、事件……）只能加不能删。
 - 猜国家暂时下线（`main.OFFLINE`）：开题和排行榜都只回「好危险，不踩啦」，也不进整点播报。
 
 ## 外部接口
@@ -95,7 +97,8 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
 - Google Street View Static API 的图片按张计费。构建题库只能用免费的元数据接口（`StreetView.find`），图片只在出题时取，不缓存。
 - B 站搜索：先访问首页拿 `buvid3` cookie；3 秒一次，412 是被限流。
 - AniList 约每分钟 30 次，用别名把多个查询合成一次请求。
-- Wikidata SPARQL：用 `VALUES` 批量查；查询太重会 504，拆小或换查法。
+- Wikidata SPARQL：用 `VALUES` 批量查；查询太重会 504，拆小或换查法。在查询里用 `COALESCE` 挑中文标签、顺着 `P131+` 往上找都会超时，标签取回来在 Python 里挑，日本市町村的所属县看团体代码（P429）。
+- 中文维基浏览量：Wikimedia REST 的逐条接口并发几个就 429（让等 100 秒），只能挨个查；量大的用 MediaWiki API 的 `prop=pageviews`（一次 50 条，最近 60 天）。UA 要带联系方式（`sources.WIKI_UA`）。
 - Metacritic 评分榜是网页前端的非官方接口，目前不用 key；以后要是又要 key 了，从配置读，不要写死在代码里。
 
 ## Git

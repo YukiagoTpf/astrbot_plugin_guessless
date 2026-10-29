@@ -1,4 +1,5 @@
-"""猜地点 / 猜日本地点：Google 街景随机取景，猜国家或都道府县；猜国家：看国家轮廓猜；盲猜地点：不给图，按资料对比猜国家。
+"""猜地点 / 猜日本地点：Google 街景随机取景，猜国家或都道府县；猜国家：看国家轮廓猜；盲猜地点：不给图，按资料对比猜国家；
+盲猜日本地点：同样按资料对比，猜到市町村。
 
 国家资料：Wikidata（大洲、行驶方向、人口、面积、首都、英文名）、GeoNames（主要语言、邻国、人口 1.5 万以上的城市坐标）。
 取景：在城镇中心 1 公里内随机撒点，用街景元数据接口（免费）找 600 米内的 Google 官方全景，离全景最近的城市还在这个国家才算数。
@@ -71,6 +72,20 @@ REGIONS = {
     "太平洋岛国": ("大洋洲", "FJ FM KI MH NR PG PW SB TO TV VU WS"),
 }
 REGION_OF = {cc: (region, continent) for region, (continent, codes) in REGIONS.items() for cc in codes.split()}
+# 盲猜日本地点：Wikidata 里日本的市町村（市、町、村、东京的特别区）。类 -> (级别, 排位)，挂了几个类的取排位最高的；
+# 东京 23 区并成一个「东京23区」，级别是特别区
+JP_LEVELS = {
+    "Q4174776": ("村", 0), "Q1059478": ("町", 1), "Q494721": ("市", 2), "Q1137833": ("中核市", 3),
+    "Q1749269": ("政令市", 4), "Q5327704": ("特别区", 5),
+}
+JP_MUNI_TYPES = tuple(JP_LEVELS)  # 有的中核市、政令市只挂了中核市 / 政令市的类，没挂「市」，都要算上
+JP_WARD = "Q5327704"
+JP_CITY_WARD = "Q137773"  # 政令市下面的行政区（京都市东山区）；名胜挂在区下面，不挂在市下面
+
+
+def disputed(lat: float, lng: float) -> bool:
+    """Wikidata 把北方四岛上的 6 个村也算成日本的村，按坐标去掉：不出题，也不能猜。"""
+    return lng > 145.7 and lat > 43.5
 # 三张图的请求尺寸：左边一张大图，右边上下两张小图（cards.load_panels 再缩放拼版）
 PANELS = ((640, 540), (356, 302), (356, 302))
 
@@ -123,11 +138,21 @@ ZH_LABEL = """OPTIONAL {{ {item} rdfs:label ?l1 FILTER(LANG(?l1) = "zh-cn") }}
       OPTIONAL {{ {item} rdfs:label ?l3 FILTER(LANG(?l3) = "zh") }} BIND(COALESCE(?l1, ?l2, ?l3) AS {label})"""
 
 
-async def _sparql(session: aiohttp.ClientSession, query: str) -> list:
+async def _sparql(session: aiohttp.ClientSession, query: str, timeout: int = 70) -> list:
+    """Wikidata 那边一个查询最多跑 60 秒，这里的超时按它来，不用会话默认的。它忙的时候会回 502 / 503 / 504，
+    查得太勤会回 429（每分钟的查询时间有限额），都等一会儿重试，429 按它的 Retry-After 等。"""
     headers = {"User-Agent": UA, "Accept": "application/sparql-results+json"}
-    async with session.post(WIKIDATA, data={"query": query}, headers=headers) as r:
-        r.raise_for_status()
-        return (await r.json(content_type=None))["results"]["bindings"]
+    for attempt in range(4):
+        async with session.post(
+            WIKIDATA, data={"query": query}, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout)
+        ) as r:
+            if r.status in (429, 502, 503, 504) and attempt < 3:
+                wait = int(r.headers.get("retry-after") or 0) if r.status == 429 else 0
+                await asyncio.sleep(min(120, wait or 15 * (attempt + 1)))
+                continue
+            r.raise_for_status()
+            return (await r.json(content_type=None))["results"]["bindings"]
+    return []
 
 
 async def fetch_facts(session: aiohttp.ClientSession, codes: list[str]) -> dict[str, dict]:
@@ -177,6 +202,143 @@ async def fetch_prefectures(session: aiohttp.ClientSession, geonames: list[str])
         jis = int(v["iso"].split("-")[-1]) if v["iso"].split("-")[-1].isdigit() else 0
         out[v["gn"]] = {"jis": jis, "en": v.get("en", ""), "capital": v.get("capital", "")}
     return out
+
+
+async def fetch_municipalities(session: aiohttp.ClientSession) -> dict[str, dict]:
+    """日本的市町村：{Wikidata ID: {zh, ja, en, level, rank, pop, area, lat, lng, pref, wiki, neighbours}}。
+    pref 是都道府县的 ISO 代码（JP-26），wiki 是中文维基的条目名，neighbours 是接壤的市町村。缺坐标、人口、所属县的不要。
+    拆成几个小查询：标签、所属县、维基条目都放一个 GROUP BY 里会超时。"""
+    head = f"VALUES ?type {{ {' '.join(f'wd:{t}' for t in JP_MUNI_TYPES)} }} ?m wdt:P31 ?type ."
+    qid = lambda r, k="m": r[k]["value"].rsplit("/", 1)[-1]  # noqa: E731
+    munis: dict[str, dict] = {}
+    # 面积有的按平方公里录、有的按平方米录（长崎市是 406350000），取换算成平方米的值（psn）再除
+    for r in await _sparql(session, f"""SELECT ?m ?pop ?area ?coord WHERE {{ {head} FILTER NOT EXISTS {{ ?m wdt:P576 ?end }}
+      OPTIONAL {{ ?m wdt:P1082 ?pop }} OPTIONAL {{ ?m wdt:P625 ?coord }}
+      OPTIONAL {{ ?m p:P2046 ?st . ?st psn:P2046/wikibase:quantityAmount ?area ; wikibase:rank ?rank
+        FILTER(?rank != wikibase:DeprecatedRank) }} }}"""):
+        m = munis.setdefault(qid(r), {"pop": 0.0, "area": 0.0, "coord": ""})
+        m["pop"] = max(m["pop"], float(r.get("pop", {}).get("value") or 0))
+        m["area"] = max(m["area"], float(r.get("area", {}).get("value") or 0) / 1e6)
+        m["coord"] = m["coord"] or r.get("coord", {}).get("value", "")
+    levels = " ".join(f"wd:{t}" for t in JP_LEVELS)
+    for r in await _sparql(session, f"SELECT ?m ?t WHERE {{ VALUES ?t {{ {levels} }} ?m wdt:P31 ?t }}"):
+        if m := munis.get(qid(r)):
+            level = JP_LEVELS[qid(r, "t")]
+            if level[1] >= m.get("rank", -1):
+                m["level"], m["rank"] = level
+    # 所属都道府县看全国地方公共团体代码（P429）的前两位；顺着 P131 往上找会超时
+    for r in await _sparql(session, f"SELECT ?m ?code WHERE {{ {head} ?m wdt:P429 ?code }}"):
+        if (m := munis.get(qid(r))) and (code := r["code"]["value"])[:2].isdigit():
+            m["pref"] = f"JP-{code[:2]}"
+    labels: dict[str, dict] = {}
+    keys = sorted(munis)
+    for i in range(0, len(keys), 500):  # 一次查全部要四十多秒，离 Wikidata 的 60 秒上限太近
+        values = " ".join(f"wd:{k}" for k in keys[i : i + 500])
+        for r in await _sparql(session, f"""SELECT ?m ?l WHERE {{ VALUES ?m {{ {values} }} ?m rdfs:label ?l .
+          FILTER(LANG(?l) IN ("zh-cn", "zh-hans", "zh", "ja", "en")) }}"""):
+            labels.setdefault(qid(r), {})[r["l"]["xml:lang"]] = r["l"]["value"]
+    for r in await _sparql(session, f"""SELECT ?m ?title WHERE {{ {head}
+      ?page schema:about ?m ; schema:isPartOf <https://zh.wikipedia.org/> ; schema:name ?title }}"""):
+        if m := munis.get(qid(r)):
+            m["wiki"] = r["title"]["value"]
+    out = {}
+    for key, m in munis.items():
+        lab = labels.get(key, {})
+        zh = next((lab[k] for k in ("zh-cn", "zh-hans", "zh") if k in lab), "") or lab.get("ja", "")
+        if not (m["coord"] and m["pop"] and m.get("pref") and zh and "level" in m):
+            continue
+        lng, lat = (float(x) for x in m["coord"].removeprefix("Point(").removesuffix(")").split())
+        if disputed(lat, lng):
+            continue
+        out[key] = {
+            "zh": convert(zh, "zh-cn"), "ja": lab.get("ja", ""), "en": lab.get("en", ""),
+            "level": m["level"], "rank": m["rank"], "pop": m["pop"], "area": m["area"],
+            "lat": round(lat, 4), "lng": round(lng, 4), "pref": m["pref"], "wiki": m.get("wiki", ""), "neighbours": [],
+        }
+    for r in await _sparql(session, f"SELECT ?m ?n WHERE {{ {head} ?m wdt:P47 ?n }}"):
+        m, n = qid(r), qid(r, "n")
+        if m in out and n in out and n not in out[m]["neighbours"]:
+            out[m]["neighbours"].append(n)
+    return out
+
+
+async def fetch_jp_prefectures(session: aiohttp.ClientSession) -> dict[str, dict]:
+    """都道府县：{ISO 代码: {zh, jis, capital}}，capital 是县厅所在地的 Wikidata ID。"""
+    rows = await _sparql(session, """SELECT ?iso ?l ?cap WHERE { ?p wdt:P31 wd:Q50337 ; wdt:P300 ?iso .
+      OPTIONAL { ?p wdt:P36 ?cap } OPTIONAL { ?p rdfs:label ?l FILTER(LANG(?l) IN ("zh-cn", "zh-hans", "zh")) } }""")
+    out: dict[str, dict] = {}
+    for r in rows:
+        iso = r["iso"]["value"]
+        rec = out.setdefault(iso, {
+            "zh": "", "jis": int(iso.split("-")[-1]) if iso.split("-")[-1].isdigit() else 0, "labels": {},
+            "capital": r.get("cap", {}).get("value", "").rsplit("/", 1)[-1],
+        })
+        if "l" in r:
+            rec["labels"][r["l"]["xml:lang"]] = r["l"]["value"]
+    for rec in out.values():
+        labels = rec.pop("labels")
+        rec["zh"] = convert(next((labels[k] for k in ("zh-cn", "zh-hans", "zh") if k in labels), ""), "zh-cn")
+    return {iso: rec for iso, rec in out.items() if rec["zh"]}
+
+
+async def fetch_landmarks(session: aiohttp.ClientSession, places: dict[str, list[str]]) -> tuple[dict[str, list], set[str]]:
+    """盲猜日本地点的名胜候选：在这个地方（P131）、至少 8 个语言版本有条目的东西，按条目数从多到少。
+    places 是 {键: [Wikidata ID, ...]}：东京23区是 23 个区，政令市是市加下面的行政区（fetch_city_wards）。
+    返回 ({键: [[条目数, 中文名, [类的中文名, ...]], ...]}, 没查成的键)，挑哪些当提示见 entries.landmark_hints。
+    大城市底下的条目上千：四个一批，超时了再一个个查，还不行的算没查成。往下多找一层（P131/P131?）慢到查不完。"""
+    owner = {q: key for key, qs in places.items() for q in qs}
+    found: dict[str, dict] = {}  # 条目 -> {"key", "n", "classes"}
+    failed: set[str] = set()
+
+    async def query(qs: list[str]) -> list:
+        values = " ".join(f"wd:{q}" for q in qs)
+        return await _sparql(session, f"""SELECT ?m ?x ?n ?c WHERE {{ VALUES ?m {{ {values} }}
+          ?x wdt:P131 ?m ; wikibase:sitelinks ?n . FILTER(?n >= 8) OPTIONAL {{ ?x wdt:P31 ?c }} }}""")
+
+    qids = sorted(owner)
+    for i in range(0, len(qids), 4):
+        batch = qids[i : i + 4]
+        try:
+            rows = await query(batch)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            rows = []
+            for q in batch:
+                try:
+                    rows += await query([q])
+                except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                    failed.add(owner[q])
+        for r in rows:
+            x = r["x"]["value"].rsplit("/", 1)[-1]
+            rec = found.setdefault(x, {"key": owner[r["m"]["value"].rsplit("/", 1)[-1]], "n": int(r["n"]["value"]), "classes": set()})
+            if "c" in r:
+                rec["classes"].add(r["c"]["value"].rsplit("/", 1)[-1])
+        await asyncio.sleep(3)  # 连着查会被 429
+    labels = await _zh_labels(session, sorted({*found, *(c for rec in found.values() for c in rec["classes"])}))
+    out: dict[str, list] = {}
+    for x, rec in sorted(found.items(), key=lambda kv: -kv[1]["n"]):
+        if x in labels and rec["key"] not in failed:
+            out.setdefault(rec["key"], []).append([rec["n"], labels[x], sorted(labels[c] for c in rec["classes"] if c in labels)])
+    return out, failed
+
+
+async def fetch_city_wards(session: aiohttp.ClientSession, cities: list[str]) -> dict[str, list[str]]:
+    """政令市下面的行政区：{市的 Wikidata ID: [区的 Wikidata ID, ...]}。"""
+    values = " ".join(f"wd:{q}" for q in cities)
+    out: dict[str, list[str]] = {}
+    for r in await _sparql(session, f"SELECT ?m ?w WHERE {{ VALUES ?m {{ {values} }} ?w wdt:P131 ?m ; wdt:P31 wd:{JP_CITY_WARD} }}"):
+        out.setdefault(r["m"]["value"].rsplit("/", 1)[-1], []).append(r["w"]["value"].rsplit("/", 1)[-1])
+    return out
+
+
+async def _zh_labels(session: aiohttp.ClientSession, qids: list[str]) -> dict[str, str]:
+    """中文名，按 zh-cn、zh-hans、zh 挑，转简体。三种都取回来在这边挑，在查询里用 COALESCE 挑会慢到 504。"""
+    labels: dict[str, dict] = {}
+    for i in range(0, len(qids), 300):
+        values = " ".join(f"wd:{q}" for q in qids[i : i + 300])
+        for r in await _sparql(session, f"""SELECT ?i ?l WHERE {{ VALUES ?i {{ {values} }}
+          ?i rdfs:label ?l FILTER(LANG(?l) IN ("zh-cn", "zh-hans", "zh")) }}"""):
+            labels.setdefault(r["i"]["value"].rsplit("/", 1)[-1], {})[r["l"]["xml:lang"]] = r["l"]["value"]
+    return {q: convert(next(lab[k] for k in ("zh-cn", "zh-hans", "zh") if k in lab), "zh-cn") for q, lab in labels.items()}
 
 
 async def fetch_languages(session: aiohttp.ClientSession) -> dict[str, str]:

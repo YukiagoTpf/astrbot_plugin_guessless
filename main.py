@@ -17,11 +17,14 @@ from .core.bank import Bank
 from .core.entries import (
     GEODLE_CLUES,
     GEODLE_COLUMNS,
+    JPGEODLE_CLUES,
+    JPGEODLE_COLUMNS,
     MECHADLE_CLUES,
     MECHADLE_COLUMNS,
     POKEDLE_CLUES,
     POKEDLE_COLUMNS,
     geodle_row,
+    jpgeodle_row,
     mechadle_row,
     pokedle_row,
 )
@@ -32,7 +35,7 @@ from .core.store import load_json, save_json
 MODES = {
     "game": "猜游戏", "anime": "猜动画", "anisong": "听歌猜番", "pokemon": "猜宝可梦", "pokedle": "盲猜宝可梦",
     "mecha": "猜萝卜", "mechadle": "盲猜萝卜", "vtuber": "猜Vtuber", "member": "猜群友", "geo": "猜地点",
-    "geodle": "盲猜地点", "country": "猜国家", "jpgeo": "猜日本地点",
+    "geodle": "盲猜地点", "country": "猜国家", "jpgeo": "猜日本地点", "jpgeodle": "盲猜日本地点",
 }
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
 OFFLINE = {"country"}  # 暂时下线的题型：开题和排行榜都只回一句，不出题、不播报
@@ -42,17 +45,19 @@ BLIND = {
     "pokedle": ("宝可梦", POKEDLE_COLUMNS, POKEDLE_CLUES, pokedle_row),
     "mechadle": ("机体", MECHADLE_COLUMNS, MECHADLE_CLUES, mechadle_row),
     "geodle": ("国家", GEODLE_COLUMNS, GEODLE_CLUES, geodle_row),
+    "jpgeodle": ("市町村", JPGEODLE_COLUMNS, JPGEODLE_CLUES, jpgeodle_row),
 }
 # 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对；
 # Vtuber 的名字也常互相包含；群友按 @、QQ 号、名片认人
 BY_KEY = {"mecha", "mechadle", "vtuber", "member"}
 GEO_ALIASES = {"猜街景"}
+GEODLE_ALIASES = {"盲猜国家"}  # 猜国家下线了，群友顺手会说「盲猜国家」
 JPGEO_ALIASES = {"猜日本街景"}
 VTUBER_ALIASES = {"猜vtuber", "猜VTuber", "猜V", "猜v"}
 VTUBER_BOARD_ALIASES = {"vtuber排行榜", "VTuber排行榜", "V排行榜"}
 ALL_BOARDS_ALIASES = {"战斗力榜", "总排行榜"}  # 管理员提前发整点排行榜，指令本身是「排行榜」
 COMMANDS = (
-    set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始", "排行榜"} | GEO_ALIASES | JPGEO_ALIASES
+    set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始", "排行榜"} | GEO_ALIASES | GEODLE_ALIASES | JPGEO_ALIASES
     | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | ALL_BOARDS_ALIASES
 )
 # @bot 说「猜xx」「盲猜xx」「听歌猜xx」但没有这个题型时回一句
@@ -199,7 +204,7 @@ class GuessPlugin(Star):
         async for r in self._start(event, "geo"):
             yield r
 
-    @filter.command("盲猜地点")
+    @filter.command("盲猜地点", alias=GEODLE_ALIASES)
     async def guess_geodle(self, event: AstrMessageEvent):
         """开一道盲猜地点（不给图，猜一个国家看地区、方位、人口等对比）"""
         async for r in self._start(event, "geodle"):
@@ -215,6 +220,12 @@ class GuessPlugin(Star):
     async def guess_jpgeo(self, event: AstrMessageEvent):
         """开一道猜日本地点（日本街景，猜都道府县）"""
         async for r in self._start(event, "jpgeo"):
+            yield r
+
+    @filter.command("盲猜日本地点")
+    async def guess_jpgeodle(self, event: AstrMessageEvent):
+        """开一道盲猜日本地点（不给图，猜一个市町村看都道府县、方位、人口等对比）"""
+        async for r in self._start(event, "jpgeodle"):
             yield r
 
     @filter.command("游戏排行榜")
@@ -281,6 +292,11 @@ class GuessPlugin(Star):
     async def jpgeo_board(self, event: AstrMessageEvent):
         """猜日本地点答对次数排行"""
         yield self._board(event, "jpgeo")
+
+    @filter.command("盲猜日本地点排行榜")
+    async def jpgeodle_board(self, event: AstrMessageEvent):
+        """盲猜日本地点答对次数排行"""
+        yield self._board(event, "jpgeodle")
 
     @filter.command("排行榜", alias=ALL_BOARDS_ALIASES)
     async def all_boards(self, event: AstrMessageEvent):
@@ -587,9 +603,16 @@ class GuessPlugin(Star):
                 return f"{start // 60:02d}:{start % 60:02d}", f"{end // 60:02d}:{end % 60:02d}"
         return None
 
+    @staticmethod
+    def _hour_start(now: float) -> float:
+        """now 所在整点的时间戳，按本地时间（AstrBot 的时区，Docker 里用 TZ 设）。"""
+        t = time.localtime(now)
+        return time.mktime((t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, 0, 0, 0, 0, -1))
+
     def _quota_used(self, gid: str) -> list[float]:
-        now = time.time()
-        used = self.quota[gid] = [t for t in self.quota.get(gid, []) if now - t < HOUR]
+        """这个整点以来开的题。额度每个整点清零，开题时间存在 quota.json 里，重启不影响。"""
+        start = self._hour_start(time.time())
+        used = self.quota[gid] = [t for t in self.quota.get(gid, []) if t >= start]
         return used
 
     def _quota_take(self, gid: str) -> str:
@@ -615,12 +638,12 @@ class GuessPlugin(Star):
         self._quota_save()
 
     def _quota_wait(self, gid: str) -> int:
-        """每小时额度最早空出一道还要几分钟。"""
+        """离下个整点额度清零还有几分钟。"""
         limit = self._hourly_limit(gid)
-        used = self._quota_used(gid)
-        if not limit or len(used) < limit:
+        if not limit or len(self._quota_used(gid)) < limit:
             return 0
-        return max(1, math.ceil((used[-limit] + HOUR - time.time()) / 60))
+        now = time.time()
+        return max(1, math.ceil((self._hour_start(now) + HOUR - now) / 60))
 
     def _quota_left(self, gid: str) -> int:
         """现在还能开几道（这小时剩下的 + 管理员加的）。"""
