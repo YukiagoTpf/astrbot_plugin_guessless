@@ -429,6 +429,9 @@ class GuessPlugin(Star):
         if gid in self.paused:
             yield event.plain_result(say("paused"))
             return
+        if curfew := self._curfew(gid):
+            yield event.plain_result(say("curfew", start=curfew[0], end=curfew[1]))
+            return
         if cur := self.rounds.get(gid):
             if cur.entry is None:
                 yield event.plain_result(say("preparing"))
@@ -550,6 +553,23 @@ class GuessPlugin(Star):
             if (m := re.fullmatch(r"\s*(\d+)\s*[:：]\s*(\d+)\s*", str(item))) and m[1] == gid:
                 return int(m[2])
         return self.config.get("hourly_limit", 10)
+
+    def _curfew(self, gid: str) -> tuple[str, str] | None:
+        """本群现在在不在宵禁里：group_curfews 里写了「群号:开始-结束」的，在这段时间里返回 (开始, 结束)，否则 None。
+        开始晚于结束就是跨午夜（23:00-07:00）；分钟可以不写（0-7）。"""
+        now = time.localtime()
+        minute = now.tm_hour * 60 + now.tm_min
+        for item in self.config.get("group_curfews") or []:
+            m = re.fullmatch(
+                r"\s*(\d+)\s*[:：]\s*(\d{1,2})(?:[:：](\d{2}))?\s*[-~～]\s*(\d{1,2})(?:[:：](\d{2}))?\s*", str(item)
+            )
+            if not m or m[1] != gid:
+                continue
+            start, end = int(m[2]) * 60 + int(m[3] or 0), int(m[4]) * 60 + int(m[5] or 0)
+            inside = start <= minute < end if start <= end else (minute >= start or minute < end)
+            if inside:
+                return f"{start // 60:02d}:{start % 60:02d}", f"{end // 60:02d}:{end % 60:02d}"
+        return None
 
     def _quota_used(self, gid: str) -> list[float]:
         now = time.time()
