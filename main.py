@@ -687,9 +687,9 @@ class GuessPlugin(Star):
         return len(rnd.hints)
 
     def _limit(self, cat: str) -> int:
-        """每人每题最多猜几次，0 不限。盲猜萝卜要多猜几台才推得出来，单独设。"""
-        if cat == "mechadle":
-            return self.config.get("mechadle_max_guesses", 10)
+        """每人每题最多猜几次，0 不限。盲猜萝卜、盲猜日本地点要多猜几个才推得出来，单独设。"""
+        if cat in ("mechadle", "jpgeodle"):
+            return self.config.get(f"{cat}_max_guesses", 10)
         return self.config.get("max_guesses", 5)
 
     def _card(self, rnd: Round, image, status: str, hints: list) -> list:

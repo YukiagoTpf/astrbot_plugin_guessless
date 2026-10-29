@@ -261,7 +261,7 @@ class Bank:
         meta = self.meta[cat]
         if not meta or meta.get("settings") != self._settings(cat):
             return True
-        # 上次 B 站被风控没查完，一小时后接着查（查过的有缓存，不会重复查）
+        # 上次没查完（B 站被风控、日本地点的名胜没查全），一小时后接着查（查过的有缓存，不会重复查）
         if not meta.get("complete", True) and time.time() - meta.get("built_at", 0) > 3600:
             return True
         # 升级了题目格式，或者刚填 / 删了截图来源的 key
@@ -896,12 +896,13 @@ class Bank:
                 entries.append(jpgeodle_entry(k, m, names[k], attrs[k], hints, i < JPGEODLE_MAIN))
             return entries
 
-        # 名胜要查很久（大城市底下的条目上千），先用缓存里有的出题，查完再换一版
+        # 名胜要查很久（大城市底下的条目上千），先用缓存里有的出题，查完再换一版。没查全的标成没建完，
+        # 中途重启或者有的没查成，一小时后接着查（见 _stale）
         cached = load_json(self.dir / "jp_landmarks.json") or {}
-        self._commit("jpgeodle", make({k: v[1] for k, v in cached.items()}), places=places)
+        self._commit("jpgeodle", make({k: v[1] for k, v in cached.items()}), places=places, complete=False)
         wards = await geo.fetch_city_wards(session, [k for k in pool if munis[k]["rank"] == geo.JP_LEVELS["Q1749269"][1]])
         landmarks = await self._landmarks({k: munis[k].get("wards") or [k, *wards.get(k, [])] for k in pool})
-        self._commit("jpgeodle", make(landmarks), places=places)
+        self._commit("jpgeodle", make(landmarks), places=places, complete=len(landmarks) == len(pool))
 
     async def _build_jpgeo(self) -> None:
         """街景只在日本，猜都道府县。GeoNames 的一级行政区代码通过 geonameid 对上 Wikidata 的都道府县。"""
