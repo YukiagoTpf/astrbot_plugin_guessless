@@ -28,6 +28,12 @@
     "default": 10,
     "hint": "对比的资料多、要多猜几台才推得出来，比其他题型多。0 不限"
   },
+  "jpgeodle_round_seconds": {
+    "description": "盲猜日本地点限时（秒）",
+    "type": "int",
+    "default": 420,
+    "hint": "能猜的有一千七百多个市町村，比其他盲猜多给两分钟"
+  },
   "jpgeodle_max_guesses": {
     "description": "盲猜日本地点每人每题最多猜几次",
     "type": "int",

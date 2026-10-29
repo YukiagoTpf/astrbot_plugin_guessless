@@ -492,9 +492,11 @@ class GuessPlugin(Star):
             yield event.plain_result(say("paused"))
             return
 
-        # 盲猜宝可梦要一只只推，两分钟不够
+        # 盲猜要一个个推，两分钟不够；日本的市町村有一千七百多个，再多给点
         seconds = self.config.get("round_seconds", 120)
-        if cat in BLIND:  # 要一个个推，两分钟不够
+        if cat == "jpgeodle":
+            seconds = self.config.get("jpgeodle_round_seconds", 420)
+        elif cat in BLIND:
             seconds = self.config.get("blind_round_seconds", 300)
         rnd.cands = candidates(rnd.entry["names"])
         rnd.deadline = time.monotonic() + seconds

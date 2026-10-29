@@ -7,7 +7,8 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | 配置 | 默认 | 说明 |
 |---|---|---|
 | `round_seconds` | 120 | 每道题限时（秒） |
-| `blind_round_seconds` | 300 | 各种盲猜的限时（秒），要一个个推，比其他题型久 |
+| `jpgeodle_round_seconds` | 420 | 盲猜日本地点限时（秒），市町村太多，比其他盲猜多两分钟 |
+| `blind_round_seconds` | 300 | 其他盲猜的限时（秒），要一个个推，比其他题型久 |
 | `hint_cooldown_seconds` | 5 | 两次「提示」的最短间隔（秒） |
 | `max_guesses` | 5 | 每人每题最多猜几次，怎么算一次见[玩法](usage.md#猜的次数和距离)；0 为不限 |
 | `mechadle_max_guesses` | 10 | 盲猜萝卜每人每题最多猜几次；0 为不限 |
