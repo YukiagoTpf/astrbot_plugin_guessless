@@ -8,6 +8,7 @@ AstrBot 群聊猜题插件（Guessless）。功能和用法见 [README](README.m
 main.py               插件入口 GuessPlugin：指令、一道题的生命周期（Round）、额度、排行榜和整点播报、暂停、重启收尾
 metadata.yaml         AstrBot 插件元数据（插件市场也读它：short_desc、tags）
 CHANGELOG.md          更新日志，插件市场的「更新日志」页显示它
+logo.png              插件市场的图标，256×256
 _conf_schema.json     插件配置项（AstrBot WebUI 读这个）
 requirements.txt      运行依赖，AstrBot 加载插件时自动安装
 pyproject.toml        开发工具配置（ruff）
