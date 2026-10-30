@@ -307,7 +307,7 @@ async def fetch_jp_prefectures(session: aiohttp.ClientSession) -> dict[str, dict
 async def fetch_landmarks(session: aiohttp.ClientSession, places: dict[str, list[str]]) -> tuple[dict[str, list], set[str]]:
     """盲猜日本地点的名胜候选：在这个地方（P131）、至少 8 个语言版本有条目的东西，按条目数从多到少。
     places 是 {键: [Wikidata ID, ...]}：东京23区是 23 个区，政令市是市加下面的行政区（fetch_city_wards）。
-    返回 ({键: [[条目数, 中文名, [类的中文名, ...]], ...]}, 没查成的键)，挑哪些当提示见 entries.landmark_hints。
+    返回 ({键: [[条目数, 中文名, [类的中文名, ...]], ...]}, 没查成的键)，挑哪些当提示见 blind.jpgeodle.landmark_hints。
     大城市底下的条目上千：四个一批，超时了再一个个查，还不行的算没查成。往下多找一层（P131/P131?）慢到查不完。"""
     owner = {q: key for key, qs in places.items() for q in qs}
     found: dict[str, dict] = {}  # 条目 -> {"key", "n", "classes"}
@@ -401,7 +401,7 @@ async def fetch_cn_prefectures(session: aiohttp.ClientSession) -> dict[str, dict
 
 async def fetch_cn_scenic(session: aiohttp.ClientSession) -> list[dict]:
     """国家 5A 级旅游景区：[{zh, n（语言版本数）, up（往上三层的 P131）, codes（这几层的行政区划代码）, spot}]。
-    在哪个市看 codes 和 up，都没有的再看坐标，见 entries.cn_sights。"""
+    在哪个市看 codes 和 up，都没有的再看坐标，见 blind.cngeodle.cn_sights。"""
     rows = await _sparql(session, f"""SELECT ?x ?n ?coord ?a ?b ?c ?ac ?bc ?cc WHERE {{
       ?x wdt:P31 wd:{CN_SCENIC} ; wikibase:sitelinks ?n . OPTIONAL {{ ?x wdt:P625 ?coord }}
       OPTIONAL {{ ?x wdt:P131 ?a . OPTIONAL {{ ?a wdt:P442 ?ac }} OPTIONAL {{ ?a wdt:P131 ?b . OPTIONAL {{ ?b wdt:P442 ?bc }}

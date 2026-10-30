@@ -14,56 +14,30 @@ from astrbot.api.star import Context, Star, StarTools
 from .core import audio, cards, geo, members
 from .core.answer import candidates, is_correct
 from .core.bank import Bank
-from .core.entries import (
-    CNGEODLE_CLUES,
-    CNGEODLE_COLUMNS,
-    GEODLE_CLUES,
-    GEODLE_COLUMNS,
-    JPGEODLE_CLUES,
-    JPGEODLE_COLUMNS,
-    MECHADLE_CLUES,
-    MECHADLE_COLUMNS,
-    POKEDLE_CLUES,
-    POKEDLE_COLUMNS,
-    cngeodle_row,
-    geodle_row,
-    jpgeodle_row,
-    mechadle_row,
-    pokedle_row,
-)
+from .core.blind import BLIND
 from .core.lines import LINES, say
 from .core.store import load_json, save_json
 
-# 题型 -> 开题指令，也是卡片标题；排行榜指令去掉开头的「猜」
+# 题型 -> 开题指令，也是卡片标题；排行榜指令去掉开头的「猜」。盲猜系列（不给图，每猜一个回一行对比）见 core/blind
 MODES = {
-    "game": "猜游戏", "anime": "猜动画", "anisong": "听歌猜番", "pokemon": "猜宝可梦", "pokedle": "盲猜宝可梦",
-    "mecha": "猜萝卜", "mechadle": "盲猜萝卜", "vtuber": "猜Vtuber", "member": "猜群友", "geo": "猜地点",
-    "geodle": "盲猜地点", "country": "猜国家", "jpgeo": "猜日本地点", "jpgeodle": "盲猜日本地点",
-    "cngeodle": "盲猜中国地点",
+    "game": "猜游戏", "anime": "猜动画", "anisong": "听歌猜番", "pokemon": "猜宝可梦", "mecha": "猜萝卜",
+    "vtuber": "猜Vtuber", "member": "猜群友", "geo": "猜地点", "country": "猜国家", "jpgeo": "猜日本地点",
+    **{cat: b.command for cat, b in BLIND.items()},
 }
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
 OFFLINE = {"country"}  # 暂时下线的题型：开题和排行榜都只回一句，不出题、不播报
 GRID = {"game", "anime", "pokemon", "mecha", "vtuber"}  # 九宫格逐格揭开的题型
-# 盲猜：不给图，每猜一个回一行对比。题型 -> (表头第一列, 对比的列, 「提示」给的线索, 算一行的函数)
-BLIND = {
-    "pokedle": ("宝可梦", POKEDLE_COLUMNS, POKEDLE_CLUES, pokedle_row),
-    "mechadle": ("机体", MECHADLE_COLUMNS, MECHADLE_CLUES, mechadle_row),
-    "geodle": ("国家", GEODLE_COLUMNS, GEODLE_CLUES, geodle_row),
-    "jpgeodle": ("市町村", JPGEODLE_COLUMNS, JPGEODLE_CLUES, jpgeodle_row),
-    "cngeodle": ("地级市", CNGEODLE_COLUMNS, CNGEODLE_CLUES, cngeodle_row),
-}
 # 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对；
 # Vtuber 的名字也常互相包含；群友按 @、QQ 号、名片认人
 BY_KEY = {"mecha", "mechadle", "vtuber", "member"}
 GEO_ALIASES = {"猜街景"}
-GEODLE_ALIASES = {"盲猜国家"}  # 猜国家下线了，群友顺手会说「盲猜国家」
 JPGEO_ALIASES = {"猜日本街景"}
 VTUBER_ALIASES = {"猜vtuber", "猜VTuber", "猜V", "猜v"}
 VTUBER_BOARD_ALIASES = {"vtuber排行榜", "VTuber排行榜", "V排行榜"}
 ALL_BOARDS_ALIASES = {"战斗力榜", "总排行榜"}  # 管理员提前发整点排行榜，指令本身是「排行榜」
 COMMANDS = (
-    set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始", "排行榜", "宵禁", "取消宵禁", "恢复宵禁"} | GEO_ALIASES | GEODLE_ALIASES | JPGEO_ALIASES
-    | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | ALL_BOARDS_ALIASES
+    set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始", "排行榜", "宵禁", "取消宵禁", "恢复宵禁"} | GEO_ALIASES | JPGEO_ALIASES
+    | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | ALL_BOARDS_ALIASES | {a for b in BLIND.values() for a in b.aliases}
 )
 # @bot 说「猜xx」「盲猜xx」「听歌猜xx」但没有这个题型时回一句
 UNKNOWN_MODE = re.compile(r"^(?:盲猜|听歌猜|猜)\S{1,12}$")
@@ -175,22 +149,10 @@ class GuessPlugin(Star):
         async for r in self._start(event, "pokemon"):
             yield r
 
-    @filter.command("盲猜宝可梦")
-    async def guess_pokedle(self, event: AstrMessageEvent):
-        """开一道盲猜宝可梦（不给图，猜一只看属性对比）"""
-        async for r in self._start(event, "pokedle"):
-            yield r
-
     @filter.command("猜萝卜")
     async def guess_mecha(self, event: AstrMessageEvent):
         """开一道猜萝卜（高达和超级机器人大战的机体）"""
         async for r in self._start(event, "mecha"):
-            yield r
-
-    @filter.command("盲猜萝卜")
-    async def guess_mechadle(self, event: AstrMessageEvent):
-        """开一道盲猜萝卜（不给图，猜一台高达机体看资料对比）"""
-        async for r in self._start(event, "mechadle"):
             yield r
 
     @filter.command("猜Vtuber", alias=VTUBER_ALIASES)
@@ -211,12 +173,6 @@ class GuessPlugin(Star):
         async for r in self._start(event, "geo"):
             yield r
 
-    @filter.command("盲猜地点", alias=GEODLE_ALIASES)
-    async def guess_geodle(self, event: AstrMessageEvent):
-        """开一道盲猜地点（不给图，猜一个国家看地区、方位、人口等对比）"""
-        async for r in self._start(event, "geodle"):
-            yield r
-
     @filter.command("猜国家")
     async def guess_country(self, event: AstrMessageEvent):
         """猜国家（暂时下线）"""
@@ -227,18 +183,6 @@ class GuessPlugin(Star):
     async def guess_jpgeo(self, event: AstrMessageEvent):
         """开一道猜日本地点（日本街景，猜都道府县）"""
         async for r in self._start(event, "jpgeo"):
-            yield r
-
-    @filter.command("盲猜日本地点")
-    async def guess_jpgeodle(self, event: AstrMessageEvent):
-        """开一道盲猜日本地点（不给图，猜一个市町村看都道府县、方位、人口等对比）"""
-        async for r in self._start(event, "jpgeodle"):
-            yield r
-
-    @filter.command("盲猜中国地点")
-    async def guess_cngeodle(self, event: AstrMessageEvent):
-        """开一道盲猜中国地点（不给图，猜一个地级市看省份、方位、人口等对比）"""
-        async for r in self._start(event, "cngeodle"):
             yield r
 
     @filter.command("游戏排行榜")
@@ -261,20 +205,10 @@ class GuessPlugin(Star):
         """猜宝可梦答对次数排行"""
         yield self._board(event, "pokemon")
 
-    @filter.command("盲猜宝可梦排行榜")
-    async def pokedle_board(self, event: AstrMessageEvent):
-        """盲猜宝可梦答对次数排行"""
-        yield self._board(event, "pokedle")
-
     @filter.command("萝卜排行榜")
     async def mecha_board(self, event: AstrMessageEvent):
         """猜萝卜答对次数排行"""
         yield self._board(event, "mecha")
-
-    @filter.command("盲猜萝卜排行榜")
-    async def mechadle_board(self, event: AstrMessageEvent):
-        """盲猜萝卜答对次数排行"""
-        yield self._board(event, "mechadle")
 
     @filter.command("Vtuber排行榜", alias=VTUBER_BOARD_ALIASES)
     async def vtuber_board(self, event: AstrMessageEvent):
@@ -291,11 +225,6 @@ class GuessPlugin(Star):
         """猜地点答对次数排行"""
         yield self._board(event, "geo")
 
-    @filter.command("盲猜地点排行榜")
-    async def geodle_board(self, event: AstrMessageEvent):
-        """盲猜地点答对次数排行"""
-        yield self._board(event, "geodle")
-
     @filter.command("国家排行榜")
     async def country_board(self, event: AstrMessageEvent):
         """猜国家答对次数排行（暂时下线）"""
@@ -305,16 +234,6 @@ class GuessPlugin(Star):
     async def jpgeo_board(self, event: AstrMessageEvent):
         """猜日本地点答对次数排行"""
         yield self._board(event, "jpgeo")
-
-    @filter.command("盲猜日本地点排行榜")
-    async def jpgeodle_board(self, event: AstrMessageEvent):
-        """盲猜日本地点答对次数排行"""
-        yield self._board(event, "jpgeodle")
-
-    @filter.command("盲猜中国地点排行榜")
-    async def cngeodle_board(self, event: AstrMessageEvent):
-        """盲猜中国地点答对次数排行"""
-        yield self._board(event, "cngeodle")
 
     @filter.command("排行榜", alias=ALL_BOARDS_ALIASES)
     async def all_boards(self, event: AstrMessageEvent):
@@ -477,7 +396,7 @@ class GuessPlugin(Star):
             else:
                 rnd.last_hint = now
                 cat = rnd.category
-                key = "hint_exhausted" if cat in GRID else f"hint_exhausted_{cat}"
+                key = "hint_exhausted" if cat in GRID else "hint_exhausted_blind" if cat in BLIND else f"hint_exhausted_{cat}"
                 yield event.plain_result(say(key if key in LINES else "hint_exhausted_clue", left=rnd.left()))
             event.stop_event()
             return
@@ -564,12 +483,9 @@ class GuessPlugin(Star):
             yield event.plain_result(say("paused"))
             return
 
-        # 盲猜要一个个推，两分钟不够；日本的市町村有一千七百多个、中国的地级行政区三百多个，再多给点
-        seconds = self.config.get("round_seconds", 120)
-        if cat in ("jpgeodle", "cngeodle"):
-            seconds = self.config.get(f"{cat}_round_seconds", 420)
-        elif cat in BLIND:
-            seconds = self.config.get("blind_round_seconds", 300)
+        # 盲猜要一个个推，两分钟不够；日本的市町村有一千七百多个、中国的地级行政区三百多个，单独设了更长的
+        shared, default = ("blind_round_seconds", 300) if cat in BLIND else ("round_seconds", 120)
+        seconds = self._setting(cat, "round_seconds", shared, default)
         rnd.cands = candidates(rnd.entry["names"])
         rnd.deadline = time.monotonic() + seconds
         rnd.timer = asyncio.create_task(self._expire(gid, rnd, seconds))
@@ -605,7 +521,7 @@ class GuessPlugin(Star):
         if not (pool := members.pick(rows, exclude | bag)):
             bag.clear()
             pool = members.pick(rows, exclude)
-        session = self.bank._http()
+        session = self.bank.http()
         for m in pool[: members.TRIES]:
             uid = str(m["user_id"])
             if (face := await members.avatar(session, uid)) is None:
@@ -623,17 +539,14 @@ class GuessPlugin(Star):
     async def _load(self, rnd: Round, entry: dict) -> None:
         cat = rnd.category
         rnd.hints, rnd.image, rnd.reveal = entry["hints"], None, None
-        if cat in BLIND:
+        if b := BLIND.get(cat):
             # 不给图；「提示」只给表里比不出来的线索，一开始一条都没有
-            name, columns, clue_keys, _ = BLIND[cat]
-            clues = {k: v for k, v in entry["hints"]}
-            rnd.hints = [[k, clues[k]] for k in clue_keys if clues.get(k)]
-            rnd.shown = 0
+            rnd.hints, rnd.shown = b.hints(entry), 0
             if entry.get("images"):  # 盲猜地点没有图，答案卡用对比表，见 _finish
                 rnd.reveal = cards.load(await self.bank.image(entry), contain=True)
-            if cat == "mechadle":  # 高达资料列多，只看表太难，旁边放一格设定图，不会揭开
+            if b.peek:
                 rnd.peek = cards.peek(rnd.reveal)
-            rnd.image = cards.compare_table(name, columns, [], say(f"{cat}_empty"), rnd.peek)
+            rnd.image = b.table([], say(f"{cat}_empty"), rnd.peek)
         elif cat == "anisong":
             # OP 比 ED 好认，抽中的概率翻倍
             theme = random.choices(entry["themes"], [2 if t["type"] == "OP" else 1 for t in entry["themes"]])[0]
@@ -765,10 +678,12 @@ class GuessPlugin(Star):
         return len(rnd.hints)
 
     def _limit(self, cat: str) -> int:
-        """每人每题最多猜几次，0 不限。盲猜萝卜、盲猜日本 / 中国地点要多猜几个才推得出来，单独设。"""
-        if cat in ("mechadle", "jpgeodle", "cngeodle"):
-            return self.config.get(f"{cat}_max_guesses", 10)
-        return self.config.get("max_guesses", 5)
+        """每人每题最多猜几次，0 不限。盲猜萝卜、盲猜日本 / 中国地点要多猜几个才推得出来，单独设了。"""
+        return self._setting(cat, "max_guesses", "max_guesses", 5)
+
+    def _setting(self, cat: str, name: str, shared: str, default):
+        """题型自己的设置 {cat}_{name}（_conf_schema.json 里写了才有），没有就用共用的 shared。"""
+        return self.config.get(f"{cat}_{name}", self.config.get(shared, default))
 
     def _card(self, rnd: Round, image, status: str, hints: list) -> list:
         limit = self._limit(rnd.category)
@@ -811,10 +726,9 @@ class GuessPlugin(Star):
         """猜错时回什么，(文字, 卡片)：地点类报距离，猜国家再附一张按远近上色的世界地图；
         盲猜回对比表；其他题型不回。"""
         cat = rnd.category
-        if cat in BLIND and (attrs := item.get("attrs")):
-            name, columns, _, row = BLIND[cat]
-            rnd.history.insert(0, {"key": key, "title": item["title"], "row": row(attrs, rnd.entry["attrs"])})
-            rnd.image = cards.compare_table(name, columns, [(h["title"], h["row"]) for h in rnd.history], inset=rnd.peek)
+        if (b := BLIND.get(cat)) and (attrs := item.get("attrs")):
+            rnd.history.insert(0, {"key": key, "title": item["title"], "row": b.row(attrs, rnd.entry["attrs"])})
+            rnd.image = b.table([(h["title"], h["row"]) for h in rnd.history], inset=rnd.peek)
             return say("blind_wrong", place=item["title"]), self._question(rnd)[0]
         spot = rnd.entry.get("spot")
         if "points" not in item or not spot:
@@ -868,10 +782,9 @@ class GuessPlugin(Star):
         original = entry.get("original", "")
         hints = [["歌曲", rnd.song], *entry["hints"]] if rnd.song else entry["hints"]
         image = rnd.reveal or rnd.image
-        if rnd.category in BLIND and rnd.reveal is None:
-            name, columns, _, row = BLIND[rnd.category]
+        if (b := BLIND.get(rnd.category)) and rnd.reveal is None:
             rows = [(h["title"], h["row"]) for h in rnd.history]
-            image = cards.compare_table(name, columns, [(entry["title"], row(entry["attrs"], entry["attrs"])), *rows])
+            image = b.table([(entry["title"], b.row(entry["attrs"], entry["attrs"])), *rows])
         card = cards.render(image, None, entry["title"], original if original != entry["title"] else "答案", hints)
         return [Comp.Plain(text), Comp.Image.fromBase64(card)]
 
@@ -962,3 +875,27 @@ class GuessPlugin(Star):
                     for rank, (uid, rec) in enumerate(top, 1)]
             sections.append((name.removeprefix("猜"), rows))
         return cards.leaderboard(title, sections) if sections else None
+
+
+def _blind_commands(cat: str) -> None:
+    """盲猜题型的开题和排行榜指令，按 BLIND 生成，加新题型不用改这里。AstrBot 按模块和函数名认处理函数，
+    名字沿用以前手写的 guess_{cat}、{cat}_board，WebUI 里改过的指令设置不会丢。"""
+    b = BLIND[cat]
+
+    async def start(self, event: AstrMessageEvent):
+        async for r in self._start(event, cat):
+            yield r
+
+    async def board(self, event: AstrMessageEvent):
+        yield self._board(event, cat)
+
+    for fn, name, doc, command, alias in (
+        (start, f"guess_{cat}", f"开一道{b.command}（{b.desc}）", b.command, set(b.aliases) or None),
+        (board, f"{cat}_board", f"{b.command}答对次数排行", BOARDS[cat], None),
+    ):
+        fn.__name__, fn.__qualname__, fn.__doc__ = name, f"GuessPlugin.{name}", doc
+        setattr(GuessPlugin, name, filter.command(command, alias=alias)(fn))
+
+
+for _cat in BLIND:
+    _blind_commands(_cat)

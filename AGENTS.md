@@ -15,6 +15,9 @@ pyproject.toml        开发工具配置（ruff）
 core/
   bank.py             题库：各题型的构建（Bank._build_*）、定期刷新和重建判断（_settings / _stale）、出题（pick）
   entries.py          题目条目和提示（*_entry、country_basics、scrub），纯函数、不联网
+  blind/              盲猜系列，一个题型一个模块（对比的列、一行怎么算、题库怎么建），见下文「盲猜系列」
+    base.py           盲猜的底层：题型规格 Blind、对比表各格的算法（num、ratio、tiered、away……）、条目 entry
+    __init__.py       BLIND：登记了哪些盲猜题型
   sources.py          外部数据源：Wikidata、中文维基浏览量、B 站、AniList、AnimeThemes、IGDB、Steam、PokeAPI、Gundam Wiki、vtbs.moe；HttpError
   geo.py              地理：GeoNames、Wikidata 国家资料、日本市町村和中国地级行政区、街景取景、Natural Earth 轮廓、盲猜地点的地区划分和方位，以及各种版本常量
   cards.py            卡片渲染（Pillow）：九宫格、街景三联、国家轮廓（答案卡带邻国底图）、世界地图、对比表、听歌进度条、
@@ -51,7 +54,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
 '
 ```
 
-- 改了题库构建或提示：把线上数据目录里的缓存（`geo_*.json`、`country_shapes.json` 等）拷到临时目录，`Bank(临时目录, 配置)` 调对应的 `_build_*`，检查条目和提示。不要在线上数据目录里试。
+- 改了题库构建或提示：把线上数据目录里的缓存（`geo_*.json`、`country_shapes.json` 等）拷到临时目录，`Bank(临时目录, 配置)` 调对应的 `_build_*`（盲猜是 `BLIND[cat].build(bank)`），检查条目和提示。不要在线上数据目录里试。
 - 改了提示内容（`core/hint_data.py`、`entries.scrub`）：重建地点、国家、日本地点题库后，检查每条提示里没有答案的中文名（`answer.norm` 后比较），也没有残留的 `□`。
 - 改了卡片渲染：渲染样图存成 PNG 打开看，至少覆盖九宫格、宝可梦、街景，国家的出题卡和答案卡都要看，挑邻国多的（越南、德国）、被包围的（南非）、跨 180° 经线的（俄罗斯、斐济）。
 - 改了听歌猜番：把 `audio.clip` 切出来的 WAV 存下来听，至少听一首 OP 和一首 ED，开头不能是静音。
@@ -72,15 +75,34 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 宝可梦条目格式（盲猜宝可梦的 `attrs`） | `entries.POKEMON_VERSION` |
   | 萝卜的选题、条目格式、`mecha_data.py` | `entries.MECHA_VERSION` |
   | Vtuber 的选题、条目格式、`vtuber_data.py` | `entries.VTUBER_VERSION` |
-  | 盲猜地点的条目格式、选题分档、地区划分（`geo.REGIONS`） | `entries.GEODLE_VERSION` |
-  | 盲猜日本地点的选题、条目格式、提示规则（`LANDMARK_CLASS` / `LANDMARK_BLOCK`） | `entries.JPGEODLE_VERSION` |
-  | 盲猜中国地点的选题、条目格式、提示规则（`CN_SIGHT_BLOCK`、`geo.CN_PROVINCES`） | `entries.CNGEODLE_VERSION` |
+  | 盲猜地点的条目格式、选题分档、地区划分（`geo.REGIONS`） | `blind/geodle.py` 的 `VERSION` |
+  | 盲猜日本地点的选题、条目格式、提示规则（`LANDMARK_CLASS` / `LANDMARK_BLOCK`） | `blind/jpgeodle.py` 的 `VERSION` |
+  | 盲猜中国地点的选题、条目格式、提示规则（`CN_SIGHT_BLOCK`、`geo.CN_PROVINCES`） | `blind/cngeodle.py` 的 `VERSION` |
   | 听歌猜番的选曲规则（`sources.anime_themes`） | `bank.ANISONG_VERSION` |
   | 街景取景规则（全景缓存作废重找） | `geo.SAMPLING` |
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |
 
 - 新配置项写进 `_conf_schema.json`（密钥加 `"secret": true`），并更新 `docs/configuration.md`。
 - 文档：README 只放概要和索引，细节写进 `docs/` 对应的文件；行为改了要同步改文档。
+
+## 盲猜系列
+
+不给图、每猜一个回一行对比的题型。开题和排行榜指令、出题、判对错、对比表、答案卡、题库定期重建都按 `blind.Blind` 接上，
+`main.py`、`bank.py` 里不写具体题型。加一个新的：
+
+1. 在 `core/blind/` 新建模块（照着 `cngeodle.py` 写）：`COLUMNS`、`CLUES`、`row(猜的 attrs, 答案的 attrs)`，
+   自己建题库的再写 `build(bank)`：用 `bank.http()`、`bank.views()` 查资料，条目用 `base.entry` 拼，
+   建好调 `bank.commit(cat, entries, places=...)`（`places` 是所有能猜的，键和条目的 `group` 一样，每项要有 `attrs`）。
+   借别的题库的（盲猜宝可梦）不写 `build`，在那个题库的条目里放 `attrs`，`Blind` 里写 `base`。
+   最后定义 `MODE = Blind(...)`，规则版本放进 `settings`。
+2. 加进 `blind/__init__.py` 的 `BLIND`。
+3. `core/lines.py` 加四句：`{cat}_empty`、`card_note_{cat}`、`timeout_{cat}`、`board_empty_{cat}`。
+4. 要和其他盲猜不一样的限时、次数，就在 `_conf_schema.json` 加 `{cat}_round_seconds`、`{cat}_max_guesses`，
+   没有就用 `blind_round_seconds`、`max_guesses`。
+5. 文档：README 的题型列表，`docs/usage.md`（指令、对比规则）、`docs/question-banks.md`（题库怎么来的）各加一节。
+
+AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blind_commands` 生成的 `guess_{cat}`、`{cat}_board`，
+`cat` 定了就别改，改了 WebUI 里对这条指令的设置会丢。
 
 ## 红线
 
@@ -92,8 +114,8 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
 - 萝卜的阵营不翻 G 高达里以现实国家命名的（新香港、新中国……），对比表和提示里显示「—」。
 - 猜Vtuber不出 `vtuber_data.py` 里的账号；名单要扩只能往里加，不要删掉成人向和有争议的那几项。
 - 猜群友的头像只在内存里出图，不存盘；答案只公布群名片 / 昵称，不发 QQ 号。
-- 盲猜中国地点不出、不认三沙市（`geo.CN_EXCLUDE`），港澳台不在里面；名胜过滤（`entries.CN_SIGHT_BLOCK`：红色景点、陵墓、领导人、战争……）只能加不能删。
-- 盲猜日本地点不出、不认北方四岛上的村（`geo.disputed`）；名胜过滤（`entries.LANDMARK_BLOCK`：和平公园、原爆、靖国和护国神社、端岛、领土争议的岛、皇室、陵墓、事件……）只能加不能删。
+- 盲猜中国地点不出、不认三沙市（`geo.CN_EXCLUDE`），港澳台不在里面；名胜过滤（`blind/cngeodle.py` 的 `CN_SIGHT_BLOCK`：红色景点、陵墓、领导人、战争……）只能加不能删。
+- 盲猜日本地点不出、不认北方四岛上的村（`geo.disputed`）；名胜过滤（`blind/jpgeodle.py` 的 `LANDMARK_BLOCK`：和平公园、原爆、靖国和护国神社、端岛、领土争议的岛、皇室、陵墓、事件……）只能加不能删。
 - 猜国家暂时下线（`main.OFFLINE`）：开题和排行榜都只回「好危险，不踩啦」，也不进整点播报。
 
 ## 外部接口

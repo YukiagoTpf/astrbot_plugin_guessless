@@ -4,8 +4,7 @@
 地点和日本地点是 Google 街景随机取景，国家是 Natural Earth 轮廓。找不到图的作品不进题库。
 听歌猜番是猜动画题库里在 AnimeThemes 有 OP / ED 的作品；猜萝卜是 Bangumi 上高达系列动画和超级机器人大战里的机体；
 猜Vtuber是 vtbs.moe 名单里 B 站粉丝最多的国内和国外虚拟主播。
-盲猜宝可梦、盲猜萝卜不单独建题库，用宝可梦、萝卜题库里带对比属性的条目；盲猜地点每个国家一道题，不用街景；
-盲猜日本地点、盲猜中国地点是 Wikidata 里的市町村和地级市。
+盲猜系列各题型的规则和题库构建在 blind/ 下，各一个模块，这里按 blind.BLIND 接上构建和刷新。
 题库、各数据源的查询结果和图片都缓存在插件数据目录，出题时只有首次用到的图片和街景需要联网。
 """
 
@@ -15,6 +14,7 @@ import random
 import re
 import time
 from collections import defaultdict
+from functools import partial
 from pathlib import Path
 
 import aiohttp
@@ -23,16 +23,10 @@ from astrbot.api import logger
 
 from . import audio, cards, geo, vtuber_data
 from .answer import candidates, find, norm
+from .blind import BLIND
 from .entries import (
     ANIME_KINDS,
-    CNGEODLE_MAIN,
-    CNGEODLE_VERSION,
     GAME_INFO,
-    GEODLE_MAIN,
-    GEODLE_VERSION,
-    JPGEODLE_MAIN,
-    JPGEODLE_POOL,
-    JPGEODLE_VERSION,
     MECHA_VERSION,
     POKEMON_VERSION,
     VTUBER_VERSION,
@@ -40,29 +34,16 @@ from .entries import (
     TagStats,
     aliases,
     anime_entry,
-    assign_names,
     bgm_tags,
     clean_mc_title,
     clip,
-    cn_names,
-    cn_sight_hint,
-    cn_sights,
-    cngeodle_attrs,
-    cngeodle_entry,
     country_basics,
     country_entry,
     game_entry,
     geo_entry,
-    geodle_attrs,
-    geodle_entry,
     infobox,
-    jp_names,
-    jpgeodle_attrs,
-    jpgeodle_entry,
-    landmark_hints,
     match_gundam_wiki,
     mecha_entry,
-    merge_tokyo,
     people,
     pokemon_entry,
     popularity,
@@ -91,7 +72,6 @@ from .sources import (
     wikidata,
     year_close,
     zhwiki_monthly,
-    zhwiki_titles,
     zhwiki_views,
 )
 from .store import load_json, save_json
@@ -107,11 +87,11 @@ WEB_UA = (
     "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 )
 MIN_POOL = 20
-# 盲猜题型 -> 用哪个题库（只出带 attrs 的条目）
-DERIVED = {"pokedle": "pokemon", "mechadle": "mecha"}
+# 不单独建题库的盲猜题型 -> 用哪个题库（只出带 attrs 的条目）
+DERIVED = {cat: b.base for cat, b in BLIND.items() if b.base}
 # 只认完整说出某个名字的题型，见 match。盲猜日本地点能猜的有一千七百多个市町村，按一大段算会把闲聊当成猜；
 # 盲猜中国地点同理，「我在苏州」不算猜苏州
-EXACT_ONLY = {"vtuber", "jpgeodle", "cngeodle"}
+EXACT_ONLY = {"vtuber"} | {cat for cat, b in BLIND.items() if b.exact}
 
 
 class Bank:
@@ -121,8 +101,7 @@ class Bank:
         self.img_dir.mkdir(parents=True, exist_ok=True)
         self.config = config
         self.entries: dict[str, list] = {
-            "anime": [], "anisong": [], "game": [], "pokemon": [], "pokedle": [], "mecha": [], "mechadle": [],
-            "vtuber": [], "geo": [], "geodle": [], "country": [], "jpgeo": [], "jpgeodle": [], "cngeodle": [],
+            cat: [] for cat in ("anime", "anisong", "game", "pokemon", "mecha", "vtuber", "geo", "country", "jpgeo", *BLIND)
         }
         self.meta: dict[str, dict] = {cat: {} for cat in self.entries}
         # 地点类可以猜的国家 / 都道府县 {代码: {"title", "names", "points"}}，没街景、不出题的也在里面；
@@ -186,7 +165,7 @@ class Bank:
             return path.read_bytes()
         # Fandom 的图片 CDN 防盗链：浏览器 UA 不带 Referer 会 403，用插件自己的 UA 反而放行
         ua = BGM_UA if "bgm.tv" in url or "nocookie.net" in url else WEB_UA
-        async with self._http().get(url, headers={"User-Agent": ua}) as r:
+        async with self.http().get(url, headers={"User-Agent": ua}) as r:
             r.raise_for_status()
             data = await r.read()
         path.write_bytes(data)
@@ -194,7 +173,7 @@ class Bank:
 
     async def panels(self, entry: dict) -> list[bytes]:
         """猜地点的三张街景（同一位置相差 120° 的三个方向），现取不存盘，一张按一次计费。"""
-        sv = geo.StreetView(self._http(), str(self.config.get("google_maps_key") or ""))
+        sv = geo.StreetView(self.http(), str(self.config.get("google_maps_key") or ""))
         heading = entry["pano"]["heading"]
         return list(await asyncio.gather(*(
             sv.image(entry["pano"]["id"], (heading + 120 * i) % 360, size) for i, size in enumerate(geo.PANELS)
@@ -203,7 +182,7 @@ class Bank:
     async def audio(self, url: str) -> bytes:
         """听歌猜番的整首音频（几 MB 的 ogg），出题时现下，不存盘。"""
         timeout = aiohttp.ClientTimeout(total=60)
-        async with self._http().get(url, headers={"User-Agent": BGM_UA}, timeout=timeout) as r:
+        async with self.http().get(url, headers={"User-Agent": BGM_UA}, timeout=timeout) as r:
             r.raise_for_status()
             return await r.read()
 
@@ -241,6 +220,8 @@ class Bank:
     def _settings(self, cat: str) -> list:
         """影响题库内容的配置，改了就重建。"""
         c = self.config
+        if cat in BLIND:
+            return list(BLIND[cat].settings)
         if cat == "anime":
             return [self._size("anime"), WORK_HINTS_VERSION]
         if cat == "pokemon":
@@ -255,12 +236,6 @@ class Bank:
             return [geo.PANOS_PER_COUNTRY, geo.MIN_PANOS, sorted(geo.EXCLUDE), geo.SAMPLING, geo.HINTS_VERSION]
         if cat == "country":
             return [geo.OUTLINE_VERSION, sorted(geo.EXCLUDE), geo.HINTS_VERSION]
-        if cat == "geodle":
-            return [GEODLE_VERSION, sorted(geo.EXCLUDE), geo.HINTS_VERSION]
-        if cat == "jpgeodle":
-            return [JPGEODLE_VERSION]
-        if cat == "cngeodle":
-            return [CNGEODLE_VERSION]
         if cat == "jpgeo":
             return [geo.PANOS_PER_PREF, geo.MIN_PANOS, geo.SAMPLING, geo.HINTS_VERSION]
         return [
@@ -280,7 +255,8 @@ class Bank:
             return True
         return time.time() - meta.get("built_at", 0) > self.config.get("refresh_days", 7) * 86400
 
-    def _commit(self, cat: str, entries: list, media: bool = True, complete: bool = True, places=None) -> None:
+    def commit(self, cat: str, entries: list, media: bool = True, complete: bool = True, places=None) -> None:
+        """换上建好的题库并存盘。places 见 Bank.places；complete=False 是有东西没查全，一小时后再建（见 _stale）。"""
         self.entries[cat] = entries
         self.places[cat] = places or {}
         self.meta[cat] = {
@@ -301,10 +277,10 @@ class Bank:
                     self.status[cat] = f"{len(self.entries[cat])} 题"
 
     async def _refresh_loop(self) -> None:
-        # 游戏有缓存时一两分钟就建完，动画要等 B 站慢慢搜，放后面；盲猜地点不找街景，放在猜地点前面
+        # 游戏有缓存时一两分钟就建完，动画要等 B 站慢慢搜，放后面；盲猜不找街景，放在猜地点前面
         builders = {
             "game": self._build_games, "pokemon": self._build_pokemon, "country": self._build_country,
-            "geodle": self._build_geodle, "jpgeodle": self._build_jpgeodle, "cngeodle": self._build_cngeodle,
+            **{cat: partial(b.build, self) for cat, b in BLIND.items() if b.build},
             "geo": self._build_geo, "jpgeo": self._build_jpgeo,
             "anime": self._build_anime, "anisong": self._build_anisong, "mecha": self._build_mecha,
             "vtuber": self._build_vtuber,
@@ -361,7 +337,7 @@ class Bank:
         # 标签按候选作品一起统计，才分得出哪些是大类、哪些是这部的特色
         pool = picked[: size * 2]
         stats = TagStats.build([bgm_tags(s.get("tags")) for s in pool], [people(infobox(s)) for s in pool])
-        anilist, bili = Anilist(self._http()), Bilibili(self._http(), WEB_UA)
+        anilist, bili = Anilist(self.http()), Bilibili(self.http(), WEB_UA)
         entries, bili_errors, complete = [], 0, True
         # 首次构建没有旧题库，边找图边开放；刷新时找完再整体替换
         if not self.entries["anime"]:
@@ -412,13 +388,13 @@ class Bank:
         finally:
             save_json(cache_path, cache)
             save_json(chars_path, chars)
-        self._commit("anime", entries, complete=complete)
+        self.commit("anime", entries, complete=complete)
 
     async def _build_vtuber(self) -> None:
         """猜Vtuber：vtbs.moe 的虚拟主播名单按 B 站粉丝数排，国内（主要说中文的）取三分之二、国外取三分之一。
         B 站粉丝数正好反映国内群友熟不熟；每边前六成算大众题。题图是 B 站头像。"""
         self.status["vtuber"] = "正在从 vtbs.moe 拉虚拟主播名单"
-        vdb, info = await vtubers(self._http())
+        vdb, info = await vtubers(self.http())
         teams = {v["uuid"]: v["name"].get(v["name"].get("default", "cn")) or "" for v in vdb if v.get("type") == "group"}
         skip, skip_words = {norm(x) for x in vtuber_data.EXCLUDE}, [norm(x) for x in vtuber_data.SKIP_WORDS]
         skip_teams = {norm(x) for x in vtuber_data.EXCLUDE_GROUPS}
@@ -458,7 +434,7 @@ class Bank:
                 if entry := vtuber_entry(v, acc, team, others):
                     picked.append(entry)
             entries += [{**e, "tier": "main" if i < len(picked) * 0.6 else "niche"} for i, e in enumerate(picked)]
-        self._commit("vtuber", entries)
+        self.commit("vtuber", entries)
 
     async def _build_mecha(self) -> None:
         """猜萝卜：Bangumi 上高达系列动画和超级机器人大战系列游戏里的「机体」。高达再按型号、日文名对上
@@ -507,7 +483,7 @@ class Bank:
         wiki_path = self.dir / "gundam_wiki.json"
         self.status["mecha"] = "正在拉 Gundam Wiki 的机体资料"
         try:
-            pages = await gundam_wiki(self._http())
+            pages = await gundam_wiki(self.http())
             save_json(wiki_path, pages)
         except Exception as e:  # 拉不到就用上次的；一次都没拉到过，高达也用 Bangumi 的图、不出盲猜
             logger.warning(f"[guess] gundam wiki failed: {e}")
@@ -522,7 +498,7 @@ class Bank:
         files = {t: f for t in groups if t in pages and (f := pages[t].get("image", "").split("\n")[0].split(";")[0].strip())}
         self.status["mecha"] = "正在找设定图"
         try:
-            images = await gundam_wiki_images(self._http(), sorted(set(files.values())))
+            images = await gundam_wiki_images(self.http(), sorted(set(files.values())))
         except Exception as e:
             logger.warning(f"[guess] gundam wiki images failed: {e}")
             images = {}
@@ -558,7 +534,7 @@ class Bank:
                 kept[key] = e
         # 收藏人数排前一半的是大众题
         kept_list = list(kept.values())
-        self._commit("mecha", [{**e, "tier": "main" if i < len(kept_list) / 2 else "niche"} for i, e in enumerate(kept_list)])
+        self.commit("mecha", [{**e, "tier": "main" if i < len(kept_list) / 2 else "niche"} for i, e in enumerate(kept_list)])
 
     async def _mecha_sources(self) -> tuple[set[str], set[str]]:
         """萝卜从哪些作品里挖，(高达系列动画, 超级机器人大战系列游戏) 的 Bangumi ID：
@@ -622,7 +598,7 @@ class Bank:
             cache.update({sid: themes.get(sid, []) for sid in todo if sid not in failed})
             save_json(path, cache)
         entries = [{**e, "themes": cache[sid]} for e in anime if cache.get(sid := e["id"].removeprefix("bgm-"))]
-        self._commit("anisong", entries)
+        self.commit("anisong", entries)
 
     async def _anime_ids(self, sids: list[str]) -> tuple[dict, set]:
         """Bangumi ID → {"AniList": ID, "MyAnimeList": ID}。先查 Wikidata，没有的拿 Bangumi 条目按原名去 AniList 搜。
@@ -644,7 +620,7 @@ class Bank:
                 failed.add(sid)
             await asyncio.sleep(0.5)
         try:
-            found = await Anilist(self._http()).match(subjects, {})
+            found = await Anilist(self.http()).match(subjects, {})
         except Exception as e:
             logger.warning(f"[guess] anilist search for anisong failed: {e}")
             return ids, failed | {str(s["id"]) for s in subjects}
@@ -759,12 +735,12 @@ class Bank:
             dev, cast = devs.get(igdb_ids.get(slug)), chars.get(str(b.get("id")))
             entry = game_entry(it, b or None, wd.get(slug), media.get(slug), stats, dev, cast)
             entries.append({**entry, "tier": tier})
-        self._commit("game", entries, use_media)
+        self.commit("game", entries, use_media)
 
     async def _build_pokemon(self) -> None:
         """前 pokemon_main_gen 个世代算大众题，之后的算小众题。"""
         self.status["pokemon"] = "正在从 PokeAPI 拉图鉴"
-        species = await pokemon_species(self._http())
+        species = await pokemon_species(self.http())
         by_id = {s["id"]: s for s in species}
         # Wikidata 的全国图鉴编号是三位补零的字符串，用来补「比卡超」这类旧译名、港译
         wd = await self._wikidata("pokemon", "P1685", [f"{s['id']:03d}" for s in species], {})
@@ -773,20 +749,20 @@ class Bank:
         for s in species:
             if entry := pokemon_entry(s, by_id, wd.get(f"{s['id']:03d}")):
                 entries.append({**entry, "tier": "main" if s["generation_id"] <= main_gen else "niche"})
-        self._commit("pokemon", entries)
+        self.commit("pokemon", entries)
 
-    async def _cities(self, cat: str) -> dict:
+    async def cities(self, cat: str) -> dict:
         path = self.dir / "geo_cities.json"
         cities = load_json(path)
         if not cities:
             self.status[cat] = "正在下载 GeoNames 城市表（一两分钟）"
-            cities = await geo.fetch_cities(self._http())
+            cities = await geo.fetch_cities(self.http())
             save_json(path, cities)
         return cities
 
-    async def _countries(self, cat: str, candidates) -> tuple[list[str], dict]:
+    async def countries(self, cat: str, candidates) -> tuple[list[str], dict]:
         """猜地点、猜国家共用：只出主权国家（格陵兰、泽西这类属地不出），返回 (国家代码, country_basics)。"""
-        session = self._http()
+        session = self.http()
         self.status[cat] = "正在查各国资料"
         info = await geo.fetch_country_info(session)
         facts = await geo.fetch_facts(session, sorted(candidates))
@@ -807,7 +783,7 @@ class Bank:
         cache = load_json(cache_path) or {}
         if cache.get("_sampling") != geo.SAMPLING:  # 取景规则变了，旧全景作废
             cache = {"_sampling": geo.SAMPLING}
-        sv, nearest = geo.StreetView(self._http(), key), geo.Nearest(await self._cities(cat))
+        sv, nearest = geo.StreetView(self.http(), key), geo.Nearest(await self.cities(cat))
         entries, failures = [], 0
         # 首次构建没有旧题库，边找边开放
         if not self.entries[cat]:
@@ -828,14 +804,14 @@ class Bank:
                     entries.extend(make_entries(k, cache[k]))
         finally:
             save_json(cache_path, cache)
-        self._commit(cat, entries, places=places)
+        self.commit(cat, entries, places=places)
 
     async def _build_geo(self) -> None:
         if not self._media_on("geo"):
             self.status["geo"] = "还没配 Google 街景的 key"
             return
-        cities = await self._cities("geo")
-        codes, basics = await self._countries("geo", cities)
+        cities = await self.cities("geo")
+        codes, basics = await self.countries("geo", cities)
         targets = [(cc, cities[cc], lambda near, cc=cc: near[0] == cc, geo.PANOS_PER_COUNTRY) for cc in codes]
         places = {
             cc: {"title": basics[cc]["zh"], "names": basics[cc]["names"], "points": geo.towns(cities[cc])} for cc in codes
@@ -844,121 +820,13 @@ class Bank:
             "geo", "geo_panos.json", targets, lambda cc, panos: [geo_entry(cc, p, basics[cc]) for p in panos], places
         )
 
-    async def _build_geodle(self) -> None:
-        """盲猜地点：每个国家一道题，可以猜的国家同猜地点；只查 Wikidata 和 GeoNames，不用街景的 key。"""
-        cities = await self._cities("geodle")
-        codes, basics = await self._countries("geodle", cities)
-        # 大众题按中文维基的浏览量挑（国内的知名度）；一条都没查到就退回人口面积
-        try:
-            titles = await zhwiki_titles(self._http(), "P297", codes)
-        except Exception as e:
-            logger.warning(f"[guess] zhwiki titles for geodle failed: {e}")
-            titles = {}
-        # 国家代码对上的条目不一定是常说的那个：NL 只对上「荷兰王国」，「荷兰」条目没挂代码。日常叫法（geo.TITLES）也查一下
-        for cc in codes:
-            titles.setdefault(cc, []).append(basics[cc]["zh"])
-        views = await self._views("geodle", [t for ts in titles.values() for t in ts], monthly=True)
-        fame = {cc: max(views.get(t, 0) for t in ts) for cc, ts in titles.items()}
-        if any(fame.values()):
-            main = set(sorted(codes, key=lambda cc: fame.get(cc, 0), reverse=True)[:GEODLE_MAIN])
-        else:
-            main = {cc for cc in codes if basics[cc]["big"]}
-        entries, places = [], {}
-        for cc in codes:
-            attrs = geodle_attrs(cc, cities[cc], basics[cc]["stats"])
-            entries.append(entry := geodle_entry(cc, basics[cc], attrs, cc in main))
-            places[cc] = {"title": entry["title"], "names": entry["names"], "attrs": attrs}
-        if missing := [cc for cc in codes if cc not in geo.REGION_OF]:
-            logger.warning(f"[guess] no region in geo.REGIONS for {missing}")
-        self._commit("geodle", entries, places=places)
-
-    async def _build_jpgeodle(self) -> None:
-        """盲猜日本地点：Wikidata 里日本的市町村，东京 23 区并成一个。中文维基浏览量前 JPGEODLE_POOL 个出题
-        （前 JPGEODLE_MAIN 个是大众题），其余只能拿来猜。只查 Wikidata 和维基百科，不用街景的 key。"""
-        session = self._http()
-        self.status["jpgeodle"] = "正在查日本的市町村"
-        munis = merge_tokyo(await geo.fetch_municipalities(session))
-        prefs = await geo.fetch_jp_prefectures(session)
-        munis = {k: m for k, m in munis.items() if m["pref"] in prefs}
-        views = await self._views("jpgeodle", [t for m in munis.values() for t in [m["wiki"], *m.get("wikis", [])]])
-        # 东京 23 区的浏览量是各区加起来
-        fame = {k: sum(views.get(t, 0) for t in [m["wiki"], *m.get("wikis", [])]) for k, m in munis.items()}
-        order = sorted(munis, key=lambda k: (-fame[k], -munis[k]["pop"]))
-        names = assign_names({k: jp_names(m) for k, m in munis.items()}, order)
-        capitals = {p["capital"] for p in prefs.values()}
-        # 东京都厅在新宿区，并进了东京23区
-        attrs = {
-            k: jpgeodle_attrs(k, m, prefs[m["pref"]], k in capitals or bool(capitals & set(m.get("wards", []))))
-            for k, m in munis.items()
-        }
-        places = {k: {"title": munis[k]["zh"], "names": names[k], "attrs": attrs[k]} for k in order if names[k]}
-        # 村不出题（白马村、小笠原村都有人反馈太难），只能拿来猜
-        pool = [k for k in order if k in places and munis[k]["level"] != "村"][:JPGEODLE_POOL]
-
-        def make(landmarks: dict) -> list:
-            entries = []
-            for i, k in enumerate(pool):
-                m = munis[k]
-                words = [n for n in names[k] if not n.isascii()]
-                sights = landmark_hints(landmarks.get(k, []), words, m["zh"])
-                near = [munis[n]["zh"] for n in sorted(m["neighbours"], key=lambda n: -fame.get(n, 0)) if n in munis][:2]
-                hints = [
-                    ["景点", sights[1] if len(sights) > 1 else ""], ["邻居", "、".join(near)],
-                    ["名胜", sights[0] if sights else ""],
-                ]
-                entries.append(jpgeodle_entry(k, m, names[k], attrs[k], hints, i < JPGEODLE_MAIN))
-            return entries
-
-        # 名胜要查很久（大城市底下的条目上千），先用缓存里有的出题，查完再换一版。没查全的标成没建完，
-        # 中途重启或者有的没查成，一小时后接着查（见 _stale）
-        cached = load_json(self.dir / "jp_landmarks.json") or {}
-        self._commit("jpgeodle", make({k: v[1] for k, v in cached.items()}), places=places, complete=False)
-        wards = await geo.fetch_city_wards(session, [k for k in pool if munis[k]["rank"] == geo.JP_LEVELS["Q1749269"][1]])
-        landmarks = await self._landmarks({k: munis[k].get("wards") or [k, *wards.get(k, [])] for k in pool})
-        self._commit("jpgeodle", make(landmarks), places=places, complete=len(landmarks) == len(pool))
-
-    async def _build_cngeodle(self) -> None:
-        """盲猜中国地点：Wikidata 里的地级行政区和直辖市都能猜，只出地级市（含副省级市），中文维基浏览量前
-        CNGEODLE_MAIN 个是大众题。名胜从 5A 景区里挑，查不到就只少这一条提示，一小时后再查。"""
-        session = self._http()
-        self.status["cngeodle"] = "正在查中国的地级市"
-        prefs = await geo.fetch_cn_prefectures(session)
-        views = await self._views("cngeodle", [m["wiki"] for m in prefs.values()], monthly=True)
-        fame = {k: views.get(m["wiki"], 0) for k, m in prefs.items()}
-        order = sorted(prefs, key=lambda k: (-fame[k], -prefs[k]["pop"]))
-        titles, names = {}, {}
-        for k in order:
-            titles[k], names[k] = cn_names(prefs[k])
-        names = assign_names(names, order)
-        attrs = {k: cngeodle_attrs(k, m) for k, m in prefs.items()}
-        places = {k: {"title": titles[k], "names": names[k], "attrs": attrs[k]} for k in order if names[k]}
-        try:
-            sights = cn_sights(await geo.fetch_cn_scenic(session), prefs)
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
-            logger.warning(f"[guess] 5A scenic areas failed: {e!r}")
-            sights = None
-        pool = [k for k in order if k in places and prefs[k]["level"] in ("地级市", "副省级市")]
-        entries = []
-        for i, k in enumerate(pool):
-            m = prefs[k]
-            # 附近：离得最近的三个里挑浏览量最高的两个，比只给最近的两个好认
-            near = sorted((geo.distance([[o["lat"], o["lng"]]], [m["lat"], m["lng"]]), n) for n, o in prefs.items() if n != k)
-            near = sorted((n for _, n in near[:3]), key=lambda n: -fame[n])[:2]
-            words = [n for n in names[k] if not n.isascii()]
-            hints = [
-                ["区号", m["dial"]], ["车牌", "、".join(m["plates"][:2])], ["附近", "、".join(titles[n] for n in near)],
-                ["名胜", cn_sight_hint((sights or {}).get(k, []), words, titles[k])],
-            ]
-            entries.append(cngeodle_entry(k, titles[k], names[k], attrs[k], hints, i < CNGEODLE_MAIN))
-        self._commit("cngeodle", entries, places=places, complete=sights is not None)
-
     async def _build_jpgeo(self) -> None:
         """街景只在日本，猜都道府县。GeoNames 的一级行政区代码通过 geonameid 对上 Wikidata 的都道府县。"""
         if not self._media_on("jpgeo"):
             self.status["jpgeo"] = "还没配 Google 街景的 key"
             return
-        cities = await self._cities("jpgeo")
-        session = self._http()
+        cities = await self.cities("jpgeo")
+        session = self.http()
         self.status["jpgeo"] = "正在查都道府县资料"
         admin1 = await geo.fetch_admin1(session, "JP")
         prefs = await geo.fetch_prefectures(session, list(admin1.values()))
@@ -985,15 +853,15 @@ class Bank:
         shapes = load_json(path) or {}
         if shapes.get("_version") != geo.OUTLINE_VERSION:
             self.status["country"] = "正在下载国界数据"
-            shapes = {"_version": geo.OUTLINE_VERSION, **await geo.fetch_outlines(self._http())}
+            shapes = {"_version": geo.OUTLINE_VERSION, **await geo.fetch_outlines(self.http())}
             save_json(path, shapes)
         self._shapes = shapes
         groups, iso = shapes["groups"], shapes["iso"]
-        codes, basics = await self._countries("country", list(iso))
+        codes, basics = await self.countries("country", list(iso))
         # 很小的岛国抽稀后一个环都不剩，不出题
         entries = [country_entry(cc, geo.outline(groups[iso[cc]]), basics[cc]) for cc in codes if groups[iso[cc]]]
         places = {e["group"]: {"title": e["title"], "names": e["names"], "points": [e["spot"]]} for e in entries}
-        self._commit("country", entries, places=places)
+        self.commit("country", entries, places=places)
 
     async def _game_media(self, items: list, wd: dict) -> dict:
         """IGDB 截图优先，IGDB 上没截图再用 Steam 的。结果缓存，只查新进榜的。"""
@@ -1002,7 +870,7 @@ class Bank:
         todo = [it for it in items if it["slug"] not in cache]
         if not todo:
             return cache
-        igdb = Igdb(self._http(), self.config.get("igdb_client_id", ""), self.config.get("igdb_client_secret", ""))
+        igdb = Igdb(self.http(), self.config.get("igdb_client_id", ""), self.config.get("igdb_client_secret", ""))
         self.status["game"] = f"正在从 IGDB 批量查 {len(todo)} 款游戏的截图"
         # Wikidata 给的 IGDB slug 最准；没有就试 Metacritic 的 slug，两边多半一样，但要年份对得上
         slugs = [s for it in todo for s in ((wd.get(it["slug"]) or {}).get("igdb"), it["slug"]) if s]
@@ -1031,7 +899,7 @@ class Bank:
                 rec = igdb_media(game) if game else {"images": [], "names": [], "pop": 0}
                 if not rec["images"] and not rec.get("skip") and info.get("steam"):
                     try:
-                        rec["images"] = await steam_shots(self._http(), info["steam"], WEB_UA)
+                        rec["images"] = await steam_shots(self.http(), info["steam"], WEB_UA)
                     except Exception as e:  # 不写缓存，下次刷新再试
                         logger.warning(f"[guess] steam screenshots of {slug} failed: {e}")
                         continue
@@ -1041,7 +909,7 @@ class Bank:
             save_json(path, cache)
         return cache
 
-    async def _views(self, cat: str, titles: list[str], monthly: bool = False) -> dict[str, int]:
+    async def views(self, cat: str, titles: list[str], monthly: bool = False) -> dict[str, int]:
         """中文维基百科条目的浏览量，当国内的知名度用：默认是最近 60 天的总数（zhwiki_views，一千多条几分钟查完），
         monthly 是过去一年月浏览量的中位数（zhwiki_monthly，不怕某个月上新闻，但要逐条查，国家这种几百条的才用）。
         缓存在 zhwiki_views.json / zhwiki_monthly.json，一个月内查过的不再查；查不到的不在结果里，不影响出题。"""
@@ -1049,36 +917,16 @@ class Bank:
         cache = load_json(path) or {}
         if todo := sorted({t for t in titles if t and now - cache.get(t, [0, 0])[1] > 30 * 86400}):
             self.status[cat] = f"正在查中文维基的浏览量（{len(todo)} 条）"
-            got = await (zhwiki_monthly if monthly else zhwiki_views)(self._http(), todo)
+            got = await (zhwiki_monthly if monthly else zhwiki_views)(self.http(), todo)
             cache.update({t: [n, now] for t, n in got.items()})
             save_json(path, cache)
         return {t: cache[t][0] for t in titles if t in cache}
-
-    async def _landmarks(self, places: dict[str, list[str]]) -> dict[str, list]:
-        """盲猜日本地点的名胜候选（geo.fetch_landmarks），按市町村缓存在 jp_landmarks.json，一个月内查过的不再查。
-        Wikidata 一批查失败就跳过这批，那几个地方只是少了名胜提示。"""
-        path, now = self.dir / "jp_landmarks.json", time.time()
-        cache = load_json(path) or {}
-        todo = [k for k in places if now - cache.get(k, [0, []])[0] > 30 * 86400]
-        for i in range(0, len(todo), 10):
-            self.status["jpgeodle"] = f"正在查名胜 {i}/{len(todo)}"
-            batch = {k: places[k] for k in todo[i : i + 10]}
-            try:
-                found, failed = await geo.fetch_landmarks(self._http(), batch)
-            except Exception as e:
-                logger.warning(f"[guess] landmarks for {sorted(batch)} failed: {e!r}")
-                continue
-            if failed:
-                logger.warning(f"[guess] landmarks for {sorted(failed)} failed, will retry next build")
-            cache.update({k: [now, found.get(k, [])] for k in batch if k not in failed})
-            save_json(path, cache)
-        return {k: cache[k][1] for k in places if k in cache}
 
     async def _wikidata(self, cat: str, prop: str, ids: list[str], links: dict) -> dict:
         """查不到不影响出题，只是少一些译名，所以失败只记日志。"""
         self.status[cat] = "正在从 Wikidata 查各地译名"
         try:
-            return await wikidata(self._http(), prop, ids, links)
+            return await wikidata(self.http(), prop, ids, links)
         except Exception as e:
             logger.warning(f"[guess] wikidata lookup for {cat} failed: {e}")
             return {}
@@ -1131,14 +979,14 @@ class Bank:
         """查不到不影响出题，退回 Bangumi 记的开发商。"""
         if not ids or not self._media_on("game"):
             return {}
-        igdb = Igdb(self._http(), self.config.get("igdb_client_id", ""), self.config.get("igdb_client_secret", ""))
+        igdb = Igdb(self.http(), self.config.get("igdb_client_id", ""), self.config.get("igdb_client_secret", ""))
         try:
             return await igdb.developers(ids)
         except Exception as e:
             logger.warning(f"[guess] igdb developers lookup failed: {e}")
             return {}
 
-    def _http(self) -> aiohttp.ClientSession:
+    def http(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
         return self._session
@@ -1153,7 +1001,7 @@ class Bank:
         """连接被重置、超时这类偶发错误重试两次，免得翻 80 页排行时断一下就整个构建作废。"""
         for attempt in range(3):
             try:
-                async with self._http().request(method, url, **kw) as r:
+                async with self.http().request(method, url, **kw) as r:
                     r.raise_for_status()
                     return await r.json(content_type=None)
             except (aiohttp.ClientConnectionError, asyncio.TimeoutError):

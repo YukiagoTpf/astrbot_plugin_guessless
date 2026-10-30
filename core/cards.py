@@ -267,7 +267,7 @@ class WorldMap:
 
 
 def compare_table(name: str, columns: tuple, rows: list, empty: str = "", inset: Image.Image | None = None) -> Image.Image:
-    """盲猜的对比表：name 是第一列的表头，columns 是其余各列；rows 是 [(猜的名字, entries.*_row 的结果), ...]，
+    """盲猜的对比表：name 是第一列的表头，columns 是其余各列；rows 是 [(猜的名字, Blind.row 的结果), ...]，
     新猜的在上面，最多 9 行。还没人猜时表下写 empty。inset 是放在表右边的一小块图（peek 切出来的一格设定图）。"""
     out = Image.new("RGB", (SIZE, PIC_H), MAP_BG)
     draw = ImageDraw.Draw(out)

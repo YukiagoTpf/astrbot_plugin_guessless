@@ -52,11 +52,7 @@ LINES = {
         "最长的一段都放了，再听不出来就是没看过。剩 {left} 秒",
         "整段前奏都给你了，剩下的靠耳朵——如果有的话。剩 {left} 秒",
     ],
-    "hint_exhausted_pokedle": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
-    "hint_exhausted_mechadle": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
-    "hint_exhausted_geodle": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
-    "hint_exhausted_jpgeodle": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
-    "hint_exhausted_cngeodle": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
+    "hint_exhausted_blind": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
     "hint_exhausted_member": [
         "头像都露出一大块了还认不出？平时水群光看字不看人。剩 {left} 秒",
         "没有更大的格子了，剩下的靠你们对群友的了解——如果有的话。剩 {left} 秒",
