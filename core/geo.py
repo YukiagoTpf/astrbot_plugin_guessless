@@ -13,6 +13,7 @@ import io
 import json
 import math
 import random
+import re
 import zipfile
 
 import aiohttp
@@ -89,13 +90,12 @@ def disputed(lat: float, lng: float) -> bool:
     return lng > 145.7 and lat > 43.5
 
 
-# 盲猜中国地点：Wikidata 里的地级行政区，只出地级市（含副省级市），直辖市、自治州、地区、盟只能拿来猜。
+# 盲猜中国地点：Wikidata 里的地级行政区和直辖市，出哪些见 blind/cngeodle.py。
 # 哈尔滨只挂了副省级市、没挂地级市的类；南京还挂着民国时的直辖市，所以直辖市看行政区划代码，不看类
 CN_TYPES = {
     "Q748149": "地级市", "Q250811": "副省级市", "Q1208802": "直辖市", "Q788104": "自治州", "Q1045608": "地区",
     "Q288653": "盟",
 }
-CN_RANKS = {"地级市": 0, "自治州": 0, "地区": 0, "盟": 0, "副省级市": 1, "直辖市": 2}
 # 行政区划代码（P442，「13 01」）前两位 -> (省份简称, 大区)；港澳台没有地级市，不在这里
 CN_PROVINCES = {
     "11": ("北京", "华北"), "12": ("天津", "华北"), "13": ("河北", "华北"), "14": ("山西", "华北"), "15": ("内蒙古", "华北"),
@@ -345,9 +345,8 @@ async def fetch_landmarks(session: aiohttp.ClientSession, places: dict[str, list
 
 
 async def fetch_cn_prefectures(session: aiohttp.ClientSession) -> dict[str, dict]:
-    """中国的地级行政区和直辖市：{Wikidata ID: {zh, level, pop, area, lat, lng, code, prov, capital, wiki, plates, dial}}。
-    code 是行政区划代码的前四位（直辖市两位），prov 是前两位，capital 是不是省会（代码后两位是 01），plates 是车牌代码，dial 是长途区号。
-    人口取首选的、最新的一条（多是 2020 年七普）。缺坐标、人口、代码的不要。"""
+    """中国的地级行政区和直辖市：{Wikidata ID: {level, code, prov, 以及 _cn_facts 的资料}}。
+    code 是行政区划代码的前四位（直辖市两位），prov 是前两位。缺坐标、人口、代码的不要。"""
     qid = lambda r, k="x": r[k]["value"].rsplit("/", 1)[-1]  # noqa: E731
     types = " ".join(f"wd:{t}" for t in CN_TYPES)
     found: dict[str, dict] = {}
@@ -357,7 +356,43 @@ async def fetch_cn_prefectures(session: aiohttp.ClientSession) -> dict[str, dict
         rec["types"].add(qid(r, "t"))
         rec["code"] = rec["code"] or "".join(c for c in r["code"]["value"] if c.isdigit())[:4]
     found = {k: v for k, v in found.items() if v["code"][:2] in CN_PROVINCES and v["code"] not in CN_EXCLUDE}
-    values = " ".join(f"wd:{k}" for k in sorted(found))
+    facts = await _cn_facts(session, sorted(found))
+    out = {}
+    for key, rec in found.items():
+        if key not in facts:
+            continue
+        code, kinds = rec["code"], [CN_TYPES[t] for t in CN_TYPES if t in rec["types"]]
+        level = "直辖市" if len(code) == 2 else "副省级市" if "副省级市" in kinds else kinds[0]
+        if level == "直辖市" and len(code) != 2:  # 只挂了直辖市的类、代码却是地级的，数据不对
+            continue
+        out[key] = {**facts[key], "level": level, "code": code, "prov": code[:2]}
+    return out
+
+
+async def fetch_cn_districts(session: aiohttp.ClientSession, cities: list[str]) -> dict[str, dict]:
+    """这几个市下面的区：{Wikidata ID: {level（市辖区）, city（所属市的 Wikidata ID）, code（六位）, prov, 以及
+    _cn_facts 的资料}}。挂在市下面（P131）、行政区划代码六位的才算，街道、镇的代码是九位。"""
+    qid = lambda r, k="x": r[k]["value"].rsplit("/", 1)[-1]  # noqa: E731
+    values = " ".join(f"wd:{q}" for q in cities)
+    found: dict[str, dict] = {}
+    for r in await _sparql(session, f"""SELECT ?x ?city ?code WHERE {{ VALUES ?city {{ {values} }}
+      ?x wdt:P131 ?city ; wdt:P442 ?code . FILTER NOT EXISTS {{ ?x wdt:P576 ?end }} }}"""):
+        code = "".join(c for c in r["code"]["value"] if c.isdigit())
+        if len(code) == 6 and code[:2] in CN_PROVINCES:
+            found[qid(r)] = {"city": qid(r, "city"), "code": code}
+    facts = await _cn_facts(session, sorted(found))
+    return {
+        k: {**facts[k], "level": "市辖区", "city": rec["city"], "code": rec["code"], "prov": rec["code"][:2]}
+        for k, rec in found.items() if k in facts
+    }
+
+
+async def _cn_facts(session: aiohttp.ClientSession, keys: list[str]) -> dict[str, dict]:
+    """中国行政区的资料：{Wikidata ID: {zh, pop, area, lat, lng, wiki, plates, dial}}。plates 是车牌代码，dial 是长途区号。
+    人口取首选的、最新的一条（多是 2020 年七普）。缺坐标、人口、中文名的不要。"""
+    qid = lambda r, k="x": r[k]["value"].rsplit("/", 1)[-1]  # noqa: E731
+    found: dict[str, dict] = {k: {} for k in keys}
+    values = " ".join(f"wd:{k}" for k in keys)
     pops: dict[str, tuple] = {}
     for r in await _sparql(session, f"""SELECT ?x ?pop ?rank ?when WHERE {{ VALUES ?x {{ {values} }}
       ?x p:P1082 ?st . ?st ps:P1082 ?pop ; wikibase:rank ?rank . FILTER(?rank != wikibase:DeprecatedRank)
@@ -386,17 +421,20 @@ async def fetch_cn_prefectures(session: aiohttp.ClientSession) -> dict[str, dict
     for key, rec in found.items():
         if not (rec.get("coord") and key in pops and labels.get(key)):
             continue
-        code, kinds = rec["code"], [CN_TYPES[t] for t in CN_TYPES if t in rec["types"]]
-        level = "直辖市" if len(code) == 2 else "副省级市" if "副省级市" in kinds else kinds[0]
-        if level == "直辖市" and len(code) != 2:  # 只挂了直辖市的类、代码却是地级的，数据不对
-            continue
         lng, lat = (float(x) for x in rec["coord"].removeprefix("Point(").removesuffix(")").split())
         out[key] = {
-            "zh": labels[key], "level": level, "pop": pops[key][2], "area": rec.get("area", 0.0),
-            "lat": round(lat, 4), "lng": round(lng, 4), "code": code, "prov": code[:2], "capital": code[2:] == "01",
-            "wiki": rec.get("wiki", ""), "plates": sorted(rec.get("plates", [])), "dial": rec.get("dial", ""),
+            "zh": labels[key], "pop": pops[key][2], "area": rec.get("area", 0.0), "lat": round(lat, 4),
+            "lng": round(lng, 4), "wiki": rec.get("wiki", ""), "plates": _plates(rec.get("plates", set())),
+            "dial": rec.get("dial", ""),
         }
     return out
+
+
+def _plates(raw: set[str]) -> list[str]:
+    """车牌代码规整成「津A」「渝B」：重庆写成一条「渝 A, B, C」，天津拆成「津A」「B」「C」……一个字母一条，
+    字头取有字头的那条。"""
+    head = next((found[0] for v in sorted(raw) if (found := re.match(r"[\u4e00-\u9fff]", v))), "")
+    return sorted({head + letter for v in raw for letter in re.findall("[A-Z]", v)}) if head else []
 
 
 async def fetch_cn_scenic(session: aiohttp.ClientSession) -> list[dict]:

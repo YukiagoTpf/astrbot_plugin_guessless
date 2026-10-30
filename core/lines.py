@@ -8,7 +8,7 @@ LINES = {
     "card_note_geo": ["说国家名，{tries} · 「提示」加线索"],
     "card_note_geodle": ["说国家名，{tries} · 「提示」加线索"],
     "card_note_jpgeodle": ["说市町村名，{tries} · 「提示」加线索"],
-    "card_note_cngeodle": ["说地级市名，{tries} · 「提示」加线索"],
+    "card_note_cngeodle": ["说地名，{tries} · 「提示」加线索"],
     "card_note_country": ["说国家名，{tries} · 「提示」加线索"],
     "card_note_jpgeo": ["说都道府县，{tries}·「提示」加线索"],
     "card_note_pokedle": ["说宝可梦名，{tries} · 「提示」加线索"],
@@ -31,7 +31,7 @@ LINES = {
     "mechadle_empty": ["随便说一台高达机体，看看它和答案差在哪"],
     "geodle_empty": ["随便说一个国家，看看它和答案差在哪"],
     "jpgeodle_empty": ["说个日本的市町村（京都、箱根、东京都行），看看和答案差在哪"],
-    "cngeodle_empty": ["说个地级市（苏州、桂林都行），看看和答案差在哪"],
+    "cngeodle_empty": ["说个地级市或北上广深的区（苏州、海淀），看看差在哪"],
     "song_step": ["第 {n} 段 · {sec} 秒"],
     "guess_left": ["{name} 还能猜 {left} 次"],
     "guess_used_up": [

@@ -19,7 +19,7 @@ core/
     base.py           盲猜的底层：题型规格 Blind、对比表各格的算法（num、ratio、tiered、away……）、条目 entry
     __init__.py       BLIND：登记了哪些盲猜题型
   sources.py          外部数据源：Wikidata、中文维基浏览量、B 站、AniList、AnimeThemes、IGDB、Steam、PokeAPI、Gundam Wiki、vtbs.moe；HttpError
-  geo.py              地理：GeoNames、Wikidata 国家资料、日本市町村和中国地级行政区、街景取景、Natural Earth 轮廓、盲猜地点的地区划分和方位，以及各种版本常量
+  geo.py              地理：GeoNames、Wikidata 国家资料、日本市町村和中国地级行政区（含北上广深的区）、街景取景、Natural Earth 轮廓、盲猜地点的地区划分和方位，以及各种版本常量
   cards.py            卡片渲染（Pillow）：九宫格、街景三联、国家轮廓（答案卡带邻国底图）、世界地图、对比表、听歌进度条、
                       猜群友的头像棋盘、整点排行榜长图
   members.py          猜群友：挑人、拉 QQ 头像、每段露哪几格、认群友说的是谁（Roster）
@@ -27,6 +27,7 @@ core/
   answer.py           答案归一化和判定
   store.py            数据目录里 JSON 文件的读写
   hint_data.py        手写的特产、名胜、美食提示
+  cn_data.py          手写的盲猜中国地点资料：城市线级、2025 年 GDP、拆成区出题的市（北上广深）
   mecha_data.py       手写的 Gundam Wiki 资料中译（世界观、阵营、机型、机械设计）和机体外号
   vtuber_data.py      手写的猜Vtuber不出题名单（品牌号、搬运号、成人向、有争议的）
   lines.py            所有发到群里的文案
@@ -77,7 +78,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | Vtuber 的选题、条目格式、`vtuber_data.py` | `entries.VTUBER_VERSION` |
   | 盲猜地点的条目格式、选题分档、地区划分（`geo.REGIONS`） | `blind/geodle.py` 的 `VERSION` |
   | 盲猜日本地点的选题、条目格式、提示规则（`LANDMARK_CLASS` / `LANDMARK_BLOCK`） | `blind/jpgeodle.py` 的 `VERSION` |
-  | 盲猜中国地点的选题、条目格式、提示规则（`CN_SIGHT_BLOCK`、`geo.CN_PROVINCES`） | `blind/cngeodle.py` 的 `VERSION` |
+  | 盲猜中国地点的选题、条目格式、提示规则（`CN_SIGHT_BLOCK`、`geo.CN_PROVINCES`）、`cn_data.py` | `blind/cngeodle.py` 的 `VERSION` |
   | 听歌猜番的选曲规则（`sources.anime_themes`） | `bank.ANISONG_VERSION` |
   | 街景取景规则（全景缓存作废重找） | `geo.SAMPLING` |
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |
