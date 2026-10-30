@@ -8,6 +8,7 @@ repo: https://github.com/YukiagoTpf/astrbot_plugin_guessless
 support_platforms:
   - aiocqhttp
 astrbot_version: ">=4.29,<5"
+category: 娱乐
 tags:
   - 猜题
   - 小游戏
