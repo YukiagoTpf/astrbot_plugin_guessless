@@ -108,6 +108,8 @@ CN_PROVINCES = {
     "61": ("陕西", "西北"), "62": ("甘肃", "西北"), "63": ("青海", "西北"), "64": ("宁夏", "西北"), "65": ("新疆", "西北"),
 }
 CN_EXCLUDE = {"4603"}  # 三沙市：南海诸岛，有争议，不出题也不能猜
+# 省直辖县级行政区里的县级市（济源、仙桃、海南和新疆的那些），两个类都挂的才算：不要神农架林区和海南的县
+CN_COUNTY_TYPES = ("Q18657584", "Q1070990")
 CN_SCENIC = "Q6838244"  # 国家 5A 级旅游景区，名胜提示从这里挑
 # 三张图的请求尺寸：左边一张大图，右边上下两张小图（cards.load_panels 再缩放拼版）
 PANELS = ((640, 540), (356, 302), (356, 302))
@@ -385,6 +387,21 @@ async def fetch_cn_districts(session: aiohttp.ClientSession, cities: list[str]) 
         k: {**facts[k], "level": "市辖区", "city": rec["city"], "code": rec["code"], "prov": rec["code"][:2]}
         for k, rec in found.items() if k in facts
     }
+
+
+async def fetch_cn_counties(session: aiohttp.ClientSession) -> dict[str, dict]:
+    """省直辖的县级市（CN_COUNTY_TYPES）：{Wikidata ID: {level（省辖县级市）, code（六位）, prov, 以及 _cn_facts 的资料}}。
+    新设的（新星市、白杨市）Wikidata 上还没有人口，_cn_facts 不要。"""
+    qid = lambda r, k="x": r[k]["value"].rsplit("/", 1)[-1]  # noqa: E731
+    types = " ; ".join(f"wdt:P31 wd:{t}" for t in CN_COUNTY_TYPES)
+    found: dict[str, str] = {}
+    for r in await _sparql(session, f"""SELECT ?x ?code WHERE {{ ?x {types} ; wdt:P442 ?code .
+      FILTER NOT EXISTS {{ ?x wdt:P576 ?end }} }}"""):
+        code = "".join(c for c in r["code"]["value"] if c.isdigit())
+        if len(code) == 6 and code[:2] in CN_PROVINCES:
+            found[qid(r)] = code
+    facts = await _cn_facts(session, sorted(found))
+    return {k: {**facts[k], "level": "省辖县级市", "code": code, "prov": code[:2]} for k, code in found.items() if k in facts}
 
 
 async def _cn_facts(session: aiohttp.ClientSession, keys: list[str]) -> dict[str, dict]:

@@ -1,8 +1,8 @@
 """盲猜中国地点：猜一个地级市（北上广深猜区），对比省份、方位、人口、面积、GDP、线级。
 
-Wikidata 里的地级行政区、直辖市和北上广深的区都能猜。出题的是地级市（含副省级市）、直辖市和北上广深的区，
-北上广深整个市不出题（cn_data.SPLIT），自治州、地区、盟也不出；不分大众小众，每道题一样容易抽到。
-GDP 和线级 Wikidata 上没有，手写在 core/cn_data.py。名胜从 5A 景区里挑，查不到就只少这一条提示，一小时后再查。
+Wikidata 里的地级行政区、直辖市、省辖县级市和北上广深的区都能猜。出题的是地级市（含副省级市）、直辖市、
+省辖县级市和北上广深的区，北上广深整个市不出题（cn_data.SPLIT），自治州、地区、盟也不出；不分大众小众，
+每道题一样容易抽到。GDP 和线级 Wikidata 上没有，手写在 core/cn_data.py，缺这两样的不出题。名胜从 5A 景区里挑，查不到就只少这一条提示，一小时后再查。
 三沙市不出、不认（geo.CN_EXCLUDE）。
 """
 
@@ -15,12 +15,14 @@ from astrbot.api import logger
 
 from .. import cn_data, geo
 from ..entries import assign_names, scrub, usable_names
-from .base import Blind, away, blank, entry, here, num, ratio, size, tiered
+from .base import Blind, away, blank, entry, here, num, ratio, same, size, tiered
 
-VERSION = "split-v1"  # 选题、条目格式、提示规则（CN_SIGHT_BLOCK）、cn_data 改了就换个名字，题库重建
+VERSION = "split-v2"  # 选题、条目格式、提示规则（CN_SIGHT_BLOCK）、cn_data 改了就换个名字，题库重建
 COLUMNS = ("省份", "方位", "人口", "面积", "GDP", "线级")
 CLUES = ("区号", "车牌", "附近", "名胜", "首字")
-LEVELS = ("地级市", "副省级市", "直辖市")  # 出题的级别，再加上北上广深的区
+LEVELS = ("地级市", "副省级市", "直辖市", "省辖县级市")  # 出题的级别，再加上北上广深的区
+# 不在线级榜上的：北上广深的区、省辖县级市，线级格直接写是哪一类
+UNRANKED = {"市辖区": "区县", "省辖县级市": "省辖县级市"}
 NEAR_KM = 100  # 相距这么近以内（东部挨着的两个市多在这个距离），方位格标黄
 # 自治州名里的民族，去掉才是平时的叫法（「大理白族自治州」→「大理」）；蒙古、柯尔克孜、哈萨克不带「族」
 CN_ETHNIC = "朝鲜|土家|苗|侗|布依|彝|哈尼|壮|傣|白|景颇|傈僳|藏|羌|回|蒙古|柯尔克孜|哈萨克"
@@ -81,12 +83,12 @@ def cn_sight_hint(sights: list[str], words: list[str], title: str) -> str:
 
 
 def attrs_of(key: str, m: dict, city: dict) -> dict:
-    """对比用的资料，见 row。city 是所属的市（市自己就是 m）：区的线级跟着市，GDP 按「市名 + 区名」查。"""
+    """对比用的资料，见 row。city 是所属的市（市自己就是 m）：区的 GDP 按「市名 + 区名」查。"""
     prov, region = geo.CN_PROVINCES[m["prov"]]
     gdp = cn_data.GDP.get(m["zh"] if city is m else city["zh"] + m["zh"], 0)
     return {
         "key": key, "prov": prov, "region": region, "pop": m["pop"], "area": m["area"], "gdp": gdp,
-        "tier": cn_data.TIER.get(city["zh"], ""), "spot": [m["lat"], m["lng"]],
+        "tier": UNRANKED.get(m["level"]) or cn_data.TIER.get(m["zh"], ""), "spot": [m["lat"], m["lng"]],
     }
 
 
@@ -99,7 +101,8 @@ def money(yi: float) -> str:
 def row(guess: dict, answer: dict) -> list[list[str]]:
     """省份：同省绿、同大区黄。方位：两地相距多远，NEAR_KM 以内标黄，箭头是从猜的地方看答案在哪个方向
     （Wikidata 的接壤关系只有三成的市有，不写「接壤」）。人口、面积同盲猜地点，GDP 也一样按倍数比。
-    线级：一线、新一线、二线……五线，一样绿、差一档黄、差得多红，箭头指答案的线级更高（↑）还是更低（↓）。
+    线级：一线、新一线、二线……五线，一样绿、差一档黄、差得多红，箭头指答案的线级更高（↑）还是更低（↓）；
+    区县、省辖县级市（UNRANKED）不分线级，和答案是一类的绿，不是的红，不带箭头。
     改版前建的题库没有 GDP、线级，换完之前这两格写「—」。"""
     if guess["key"] == answer["key"]:
         place = here()
@@ -107,11 +110,13 @@ def row(guess: dict, answer: dict) -> list[list[str]]:
         km = geo.distance([guess["spot"]], answer["spot"])
         place = away(km, NEAR_KM, geo.arrow(guess["spot"], answer["spot"]))
     mine, theirs = guess.get("tier"), answer.get("tier")
-    if mine and theirs:
+    if not (mine and theirs):
+        tier = blank()
+    elif mine in cn_data.TIERS and theirs in cn_data.TIERS:
         x, y = cn_data.TIERS.index(mine), cn_data.TIERS.index(theirs)
         tier = num(x, y, mine, abs(x - y) == 1)
     else:
-        tier = blank()
+        tier = same(mine, theirs)
     return [
         tiered(guess["prov"], answer["prov"], guess["region"] == answer["region"]),
         place,
@@ -128,7 +133,9 @@ async def build(bank) -> None:
     split = {k for k, m in prefs.items() if m["zh"] in cn_data.SPLIT}
     bank.status["cngeodle"] = "正在查北上广深的区"
     districts = await geo.fetch_cn_districts(session, sorted(split))
-    units = {**prefs, **districts}
+    bank.status["cngeodle"] = "正在查省辖县级市"
+    counties = await geo.fetch_cn_counties(session)
+    units = {**prefs, **counties, **districts}
     views = await bank.views("cngeodle", [m["wiki"] for m in units.values()], monthly=True)
     fame = {k: views.get(m["wiki"], 0) for k, m in units.items()}
     # 同名的叫法归更出名的：「朝阳」是北京朝阳区还是辽宁朝阳市看浏览量
@@ -147,12 +154,18 @@ async def build(bank) -> None:
         sights = None
     if missing := sorted(titles[k] for k in places if not attrs[k]["gdp"] or not attrs[k]["tier"]):
         logger.warning(f"[guess] no GDP or tier in cn_data for {missing}")
-    pool = [k for k in order if k in places and (k in districts or (units[k]["level"] in LEVELS and k not in split))]
+    # 缺 GDP、线级的不出题（胡杨河市只查到第七师合在一起的 GDP），表里空一格太好猜
+    pool = [
+        k for k in order if k in places and attrs[k]["gdp"] and attrs[k]["tier"]
+        and (k in districts or (units[k]["level"] in LEVELS and k not in split))
+    ]
     entries = []
     for k in pool:
         m, a, c = units[k], attrs[k], city[k]
-        # 附近：离得最近的三个里挑浏览量最高的两个，比只给最近的两个好认。市在市里挑，区在区和别的市里挑（不算自己的市）
-        around = [n for n in (units if k in districts else prefs) if n not in (k, m.get("city"))]
+        # 附近：离得最近的三个里挑浏览量最高的两个，比只给最近的两个好认。地级市在地级行政区里挑；
+        # 区在区和别的市里挑（不算自己的市）；省辖县级市在地级行政区和别的省辖县级市里挑（仙桃、潜江、天门挨着）
+        group = units if k in districts else prefs if k in prefs else {**prefs, **counties}
+        around = [n for n in group if n not in (k, m.get("city"))]
         near = sorted((geo.distance([[units[n]["lat"], units[n]["lng"]]], [m["lat"], m["lng"]]), n) for n in around)
         near = sorted((n for _, n in near[:3]), key=lambda n: -fame[n])[:2]
         words = [n for n in names[k] if not n.isascii()]
