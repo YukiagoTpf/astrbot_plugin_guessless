@@ -64,6 +64,12 @@
     "default": [],
     "hint": "每行一个「群号:题数」，比如 123456:3；0 不限。没写的群用上面的每小时题数"
   },
+  "rolling_quota": {
+    "description": "滚动刷新每小时题数",
+    "type": "bool",
+    "default": false,
+    "hint": "关：每个整点一次给满。开：一小时按题数等分，每段一道，比如每小时 6 道就是每 10 分钟一道、12 道每 5 分钟一道；这段没开的作废，不留到下一段"
+  },
   "group_curfews": {
     "description": "按群设宵禁",
     "type": "list",

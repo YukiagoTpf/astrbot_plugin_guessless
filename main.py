@@ -464,7 +464,7 @@ class GuessPlugin(Star):
             yield event.plain_result(say("not_ready", kind=MODES[cat], status=self.bank.status[cat]))
             return
         if not (paid := self._quota_take(gid)):
-            yield event.plain_result(say("quota", limit=self._hourly_limit(gid), wait=self._quota_wait(gid)))
+            yield event.plain_result(self._quota_full(gid))
             return
 
         # 先占位再下载图片，防止下载期间被重复开题
@@ -600,18 +600,24 @@ class GuessPlugin(Star):
         t = time.localtime(now)
         return time.mktime((t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, 0, 0, 0, 0, -1))
 
-    def _quota_used(self, gid: str) -> list[float]:
-        """这个整点以来开的题。额度每个整点清零，开题时间存在 quota.json 里，重启不影响。"""
-        start = self._hour_start(time.time())
-        used = self.quota[gid] = [t for t in self.quota.get(gid, []) if t >= start]
-        return used
+    def _quota_window(self, gid: str) -> tuple[int, int, float]:
+        """本群现在这段额度：(能开几道, 开了几道, 几秒后刷新)，能开 0 道是不限。
+        整点刷新（默认）一个整点一段，能开每小时题数道；滚动刷新（rolling_quota）把一小时按题数等分，
+        每段一道，这段没开的不留到下一段。开题时间存在 quota.json 里（只留这个整点以来的），重启不影响。"""
+        now = time.time()
+        limit, start, step = self._hourly_limit(gid), self._hour_start(now), HOUR
+        self.quota[gid] = [t for t in self.quota.get(gid, []) if t >= start]
+        if limit and self.config.get("rolling_quota", False):
+            step = HOUR / limit
+            start += (now - start) // step * step
+            limit = 1
+        return limit, sum(t >= start for t in self.quota[gid]), start + step - now
 
     def _quota_take(self, gid: str) -> str:
-        """开题扣额度：先扣每小时额度，用完了扣管理员加的题，都没有返回空串。每小时额度为 0 不限。"""
-        limit = self._hourly_limit(gid)
-        used = self._quota_used(gid)
-        if not limit or len(used) < limit:
-            used.append(time.time())
+        """开题扣额度：先扣这段的额度，用完了扣管理员加的题，都没有返回空串。每小时额度为 0 不限。"""
+        limit, used, _ = self._quota_window(gid)
+        if not limit or used < limit:
+            self.quota[gid].append(time.time())
             paid = "hourly"
         elif self.bonus.get(gid, 0) > 0:
             self.bonus[gid] -= 1
@@ -628,18 +634,18 @@ class GuessPlugin(Star):
             self.bonus[gid] = self.bonus.get(gid, 0) + 1
         self._quota_save()
 
-    def _quota_wait(self, gid: str) -> int:
-        """离下个整点额度清零还有几分钟。"""
-        limit = self._hourly_limit(gid)
-        if not limit or len(self._quota_used(gid)) < limit:
-            return 0
-        now = time.time()
-        return max(1, math.ceil((self._hour_start(now) + HOUR - now) / 60))
+    def _quota_full(self, gid: str) -> str:
+        """额度用完时回的话：整点刷新报离整点还有几分钟，滚动刷新报离下一段还有几分钟。"""
+        limit, _, wait = self._quota_window(gid)
+        wait = max(1, math.ceil(wait / 60))
+        if self.config.get("rolling_quota", False):
+            return say("quota_rolling", every=f"{60 / self._hourly_limit(gid):.3g}", wait=wait)
+        return say("quota", limit=limit, wait=wait)
 
     def _quota_left(self, gid: str) -> int:
-        """现在还能开几道（这小时剩下的 + 管理员加的）。"""
-        limit = self._hourly_limit(gid)
-        return max(0, limit - len(self._quota_used(gid))) + self.bonus.get(gid, 0)
+        """现在还能开几道（这段剩下的 + 管理员加的）。"""
+        limit, used, _ = self._quota_window(gid)
+        return max(0, limit - used) + self.bonus.get(gid, 0)
 
     def _rounds_save(self) -> None:
         """进行中的题只在内存里，另存一份答案和扣的额度，进程被重启打断时下次启动能收尾。"""
