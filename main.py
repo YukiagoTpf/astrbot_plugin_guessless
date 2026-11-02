@@ -509,7 +509,9 @@ class GuessPlugin(Star):
             event.stop_event()
 
     async def _start(self, event: AstrMessageEvent, cat: str):
-        """开题。听歌猜番除了卡片还要另发一条语音，所以这里是生成器，可能产出两条消息。"""
+        """开题。听歌猜番除了卡片还要另发一条语音，所以这里是生成器，可能产出两条消息。
+        bot 管理员（AstrBot 的 admins_id，不是群主、群管理员）不受宵禁和每小时额度限制，开的题也不占额度；
+        暂停、一个群同时一道、题库没建好照样拦。"""
         gid = event.get_group_id()
         if not gid:
             yield event.plain_result(say("group_only"))
@@ -520,7 +522,8 @@ class GuessPlugin(Star):
         if gid in self.paused:
             yield event.plain_result(say("paused"))
             return
-        if curfew := self._curfew(gid):
+        admin = event.is_admin()
+        if not admin and (curfew := self._curfew(gid)):
             yield event.plain_result(say("curfew", start=curfew[0], end=curfew[1]))
             return
         if cur := self.rounds.get(gid):
@@ -532,7 +535,8 @@ class GuessPlugin(Star):
         if cat != "member" and not self.bank.ready(cat):
             yield event.plain_result(say("not_ready", kind=MODES[cat], status=self.bank.status[cat]))
             return
-        if not (paid := self._quota_take(gid)):
+        paid = "" if admin else self._quota_take(gid)  # 空串：不占额度，没出成也不用退
+        if not admin and not paid:
             yield event.plain_result(self._quota_full(gid))
             return
 
