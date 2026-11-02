@@ -11,7 +11,7 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, StarTools
 
-from .core import audio, cards, geo, members
+from .core import audio, cards, geo, kline, members
 from .core.answer import candidates, is_correct
 from .core.bank import Bank
 from .core.blind import BLIND
@@ -22,7 +22,7 @@ from .core.store import load_json, save_json
 MODES = {
     "game": "猜游戏", "anime": "猜动画", "anisong": "听歌猜番", "pokemon": "猜宝可梦", "mecha": "猜萝卜",
     "vtuber": "猜Vtuber", "member": "猜群友", "geo": "猜地点", "country": "猜国家", "jpgeo": "猜日本地点",
-    **{cat: b.command for cat, b in BLIND.items()},
+    "kline": "猜K线", **{cat: b.command for cat, b in BLIND.items()},
 }
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
 OFFLINE = {"country"}  # 暂时下线的题型：开题和排行榜都只回一句，不出题、不播报
@@ -34,10 +34,13 @@ GEO_ALIASES = {"猜街景"}
 JPGEO_ALIASES = {"猜日本街景"}
 VTUBER_ALIASES = {"猜vtuber", "猜VTuber", "猜V", "猜v"}
 VTUBER_BOARD_ALIASES = {"vtuber排行榜", "VTuber排行榜", "V排行榜"}
+KLINE_ALIASES = {"猜k线"}
+KLINE_BOARD_ALIASES = {"k线排行榜"}
 ALL_BOARDS_ALIASES = {"战斗力榜", "总排行榜"}  # 管理员提前发整点排行榜，指令本身是「排行榜」
 COMMANDS = (
     set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始", "排行榜", "宵禁", "取消宵禁", "恢复宵禁"} | GEO_ALIASES | JPGEO_ALIASES
-    | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | ALL_BOARDS_ALIASES | {a for b in BLIND.values() for a in b.aliases}
+    | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | KLINE_ALIASES | KLINE_BOARD_ALIASES | ALL_BOARDS_ALIASES
+    | {a for b in BLIND.values() for a in b.aliases}
 )
 # @bot 说「猜xx」「盲猜xx」「听歌猜xx」但没有这个题型时回一句
 UNKNOWN_MODE = re.compile(r"^(?:盲猜|听歌猜|猜)\S{1,12}$")
@@ -71,6 +74,8 @@ class Round:
     avatar: object = None  # 猜群友：头像（只在内存里）
     plan: list = field(default_factory=list)  # 猜群友：每段露哪几格，见 members.plan
     roster: object = None  # 猜群友：开题时的群成员，认人用，见 members.Roster
+    votes: dict = field(default_factory=dict)  # 猜K线：用户 -> (名字, 猜的涨跌幅)，按说的先后，每人只认第一句
+    nudged: set = field(default_factory=set)  # 猜K线：提醒过「要带数字」的人，每人只提醒一次
 
     def left(self) -> int:
         return max(0, round(self.deadline - time.monotonic()))
@@ -185,6 +190,12 @@ class GuessPlugin(Star):
         async for r in self._start(event, "jpgeo"):
             yield r
 
+    @filter.command("猜K线", alias=KLINE_ALIASES)
+    async def guess_kline(self, event: AstrMessageEvent):
+        """开一道猜K线（沪深300 的一段日 K，猜之后 20 个交易日涨跌几个点）"""
+        async for r in self._start(event, "kline"):
+            yield r
+
     @filter.command("游戏排行榜")
     async def game_board(self, event: AstrMessageEvent):
         """猜游戏答对次数排行"""
@@ -234,6 +245,11 @@ class GuessPlugin(Star):
     async def jpgeo_board(self, event: AstrMessageEvent):
         """猜日本地点答对次数排行"""
         yield self._board(event, "jpgeo")
+
+    @filter.command("K线排行榜", alias=KLINE_BOARD_ALIASES)
+    async def kline_board(self, event: AstrMessageEvent):
+        """猜K线拿第一的次数排行"""
+        yield self._board(event, "kline")
 
     @filter.command("排行榜", alias=ALL_BOARDS_ALIASES)
     async def all_boards(self, event: AstrMessageEvent):
@@ -377,6 +393,11 @@ class GuessPlugin(Star):
         if not rnd or rnd.entry is None:
             if self._unknown_mode(event, text):
                 yield event.plain_result(say("unknown_mode"))
+                event.stop_event()
+            return
+        if rnd.category == "kline":
+            if chain := self._kline_vote(gid, rnd, event, text):
+                yield event.chain_result(chain)
                 event.stop_event()
             return
 
@@ -547,6 +568,13 @@ class GuessPlugin(Star):
             if b.peek:
                 rnd.peek = cards.peek(rnd.reveal)
             rnd.image = b.table([], say(f"{cat}_empty"), rnd.peek)
+        elif cat == "kline":
+            bars = await kline.load(self.bank.http(), entry, self.bank.dir)
+            rnd.image = cards.kline(bars, kline.WARM, kline.SHOWN, reveal=False)
+            rnd.reveal = cards.kline(bars, kline.WARM, kline.SHOWN, reveal=True)
+            rnd.hints = kline.question_hints()
+            rnd.shown = len(rnd.hints)
+            entry = {**entry, **kline.outcome(entry, bars)}
         elif cat == "anisong":
             # OP 比 ED 好认，抽中的概率翻倍
             theme = random.choices(entry["themes"], [2 if t["type"] == "OP" else 1 for t in entry["themes"]])[0]
@@ -704,6 +732,8 @@ class GuessPlugin(Star):
         image, status = rnd.image, f"{rnd.shown}/{self._steps(rnd)} · 剩 {rnd.left()} 秒"
         if rnd.category in BLIND:
             status = f"已猜 {len(rnd.history)} 次 · 剩 {rnd.left()} 秒"
+        if rnd.category == "kline":
+            status = f"满 {self._kline_players()} 人揭晓 · 剩 {rnd.left()} 秒"
         if rnd.category == "member":
             image = cards.mosaic(rnd.avatar, *rnd.plan[rnd.shown - 1])
             status = f"露出 {members.LABELS[rnd.shown - 1]} · 剩 {rnd.left()} 秒"
@@ -775,7 +805,9 @@ class GuessPlugin(Star):
         self._rounds_save()
         entry = rnd.entry
         answer = entry["answer"]
-        if uid:
+        if rnd.category == "kline":
+            text = self._kline_result(gid, rnd)
+        elif uid:
             rnd.timer.cancel()
             name = name or uid
             count = self._add_score(gid, rnd.category, uid, name)
@@ -793,6 +825,44 @@ class GuessPlugin(Star):
             image = b.table([(entry["title"], b.row(entry["attrs"], entry["attrs"])), *rows])
         card = cards.render(image, None, entry["title"], original if original != entry["title"] else "答案", hints)
         return [Comp.Plain(text), Comp.Image.fromBase64(card)]
+
+    def _kline_players(self) -> int:
+        return max(1, int(self.config.get("kline_players", 5)))
+
+    def _kline_vote(self, gid: str, rnd: Round, event: AstrMessageEvent, text: str) -> list | None:
+        """猜K线收一句：每人只认第一句，凑满 kline_players 个人马上揭晓。不是在猜的话不理，只说了「涨」「跌」的提醒一次要带数字。"""
+        uid = event.get_sender_id()
+        if uid in rnd.votes:
+            return None
+        if (value := kline.parse(text)) is None:
+            if text in kline.NEED_NUMBER and uid not in rnd.nudged:
+                rnd.nudged.add(uid)
+                return [Comp.Plain(say("kline_need_number"))]
+            return None
+        name = event.get_sender_name() or uid
+        rnd.votes[uid] = (name, value)
+        if (n := len(rnd.votes)) < (total := self._kline_players()):
+            return [Comp.Plain(say("kline_vote", name=name, guess=kline.fmt(value), n=n, total=total))]
+        rnd.timer.cancel()
+        return self._finish(gid, rnd)
+
+    def _kline_result(self, gid: str, rnd: Round) -> str:
+        """猜K线揭晓：按离实际涨跌幅的远近排名次，一样近的先说的在前。第一名记一次战斗力，只有一个人猜的不记。"""
+        change, answer = rnd.entry["change"], rnd.entry["answer"]
+        reveal = say("kline_reveal", answer=answer, days=kline.AHEAD, change=kline.pct(change))
+        if not rnd.votes:
+            return say("timeout_kline") + "\n" + reveal
+        ranked = sorted(rnd.votes.items(), key=lambda kv: round(abs(kv[1][1] - change), 2))
+        lines = [reveal] if len(ranked) >= self._kline_players() else [say("kline_short", n=len(ranked)), reveal]
+        lines += [
+            say("kline_rank", rank=i, name=name, guess=kline.fmt(value), diff=f"{abs(value - change):.2f}")
+            for i, (_, (name, value)) in enumerate(ranked, 1)
+        ]
+        if len(ranked) < 2:
+            return "\n".join([*lines, say("kline_solo")])
+        uid, (name, _) = ranked[0]
+        count = self._add_score(gid, "kline", uid, name)
+        return "\n".join([*lines, say("kline_score", name=name, count=count)])
 
     async def _expire(self, gid: str, rnd: Round, seconds: int):
         await asyncio.sleep(seconds)

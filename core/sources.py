@@ -13,6 +13,10 @@ from zhconv import convert
 from .answer import norm
 
 UA = "YukiagoTpf/astrbot_plugin_guessless"
+WEB_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+)
 WIKIDATA = "https://query.wikidata.org/sparql"
 # 中文维基百科的浏览量，免 key；维基要求 UA 带联系方式
 ZH_API = "https://zh.wikipedia.org/w/api.php"

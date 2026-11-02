@@ -52,6 +52,18 @@
     "default": 10,
     "hint": "能猜的有三百多个地级市、自治州，要多猜几个才推得出来。0 不限"
   },
+  "kline_round_seconds": {
+    "description": "猜K线限时（秒）",
+    "type": "int",
+    "default": 180,
+    "hint": "凑满人数就提前揭晓，到点没凑满就按已经猜了的排名"
+  },
+  "kline_players": {
+    "description": "猜K线凑满几个人揭晓",
+    "type": "int",
+    "default": 5,
+    "hint": "每人只认第一句，凑满就揭晓、按离实际涨跌幅的远近排名次，第一名记一次战斗力"
+  },
   "hourly_limit": {
     "description": "每小时最多开几道题",
     "type": "int",

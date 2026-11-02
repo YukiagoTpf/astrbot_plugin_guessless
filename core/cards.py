@@ -1,6 +1,6 @@
 """出题卡片：正方形，中间 16:9 是图（九宫格，未揭开的格子盖色块），上下黑边写标题和提示。
 
-图区还有几种不分格的：街景三联、国家剪影、猜国家猜错时的世界地图、盲猜的对比表、听歌猜番的进度条。
+图区还有几种不分格的：街景三联、国家剪影、猜国家猜错时的世界地图、盲猜的对比表、听歌猜番的进度条、猜K线的 K 线图。
 """
 
 import base64
@@ -39,6 +39,9 @@ HEAT = ((0, (200, 36, 36)), (1000, (232, 86, 44)), (2500, (240, 146, 54)), (5000
 # 盲猜对比表格子的颜色：一致、接近、不符、没资料
 PEEK = 176  # 盲猜萝卜表旁边那一格设定图的边长
 CELL = {"hit": (56, 142, 60), "near": (196, 146, 32), "miss": (150, 54, 54), "none": (62, 66, 76)}
+K_BG, K_FUTURE, K_GRID = (22, 25, 32), (34, 38, 48), (46, 50, 60)  # 猜K线：底色、之后那段的底色、网格
+K_UP, K_DOWN = (232, 72, 72), (38, 166, 154)
+K_MA = ((5, (238, 238, 238)), (10, (242, 184, 75)), (20, (176, 140, 255)))  # 均线：天数、颜色
 # AstrBot 镜像自带 Noto Sans CJK；ttc 里按名字找简中字形
 FONT_DIR = "/usr/share/fonts/opentype/noto"
 
@@ -334,6 +337,113 @@ def music(clips: tuple, shown: int, label: str) -> Image.Image:
     draw.text((SIZE / 2, y + h + 60), label, fill=TEXT, font=font(36), anchor="mm")
     out.info["grid"] = None
     return out
+
+
+def kline(bars: list, warm: int, shown: int, reveal: bool) -> Image.Image:
+    """猜K线的图区，bars 是 [日期, 开, 收, 高, 低, 量]：前 warm 根只拿来算均线，接着 shown 根给大家看，其余是之后的走势。
+    出题只画给看的那段，纵轴写相对最后一根收盘的涨跌，之后那段留空位打问号；答案全画出来，竖虚线隔开，纵轴写价格，
+    下面标日期。纵轴范围只按画出来的那些算，出题图看不出之后涨到多高。A 股习惯红涨绿跌。"""
+    s = 2  # 两倍大小画再缩小，均线不起锯齿
+    w, h = SIZE * s, PIC_H * s
+    out = Image.new("RGB", (w, h), K_BG)
+    draw = ImageDraw.Draw(out)
+    left, right, top, price_h, vol_h = 24 * s, 100 * s, 52 * s, 366 * s, 102 * s  # 上面留一条放图例
+    vol_top = top + price_h + 22 * s
+    step = (w - left - right) / (len(bars) - warm)
+    split = left + shown * step  # 看到的和之后的分界
+    drawn = range(warm, len(bars) if reveal else warm + shown)
+    closes = [b[2] for b in bars]
+    ma = {n: [sum(closes[i - n + 1 : i + 1]) / n if i >= n - 1 else None for i in range(len(bars))] for n, _ in K_MA}
+    lo = min(min(bars[i][4] for i in drawn), *(ma[n][i] for n, _ in K_MA for i in drawn))
+    hi = max(max(bars[i][3] for i in drawn), *(ma[n][i] for n, _ in K_MA for i in drawn))
+    pad = (hi - lo) * 0.06 or hi * 0.01
+    lo, hi = lo - pad, hi + pad
+
+    def x(i: int) -> float:
+        return left + (i - warm + 0.5) * step
+
+    def y(p: float) -> float:
+        return top + (hi - p) / (hi - lo) * price_h
+
+    if reveal:
+        draw.rectangle((split, top - 44 * s, w - right, vol_top + vol_h), fill=K_FUTURE)
+    # 横向网格和纵轴：出题按看到的最后一根收盘算涨跌（%），答案写价格
+    base = closes[warm + shown - 1]
+    small = font(22 * s)
+    if reveal:
+        gap = _nice_step(hi - lo)
+        digits = 2 if hi < 100 else 1 if hi < 1000 else 0
+        ticks = [(v, f"{v:.{digits}f}") for v in _ticks(lo, hi, gap)]
+    else:
+        gap = _nice_step((hi - lo) / base * 100)
+        digits = 0 if gap >= 1 else 1
+        ticks = [
+            (base * (1 + v / 100), f"{v:+.{digits}f}%" if round(v, 6) else "0%")
+            for v in _ticks((lo / base - 1) * 100, (hi / base - 1) * 100, gap)
+        ]
+    for p, label in ticks:
+        draw.line((left, y(p), w - right, y(p)), fill=K_GRID, width=s)
+        draw.text((w - right + 14 * s, y(p)), label, fill=DIM, font=small, anchor="lm")
+    draw.line((left, vol_top - 10 * s, w - right, vol_top - 10 * s), fill=K_GRID, width=s)
+    draw.text((left + 6 * s, vol_top), "成交量", fill=DIM, font=small, anchor="lt")
+
+    body = max(s, step * 0.34)
+    vmax = max(bars[i][5] for i in drawn) or 1
+    for i in drawn:
+        _, o, c, high, low, vol = bars[i]
+        color = K_UP if c >= o else K_DOWN
+        draw.line((x(i), y(high), x(i), y(low)), fill=color, width=s)
+        y0, y1 = sorted((y(o), y(c)))
+        draw.rectangle((x(i) - body, y0, x(i) + body, max(y1, y0 + s)), fill=color)
+        # 最高只到九成，不顶到左上角的「成交量」
+        draw.rectangle((x(i) - body, vol_top + vol_h * (1 - 0.9 * vol / vmax), x(i) + body, vol_top + vol_h), fill=color)
+    for n, color in K_MA:
+        draw.line([(x(i), y(ma[n][i])) for i in drawn], fill=color, width=2 * s, joint="curve")
+
+    if reveal:
+        _dashed(draw, split, top - 44 * s, vol_top + vol_h, TEXT, s)
+        draw.text((split + 10 * s, top - 26 * s), "你们看到这里", fill=TEXT, font=small, anchor="lm")
+        dates = font(20 * s)
+        y_date = vol_top + vol_h + 10 * s
+        draw.text((left, y_date), bars[warm][0], fill=DIM, font=dates, anchor="lt")
+        draw.text((split, y_date), bars[warm + shown - 1][0], fill=DIM, font=dates, anchor="mt")
+        draw.text((w - right, y_date), bars[-1][0], fill=DIM, font=dates, anchor="rt")
+    else:
+        x0, x1, y1 = split + 10 * s, w - right - 6 * s, vol_top + vol_h
+        for xx in (x0, x1):
+            _dashed(draw, xx, top, y1, MARK, s)
+        for yy in (top, y1):
+            for k in range(int((x1 - x0) // (16 * s)) + 1):
+                draw.line((x0 + k * 16 * s, yy, min(x1, x0 + k * 16 * s + 8 * s), yy), fill=MARK, width=s)
+        draw.text(((x0 + x1) / 2, (top + y1) / 2), "?", fill=TEXT, font=font(120 * s, bold=True), anchor="mm")
+
+    lx = left + 8 * s
+    for n, color in K_MA:
+        draw.line((lx, top - 26 * s, lx + 26 * s, top - 26 * s), fill=color, width=3 * s)
+        draw.text((lx + 34 * s, top - 26 * s), f"MA{n}", fill=DIM, font=small, anchor="lm")
+        lx += 120 * s
+    out = out.resize((SIZE, PIC_H), Image.LANCZOS)
+    out.info["grid"] = None
+    return out
+
+
+def _nice_step(span: float, n: int = 6) -> float:
+    """把 span 分成不超过 n 格的整齐刻度：1、2、2.5、5 乘 10 的幂。"""
+    raw = span / n if span > 0 else 1
+    mag = 10 ** math.floor(math.log10(raw))
+    return next(m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw)
+
+
+def _ticks(lo: float, hi: float, step: float) -> list[float]:
+    return [k * step for k in range(math.ceil(lo / step), math.floor(hi / step) + 1)]
+
+
+def _dashed(draw: ImageDraw.ImageDraw, x: float, y0: float, y1: float, color: tuple, s: int) -> None:
+    """竖虚线。"""
+    yy = y0
+    while yy < y1:
+        draw.line((x, yy, x, min(y1, yy + 8 * s)), fill=color, width=s)
+        yy += 16 * s
 
 
 def _cover_fit(img: Image.Image, width: int, height: int) -> Image.Image:

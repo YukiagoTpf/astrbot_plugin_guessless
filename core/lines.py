@@ -17,6 +17,7 @@ LINES = {
     "card_note_mechadle": ["说机体名，{tries} · 「提示」加线索"],
     "card_note_vtuber": ["说名字，{tries} · 「提示」开一格"],
     "card_note_member": ["名片或 @TA，{tries} ·「提示」放大"],
+    "card_note_kline": ["凑满人数就揭晓，每人只认第一句"],
     "tries": ["每人 {limit} 次"],
     "tries_free": ["不限次数"],
     # 地点类猜错报距离：{dist} 是 dist_*，猜国家是两国中心之间，猜地点、猜日本地点是你猜的地方离拍摄地最近的城镇
@@ -149,6 +150,15 @@ LINES = {
         "时间到。建议把四十七个都道府县背一遍再来",
     ],
     "answer": ["答案：{answer}"],
+    # 猜K线：{guess} 是「涨3%」「跌1.5%」「平」，{change} 是「+3.22%」，{diff} 是差几个点
+    "kline_vote": ["{name} 猜{guess}，{n}/{total}", "记下了，{name} {guess}（{n}/{total}）"],
+    "kline_need_number": ["要说涨跌几个点，比如「涨3」「跌1.5」"],
+    "kline_reveal": ["揭晓！{answer}之后 {days} 个交易日 {change}"],
+    "kline_short": ["到点了，只来了 {n} 个人"],
+    "kline_rank": ["{rank}. {name} {guess}，差 {diff} 个点"],
+    "kline_score": ["{name} 最接近，战斗力 +1，累计 {count} 次", "{name} 眼光最毒，战斗力 +1，累计 {count} 次"],
+    "kline_solo": ["一个人猜的不算战斗力，下次多拉几个人"],
+    "timeout_kline": ["没人敢猜，全员空仓观望", "一个猜的都没有，股市有风险，入市需谨慎"],
     "busy": [
         "上一道{kind}还没人答出来呢，开新的是想逃避现实？剩 {left} 秒",
         "别急，还有一道{kind}挂着，剩 {left} 秒",
@@ -211,6 +221,7 @@ LINES = {
     "board_empty_cngeodle": ["还没人盲猜中过中国地点，全员没出过省"],
     "board_empty_country": ["还没人猜对过国家，地理老师哭晕在厕所"],
     "board_empty_jpgeo": ["还没人猜对过日本地点，全员只认识东京"],
+    "board_empty_kline": ["还没人在猜K线里拿过第一，全员韭菜"],
     "group_only": ["私聊玩什么，去群里"],
     "member_none": ["没挑到能猜的头像，大家都是默认头像？换个时候再来"],
     "offline": ["好危险，不踩啦"],

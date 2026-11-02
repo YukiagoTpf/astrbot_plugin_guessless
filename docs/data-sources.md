@@ -17,6 +17,8 @@
 | [Wikidata](https://www.wikidata.org) | 译名、国家资料（大洲、行驶方向、货币、首都、人口、面积）、日本的市町村（人口、面积、级别、接壤）和名胜、中国的地级行政区和北上广深的区（人口、面积、车牌、区号）和 5A 景区 | SPARQL，CC0 |
 | 中文维基百科 | 盲猜地点、盲猜日本地点按条目浏览量分大众 / 小众题 | MediaWiki API 的 pageviews，免 key |
 | 第一财经·新一线城市研究所、各市统计局 | 盲猜中国地点的城市线级（《2025 新一线城市魅力排行榜》）和 2025 年 GDP | 手写在 `core/cn_data.py`，不联网 |
+| 东方财富 | 猜K线的股票池（沪深300 板块、行业和概念）、日 K、交易日历（上证指数） | 网页行情接口，非官方，免 key |
+| 新浪财经 | 猜K线的前复权因子 | 网页行情接口，非官方，免 key |
 | [PokeAPI](https://pokeapi.co) | 宝可梦资料；立绘取自 GitHub 上的 PokeAPI/sprites | GraphQL，免 key |
 | [GeoNames](https://www.geonames.org) | 城市坐标、一级行政区、国家主要语言、陆上邻国 | CC BY 4.0 |
 | [Natural Earth](https://www.naturalearthdata.com) | 国家轮廓、邻国底图和世界地图（10m，CHN 视角版本） | 公有领域 |

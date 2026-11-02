@@ -3,7 +3,7 @@
 动画取 Bangumi 最热门的作品，游戏从 Metacritic 高分游戏里按热度和评分分大众 / 小众两档，宝可梦取 PokeAPI 全图鉴，
 地点和日本地点是 Google 街景随机取景，国家是 Natural Earth 轮廓。找不到图的作品不进题库。
 听歌猜番是猜动画题库里在 AnimeThemes 有 OP / ED 的作品；猜萝卜是 Bangumi 上高达系列动画和超级机器人大战里的机体；
-猜Vtuber是 vtbs.moe 名单里 B 站粉丝最多的国内和国外虚拟主播。
+猜Vtuber是 vtbs.moe 名单里 B 站粉丝最多的国内和国外虚拟主播；猜K线的题库只是沪深300 成分股，K 线出题时现拉（kline.py）。
 盲猜系列各题型的规则和题库构建在 blind/ 下，各一个模块，这里按 blind.BLIND 接上构建和刷新。
 题库、各数据源的查询结果和图片都缓存在插件数据目录，出题时只有首次用到的图片和街景需要联网。
 """
@@ -21,7 +21,7 @@ import aiohttp
 
 from astrbot.api import logger
 
-from . import audio, cards, geo, vtuber_data
+from . import audio, cards, geo, kline, vtuber_data
 from .answer import candidates, find, norm
 from .blind import BLIND
 from .entries import (
@@ -56,6 +56,7 @@ from .entries import (
 )
 from .sources import (
     ANIMETHEMES,
+    WEB_UA,
     Anilist,
     Bilibili,
     HttpError,
@@ -82,10 +83,6 @@ BGM_API = "https://api.bgm.tv/v0"
 BGM_UA = "YukiagoTpf/astrbot_plugin_guessless"
 # Metacritic 评分榜是网页前端用的非官方接口，目前不用 key
 MC_FINDER = "https://backend.metacritic.com/finder/metacritic/web"
-WEB_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
-)
 MIN_POOL = 20
 # 不单独建题库的盲猜题型 -> 用哪个题库（只出带 attrs 的条目）
 DERIVED = {cat: b.base for cat, b in BLIND.items() if b.base}
@@ -101,7 +98,9 @@ class Bank:
         self.img_dir.mkdir(parents=True, exist_ok=True)
         self.config = config
         self.entries: dict[str, list] = {
-            cat: [] for cat in ("anime", "anisong", "game", "pokemon", "mecha", "vtuber", "geo", "country", "jpgeo", *BLIND)
+            cat: [] for cat in (
+                "anime", "anisong", "game", "pokemon", "mecha", "vtuber", "geo", "country", "jpgeo", "kline", *BLIND,
+            )
         }
         self.meta: dict[str, dict] = {cat: {} for cat in self.entries}
         # 地点类可以猜的国家 / 都道府县 {代码: {"title", "names", "points"}}，没街景、不出题的也在里面；
@@ -228,6 +227,8 @@ class Bank:
             return [c.get("pokemon_main_gen", 4), POKEMON_VERSION]
         if cat == "mecha":
             return [MECHA_VERSION]
+        if cat == "kline":
+            return [kline.VERSION]
         if cat == "vtuber":
             return [self._size("vtuber"), VTUBER_VERSION]
         if cat == "anisong":  # 猜动画题库重建了，这边跟着换
@@ -280,6 +281,7 @@ class Bank:
         # 游戏有缓存时一两分钟就建完，动画要等 B 站慢慢搜，放后面；盲猜不找街景，放在猜地点前面
         builders = {
             "game": self._build_games, "pokemon": self._build_pokemon, "country": self._build_country,
+            "kline": partial(kline.build, self),
             **{cat: partial(b.build, self) for cat, b in BLIND.items() if b.build},
             "geo": self._build_geo, "jpgeo": self._build_jpgeo,
             "anime": self._build_anime, "anisong": self._build_anisong, "mecha": self._build_mecha,
