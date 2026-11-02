@@ -9,6 +9,7 @@ import unicodedata
 
 # 题型的关键词，按从具体到宽泛排，先认到的算：「听歌猜番」里有「番」要先认成听歌，「猜日本地点」里有「地点」要先认成日本
 KEYWORDS = (
+    ("sakedle", ("日本酒", "清酒", "sake", "酒")),  # 要在日本前面：「日本酒」里有「日本」
     ("anisong", ("听歌", "猜歌", "番曲", "歌曲", "听op", "听ed", "歌")),
     ("kline", ("k线", "股票", "股市", "a股", "炒股", "大盘")),
     ("jpgeodle", ("市町村",)),
@@ -23,8 +24,8 @@ KEYWORDS = (
     ("geo", ("街景", "地点", "地理", "国家")),
 )
 BLIND_OF = {"pokemon": "pokedle", "mecha": "mechadle", "geo": "geodle", "jpgeo": "jpgeodle", "jpgeodle": "jpgeodle",
-            "cngeodle": "cngeodle"}
-ONLY_BLIND = {"jpgeodle", "cngeodle"}  # 只有盲猜的，没说「盲」也是它
+            "cngeodle": "cngeodle", "sakedle": "sakedle"}
+ONLY_BLIND = {"jpgeodle", "cngeodle", "sakedle"}  # 只有盲猜的，没说「盲」也是它
 GEO_WORDS = ("地点", "地方", "地区", "地名", "街景")  # 认成地点类以后这些不算多余（「盲猜日本的地点」「日本街景」）
 BOARD = re.compile(r"排行榜|排行|排名|榜单|战斗力|战力|榜")
 # 不认 help，AstrBot 自带。长的放前面，免得「有什么玩法」只认掉「有什么玩」

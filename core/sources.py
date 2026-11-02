@@ -1,5 +1,5 @@
 """外部数据源：Wikidata（各地区译名、跨站 ID）、中文维基百科浏览量（国内知名度）、B 站 / AniList（动画）、AnimeThemes（动画 OP / ED）、
-IGDB / Steam（游戏）、PokeAPI（宝可梦）、Gundam Wiki（高达机体资料和设定图）、vtbs.moe（虚拟主播）。"""
+IGDB / Steam（游戏）、PokeAPI（宝可梦）、Gundam Wiki（高达机体资料和设定图）、vtbs.moe（虚拟主播）、さけのわ（日本酒）。"""
 
 import asyncio
 import json
@@ -50,6 +50,9 @@ STEAM_API = "https://store.steampowered.com/api/appdetails"
 # vtbs.moe：社区维护的虚拟主播名单（VTuber Database，含团体和各语言的名字）和 B 站账号数据（粉丝数、头像），免 key
 VTB_LIST = "https://vdb.vtbs.moe/json/list.json"
 VTB_INFO = "https://api.vtbs.moe/v1/info"
+# さけのわデータ：日本酒 app「さけのわ」公开的銘柄、酒蔵、排名、风味数据，免 key，只要求注明出处（さけのわ、sakenowa.com）
+SAKENOWA = "https://muro.sakenowa.com/sakenowa-data/api/"
+SAKENOWA_PARTS = ("areas", "brands", "breweries", "rankings", "flavor-charts", "flavor-tags", "brand-flavor-tags")
 POKEAPI = "https://beta.pokeapi.co/graphql/v1beta"
 POKEMON_ART = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/{}.png"
 # PokeAPI 的语言 ID：1 日文假名、2 日文罗马音、4 繁中、9 英文、11 日文、12 简中
@@ -542,3 +545,15 @@ async def steam_shots(session: aiohttp.ClientSession, appid: str, ua: str) -> li
         data = ((await r.json(content_type=None)) or {}).get(str(appid)) or {}
     detail = data.get("data") if isinstance(data.get("data"), dict) else {}
     return [x["path_full"] for x in detail.get("screenshots") or [] if x.get("path_full")][:MAX_SHOTS]
+
+
+async def sakenowa(session: aiohttp.ClientSession) -> dict[str, dict]:
+    """さけのわデータ的几个接口：{接口名: 返回的 JSON}，见 SAKENOWA_PARTS。一共 7 个请求，隔一秒一个。"""
+    out = {}
+    for part in SAKENOWA_PARTS:
+        async with session.get(SAKENOWA + part, headers={"User-Agent": WIKI_UA}, timeout=aiohttp.ClientTimeout(total=60)) as r:
+            if r.status >= 400:
+                raise HttpError("さけのわ", r.status)
+            out[part] = await r.json(content_type=None)
+        await asyncio.sleep(1)
+    return out

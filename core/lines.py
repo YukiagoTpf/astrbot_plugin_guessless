@@ -9,6 +9,7 @@ LINES = {
     "card_note_geodle": ["说国家名，{tries} · 「提示」加线索"],
     "card_note_jpgeodle": ["说市町村名，{tries} · 「提示」加线索"],
     "card_note_cngeodle": ["说地名，{tries} · 「提示」加线索"],
+    "card_note_sakedle": ["说酒名，{tries} · 数据：さけのわ"],
     "card_note_country": ["说国家名，{tries} · 「提示」加线索"],
     "card_note_jpgeo": ["说都道府县，{tries}·「提示」加线索"],
     "card_note_pokedle": ["说宝可梦名，{tries} · 「提示」加线索"],
@@ -33,6 +34,7 @@ LINES = {
     "geodle_empty": ["随便说一个国家，看看它和答案差在哪"],
     "jpgeodle_empty": ["说个日本的市町村（京都、箱根、东京都行），看看和答案差在哪"],
     "cngeodle_empty": ["说个地级市或北上广深的区（苏州、海淀），看看差在哪"],
+    "sakedle_empty": ["说个日本酒的銘柄（獭祭、十四代、久保田都行），看看和答案差在哪"],
     "song_step": ["第 {n} 段 · {sec} 秒"],
     "guess_left": ["{name} 还能猜 {left} 次"],
     "guess_used_up": [
@@ -139,6 +141,10 @@ LINES = {
         "时间到，表都快填满了还没人猜中。中国地图是一眼没看过",
         "时间到，零人答对。建议把省会背熟了再来",
     ],
+    "timeout_sakedle": [
+        "时间到，没人猜中。这酒你们是真没喝过",
+        "时间到，零人答对，看来群里都是啤酒党",
+    ],
     "timeout_country": [
         "时间到，全群没一个认出来的。地理课都在睡觉吧",
         "两分钟，零人答对。建议把地球仪买回来摆桌上",
@@ -219,6 +225,7 @@ LINES = {
     "board_empty_geodle": ["还没人盲猜中过国家，全员靠街景"],
     "board_empty_jpgeodle": ["还没人盲猜中过日本地点，全员只认识东京"],
     "board_empty_cngeodle": ["还没人盲猜中过中国地点，全员没出过省"],
+    "board_empty_sakedle": ["还没人盲猜中过日本酒，全员滴酒不沾"],
     "board_empty_country": ["还没人猜对过国家，地理老师哭晕在厕所"],
     "board_empty_jpgeo": ["还没人猜对过日本地点，全员只认识东京"],
     "board_empty_kline": ["还没人在猜K线里拿过第一，全员韭菜"],

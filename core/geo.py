@@ -288,18 +288,23 @@ async def fetch_municipalities(session: aiohttp.ClientSession) -> dict[str, dict
 
 
 async def fetch_jp_prefectures(session: aiohttp.ClientSession) -> dict[str, dict]:
-    """都道府县：{ISO 代码: {zh, jis, capital}}，capital 是县厅所在地的 Wikidata ID。"""
-    rows = await _sparql(session, """SELECT ?iso ?l ?cap WHERE { ?p wdt:P31 wd:Q50337 ; wdt:P300 ?iso .
-      OPTIONAL { ?p wdt:P36 ?cap } OPTIONAL { ?p rdfs:label ?l FILTER(LANG(?l) IN ("zh-cn", "zh-hans", "zh")) } }""")
+    """都道府县：{ISO 代码: {zh, jis, capital, spot}}，capital 是县厅所在地的 Wikidata ID，spot 是它的 [纬度, 经度]
+    （盲猜日本酒按县算距离用，查不到是 None）。"""
+    rows = await _sparql(session, """SELECT ?iso ?l ?cap ?c WHERE { ?p wdt:P31 wd:Q50337 ; wdt:P300 ?iso .
+      OPTIONAL { ?p wdt:P36 ?cap OPTIONAL { ?cap wdt:P625 ?c } }
+      OPTIONAL { ?p rdfs:label ?l FILTER(LANG(?l) IN ("zh-cn", "zh-hans", "zh")) } }""")
     out: dict[str, dict] = {}
     for r in rows:
         iso = r["iso"]["value"]
         rec = out.setdefault(iso, {
             "zh": "", "jis": int(iso.split("-")[-1]) if iso.split("-")[-1].isdigit() else 0, "labels": {},
-            "capital": r.get("cap", {}).get("value", "").rsplit("/", 1)[-1],
+            "capital": r.get("cap", {}).get("value", "").rsplit("/", 1)[-1], "spot": None,
         })
         if "l" in r:
             rec["labels"][r["l"]["xml:lang"]] = r["l"]["value"]
+        if "c" in r and not rec["spot"]:
+            lng, lat = (float(x) for x in r["c"]["value"].removeprefix("Point(").removesuffix(")").split())
+            rec["spot"] = [round(lat, 4), round(lng, 4)]
     for rec in out.values():
         labels = rec.pop("labels")
         rec["zh"] = convert(next((labels[k] for k in ("zh-cn", "zh-hans", "zh") if k in labels), ""), "zh-cn")

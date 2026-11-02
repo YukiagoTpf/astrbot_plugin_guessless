@@ -6,8 +6,8 @@
 要单独的每题时长、每人次数就在 _conf_schema.json 加 {cat}_round_seconds、{cat}_max_guesses。
 """
 
-from . import cngeodle, geodle, jpgeodle, mechadle, pokedle
+from . import cngeodle, geodle, jpgeodle, mechadle, pokedle, sakedle
 from .base import Blind
 
 # 题型 -> Blind，顺序就是指令列表和排行榜里的顺序，题库也按这个顺序建
-BLIND: dict[str, Blind] = {m.MODE.cat: m.MODE for m in (pokedle, mechadle, geodle, jpgeodle, cngeodle)}
+BLIND: dict[str, Blind] = {m.MODE.cat: m.MODE for m in (pokedle, mechadle, geodle, jpgeodle, cngeodle, sakedle)}

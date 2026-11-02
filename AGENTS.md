@@ -29,6 +29,7 @@ core/
   store.py            数据目录里 JSON 文件的读写
   hint_data.py        手写的特产、名胜、美食提示
   cn_data.py          手写的盲猜中国地点资料：城市线级、2025 年 GDP、拆成区出题的市（北上广深）
+  sake_data.py        手写的盲猜日本酒资料：銘柄的简称、さけのわ风味标签的中文
   mecha_data.py       手写的 Gundam Wiki 资料中译（世界观、阵营、机型、机械设计）和机体外号
   vtuber_data.py      手写的猜Vtuber不出题名单（品牌号、搬运号、成人向、有争议的）
   kline.py            猜K线：股票池（东方财富沪深300）、出题时拉一段日 K 并按新浪的因子复权、揭晓的统计、认群友说的涨跌幅
@@ -82,6 +83,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 盲猜地点的条目格式、选题分档、地区划分（`geo.REGIONS`） | `blind/geodle.py` 的 `VERSION` |
   | 盲猜日本地点的选题、条目格式、提示规则（`LANDMARK_CLASS` / `LANDMARK_BLOCK`） | `blind/jpgeodle.py` 的 `VERSION` |
   | 盲猜中国地点的选题、条目格式、提示规则（`CN_SIGHT_BLOCK`、`geo.CN_PROVINCES`）、`cn_data.py` | `blind/cngeodle.py` 的 `VERSION` |
+  | 盲猜日本酒的选题（`AREA_TOP`、`NO_ANSWER`）、条目格式、提示规则、`sake_data.py` | `blind/sakedle.py` 的 `VERSION` |
   | 听歌猜番的选曲规则（`sources.anime_themes`） | `bank.ANISONG_VERSION` |
   | 街景取景规则（全景缓存作废重找） | `geo.SAMPLING` |
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |
@@ -121,6 +123,7 @@ AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blin
 - 猜群友的头像只在内存里出图，不存盘；答案只公布群名片 / 昵称，不发 QQ 号。
 - 盲猜中国地点不出、不认三沙市（`geo.CN_EXCLUDE`），港澳台不在里面；名胜过滤（`blind/cngeodle.py` 的 `CN_SIGHT_BLOCK`：红色景点、陵墓、领导人、战争……）只能加不能删。
 - 盲猜日本地点不出、不认北方四岛上的村（`geo.disputed`），不出因核事故、核设施、美军基地出名的町村（`blind/jpgeodle.py` 的 `NO_ANSWER`，只能加不能删）；名胜过滤（`blind/jpgeodle.py` 的 `LANDMARK_BLOCK`：和平公园、原爆、靖国和护国神社、端岛、硫磺岛、领土争议的岛、皇室、陵墓、事件……）只能加不能删。
+- 盲猜日本酒不出名字带「皇国」「尊皇」「旭日」「戦勝」「軍」这些的銘柄（`blind/sakedle.py` 的 `NO_ANSWER`），只能加不能删；用さけのわ的数据要注明出处（卡片角注、答案卡的「数据」），不能去掉。
 - 猜K线不出军工、核相关的股票（`kline.BLOCK_INDUSTRIES`、`NUCLEAR`、`BLOCK_NAME`），只能加不能删。
 - 猜国家暂时下线（`main.OFFLINE`）：开题和排行榜都只回「好危险，不踩啦」，也不进整点播报。
 
