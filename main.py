@@ -3,7 +3,6 @@ import math
 import random
 import re
 import time
-import unicodedata
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -12,10 +11,11 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, StarTools
 
-from .core import audio, cards, geo, kline, members
+from .core import audio, cards, commands, geo, kline, members
 from .core.answer import candidates, is_correct
 from .core.bank import Bank
 from .core.blind import BLIND
+from .core.commands import squash
 from .core.lines import LINES, say
 from .core.store import load_json, save_json
 
@@ -43,15 +43,8 @@ COMMANDS = (
     | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | KLINE_ALIASES | KLINE_BOARD_ALIASES | ALL_BOARDS_ALIASES
     | {a for b in BLIND.values() for a in b.aliases}
 )
-
-
-def squash(text: str) -> str:
-    """去掉空白、全角转半角、不分大小写：「猜 k 线」「猜Ｋ线」都是「猜k线」。"""
-    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", text)).casefold()
-
-
-# AstrBot 的指令只认原样的写法，@bot 说「猜 k 线」「盲猜 日本地点」这种带空格、大小写不对的，按这张表认：
-# squash 过的说法 -> (开题还是排行榜, 题型)
+# AstrBot 的指令只认原样的写法，@bot 说「猜 k 线」「盲猜 日本地点」这种带空格、大小写不对的，先按这张表认，
+# 再交给 core/commands.py 按关键词、像不像认：squash 过的说法 -> (动作, 题型)
 LOOSE = {
     **{squash(b): ("board", cat) for cat, b in BOARDS.items()},
     **{squash(a): ("board", cat) for cat, names in (("vtuber", VTUBER_BOARD_ALIASES), ("kline", KLINE_BOARD_ALIASES))
@@ -61,7 +54,20 @@ LOOSE = {
         ("geo", GEO_ALIASES), ("jpgeo", JPGEO_ALIASES), ("vtuber", VTUBER_ALIASES), ("kline", KLINE_ALIASES),
         *((cat, b.aliases) for cat, b in BLIND.items()),
     ) for a in names},
+    "排行榜": ("boards", ""), **{squash(a): ("boards", "") for a in ALL_BOARDS_ALIASES},
+    "暂停": ("pause", ""), "重新开始": ("resume", ""),
 }
+# 认不出时拿来比像不像、给建议的说法（只用正式的名字）
+SUGGEST = {
+    **{name: ("start", cat) for cat, name in MODES.items() if cat not in OFFLINE},
+    **{name: ("board", cat) for cat, name in BOARDS.items() if cat not in OFFLINE},
+    "排行榜": ("boards", ""), "帮助": ("help", ""),
+}
+# 有题在进行时，@bot 说的话带这些字才当指令认，不然当答案（「@bot 宝可梦」可能是在答题）
+COMMANDISH = re.compile(r"猜|榜|排行|排名|帮助|菜单|指令|玩法|暂停|恢复|继续|重新开始")
+NUM = r"\d{1,3}|[零〇一二两三四五六七八九十]{1,3}"  # 阿拉伯数字或中文数字，见 commands.number
+# 管理员加题：「增加 3 题」「加题」「再加三道题」「多开 5 题」，不说几道是 1 道
+ADD_QUOTA = rf"^\s*再?(?:增加|加|多加|添加|多开|多给|放开)\s*({NUM})?\s*(?:道|个)?\s*题\s*(?:吧|呗|啊|呀|!|！)?\s*$"
 # @bot 说「猜xx」「盲猜xx」「听歌猜xx」但没有这个题型时回一句
 UNKNOWN_MODE = re.compile(r"^(?:盲猜|听歌猜|猜)\S{1,12}$")
 AT_TEXT = re.compile(r"\s*@[^@]*?\(\d+\)\s*")  # message_str 里 @ 别人的部分：「 @名片(QQ号) 」
@@ -274,6 +280,10 @@ class GuessPlugin(Star):
     @filter.command("排行榜", alias=ALL_BOARDS_ALIASES)
     async def all_boards(self, event: AstrMessageEvent):
         """管理员：马上发一张各题型的排行榜图，和整点播报的一样，下次整点从这次算新增"""
+        async for r in self._all_boards_now(event):
+            yield r
+
+    async def _all_boards_now(self, event: AstrMessageEvent):
         gid = event.get_group_id()
         if not gid:
             return
@@ -289,9 +299,10 @@ class GuessPlugin(Star):
         self._mark_broadcast(gid)
         yield event.chain_result([Comp.Image.fromBase64(card)])
 
-    @filter.regex(r"^(?:增加|加)\s*(\d+)\s*道?题$")
+    @filter.regex(ADD_QUOTA)
     async def add_quota(self, event: AstrMessageEvent):
-        """管理员 @bot 发「增加 N 题」：本群额外放开 N 道题，每小时额度用完后再用"""
+        """管理员 @bot 发「增加 N 题」（「加题」「再加三道题」「多开 5 题」也行，不说几道是 1 道）：
+        本群额外放开 N 道题，每小时额度用完后再用"""
         gid = event.get_group_id()
         if not gid or not event.is_at_or_wake_command:
             return
@@ -299,33 +310,42 @@ class GuessPlugin(Star):
         if not event.is_admin():
             yield event.plain_result(say("not_admin_quota"))
             return
-        n = int(re.search(r"\d+", event.message_str).group())
-        if not 0 < n <= 100:
+        m = re.search(ADD_QUOTA, event.message_str.strip())
+        n = commands.number(m[1]) if m and m[1] else 1
+        if not n or not 0 < n <= 100:
             yield event.plain_result(say("bonus_range"))
             return
         self.bonus[gid] = self.bonus.get(gid, 0) + n
         save_json(self.data_dir / "bonus.json", self.bonus)
         yield event.plain_result(say("bonus_added", n=n, left=self._quota_left(gid)))
 
-    @filter.regex(r"^\s*(?:宵禁|取消宵禁|恢复宵禁|解禁\s*\d)")
+    @filter.regex(r"宵禁|解禁")
     async def curfew_admin(self, event: AstrMessageEvent):
-        """@bot 发「宵禁」看本群的宵禁时间；管理员还可以发「宵禁 00:00-07:00」改时间、「取消宵禁」、
-        「宵禁解禁 N 小时」临时放开 N 小时（过了自动恢复）、「恢复宵禁」提前结束解禁。
-        改时间直接改插件配置里的 group_curfews，WebUI 里看到的是同一份。"""
+        """@bot 说带「宵禁」的话：看本群的宵禁时间（「宵禁」「宵禁几点」）；管理员还可以改时间（「宵禁 00:00-07:00」
+        「宵禁改成零点到七点」）、取消（「取消宵禁」「关闭宵禁」）、临时放开 N 小时（「宵禁解禁 2 小时」「解禁两个钟」，
+        过了自动恢复）、提前结束解禁（「恢复宵禁」）。改时间直接改插件配置里的 group_curfews，WebUI 里看到的是同一份。"""
         gid = event.get_group_id()
         if not gid or not event.is_at_or_wake_command:
             return
         event.stop_event()
-        text = re.sub(r"\s+", "", event.message_str)
+        text = commands.TAIL.sub("", squash(event.message_str))
         span = self._curfew_span(gid)
-        if text == "宵禁":
+        lift = re.search(rf"解禁({NUM})个?(?:小时|钟头|钟|h)", text)
+        restore = re.search(r"恢复宵禁|宵禁恢复|(?:取消|结束|停止)解禁|解禁(?:取消|结束)", text)
+        cancel = re.search(r"(?:取消|关闭|关掉|解除|去掉|删掉|删除|不要|不用)宵禁|宵禁(?:取消|关闭|关掉|解除|关)", text)
+        times = re.search(rf"({NUM})(?:[:：点]({NUM}|半|整)?)?[-~到至]({NUM})(?:[:：点]({NUM}|半|整)?)?", text)
+        if not (lift or restore or cancel or times or "解禁" in text):
             yield event.plain_result(say("curfew_show", start=span[0], end=span[1]) if span else say("curfew_none"))
             return
         if not event.is_admin():
             yield event.plain_result(say("not_admin_curfew"))
             return
-        if m := re.fullmatch(r"(?:宵禁)?解禁(\d+)个?小时", text):
-            hours = int(m[1])
+        if restore:
+            lifted = self.curfew_lifts.pop(gid, 0) > time.time()
+            save_json(self.data_dir / "curfew_lifts.json", self.curfew_lifts)
+            yield event.plain_result(say("curfew_restored") if lifted and span else say("curfew_not_lifted"))
+        elif lift:
+            hours = commands.number(lift[1]) or 0
             if not span:
                 yield event.plain_result(say("curfew_none"))
             elif not 0 < hours <= 24:
@@ -335,16 +355,14 @@ class GuessPlugin(Star):
                 save_json(self.data_dir / "curfew_lifts.json", self.curfew_lifts)
                 until = time.strftime("%H:%M", time.localtime(self.curfew_lifts[gid]))
                 yield event.plain_result(say("curfew_lifted", n=hours, until=until))
-        elif text in ("恢复宵禁", "宵禁恢复"):
-            lifted = self.curfew_lifts.pop(gid, 0) > time.time()
-            save_json(self.data_dir / "curfew_lifts.json", self.curfew_lifts)
-            yield event.plain_result(say("curfew_restored") if lifted and span else say("curfew_not_lifted"))
-        elif text in ("取消宵禁", "宵禁关", "宵禁取消", "宵禁关闭"):
+        elif cancel:
             self._set_curfew(gid, "")
             yield event.plain_result(say("curfew_off"))
-        elif m := re.fullmatch(r"宵禁(\d{1,2})(?:[:：](\d{2}))?[-~～到](\d{1,2})(?:[:：](\d{2}))?", text):
-            start, end = (int(m[1]), int(m[2] or 0)), (int(m[3]), int(m[4] or 0))
-            if start == end or any(h > 24 or mm > 59 for h, mm in (start, end)):
+        elif times:
+            minute = {"半": 30, "整": 0, None: 0}
+            start, end = ((commands.number(times[i]), minute[times[i + 1]] if times[i + 1] in minute
+                           else commands.number(times[i + 1])) for i in (1, 3))
+            if None in (*start, *end) or start == end or any(h > 24 or mm > 59 for h, mm in (start, end)):
                 yield event.plain_result(say("curfew_usage"))
                 return
             start, end = (f"{h % 24:02d}:{mm:02d}" for h, mm in (start, end))
@@ -365,6 +383,10 @@ class GuessPlugin(Star):
     @filter.command("暂停")
     async def pause(self, event: AstrMessageEvent):
         """管理员：暂停本群猜题，直到「重新开始」"""
+        async for r in self._pause(event):
+            yield r
+
+    async def _pause(self, event: AstrMessageEvent):
         gid = event.get_group_id()
         if not gid:
             return
@@ -383,6 +405,10 @@ class GuessPlugin(Star):
     @filter.command("重新开始")
     async def resume(self, event: AstrMessageEvent):
         """管理员：恢复本群猜题"""
+        async for r in self._resume(event):
+            yield r
+
+    async def _resume(self, event: AstrMessageEvent):
         gid = event.get_group_id()
         if not gid:
             return
@@ -410,19 +436,12 @@ class GuessPlugin(Star):
         text = event.message_str.strip()
         if not text or text.split()[0] in COMMANDS:
             return
-        if event.is_at_or_wake_command and (hit := LOOSE.get(squash(text))):
-            kind, cat = hit
-            if kind == "start":
-                async for r in self._start(event, cat):
-                    yield r
-            else:
-                yield self._board(event, cat)
+        if event.is_at_or_wake_command and (action := self._command(text, rnd)):
+            async for r in self._run(event, *action):
+                yield r
             event.stop_event()
             return
         if not rnd or rnd.entry is None:
-            if self._unknown_mode(event, text):
-                yield event.plain_result(say("unknown_mode"))
-                event.stop_event()
             return
         if rnd.category == "kline":
             if chain := self._kline_vote(gid, rnd, event, text):
@@ -430,7 +449,7 @@ class GuessPlugin(Star):
                 event.stop_event()
             return
 
-        if text == "提示":
+        if commands.HINT.fullmatch(squash(text)):
             now = time.monotonic()
             wait = rnd.last_hint + self.config.get("hint_cooldown_seconds", 5) - now
             if wait > 0:
@@ -781,6 +800,61 @@ class GuessPlugin(Star):
         ats = [str(c.qq) for c in event.get_messages() if isinstance(c, Comp.At) and str(c.qq) not in (self_id, "all")]
         key = rnd.roster.find(AT_TEXT.sub(" ", text), ats, rnd.key)
         return key, ({} if key else None)
+
+    def _command(self, text: str, rnd: Round | None) -> tuple[str, object] | None:
+        """@bot 说的不是原样的指令时认是哪条：(动作, 题型)，认不出但像是在叫指令的给 ("suggest", [像的说法])。
+        有题在进行时只认带「猜」「榜」这类字、又认得准的，其余照常当答案。"""
+        s = squash(text)
+        if hit := LOOSE.get(s):
+            return hit
+        busy = rnd is not None and rnd.entry is not None
+        if busy and not COMMANDISH.search(s):
+            return None
+        if hit := commands.intent(text):
+            return hit
+        if busy or not (UNKNOWN_MODE.match(s) or commands.BOARD.search(s)):
+            return None
+        # 说的像排行榜就只和排行榜比，像开题就只和开题比，免得「猜宝克梦」建议出「盲猜宝可梦排行榜」
+        board = bool(commands.BOARD.search(s))
+        hit, names = commands.closest(text, {n: a for n, a in SUGGEST.items() if (a[0] in ("board", "boards")) == board})
+        return hit or ("suggest", names)
+
+    async def _run(self, event: AstrMessageEvent, action: str, arg):
+        if action == "start":
+            async for r in self._start(event, arg):
+                yield r
+        elif action == "board":
+            yield self._board(event, arg)
+        elif action == "boards":
+            async for r in self._all_boards_now(event):
+                yield r
+        elif action == "pause":
+            async for r in self._pause(event):
+                yield r
+        elif action == "resume":
+            async for r in self._resume(event):
+                yield r
+        elif action == "help":
+            yield event.plain_result(self._help(event.get_group_id()))
+        elif event.get_group_id() not in self.paused:  # suggest：暂停中的群不理
+            names = "」「".join(arg)
+            yield event.plain_result(say("unknown_suggest", names=names) if arg else say("unknown_mode"))
+
+    def _help(self, gid: str) -> str:
+        """「帮助」：按类列出现在能玩的，再加上插件配置 help_extra 里给本群写的（「群号:文字」只给那个群，没写群号的都给）。"""
+        live = [cat for cat in MODES if cat not in OFFLINE]
+        text = say(
+            "help",
+            grid=" ".join(MODES[c] for c in live if c in GRID or c == "member"),
+            street=" ".join(MODES[c] for c in live if c in ("geo", "jpgeo")),
+            other=" ".join(MODES[c] for c in live if c in ("anisong", "kline")),
+            blind=" ".join(MODES[c] for c in live if c in BLIND),
+        )
+        for item in self.config.get("help_extra") or []:
+            m = re.fullmatch(r"\s*(\d+)\s*[:：](.+)", str(item), re.S)
+            if m is None or m[1] == gid:
+                text += "\n" + (m[2] if m else str(item)).strip()
+        return text
 
     def _unknown_mode(self, event: AstrMessageEvent, text: str) -> bool:
         """@bot 说了「猜xx」，但没有这个题型（有的话指令已经接走了）。暂停中的群不理。"""

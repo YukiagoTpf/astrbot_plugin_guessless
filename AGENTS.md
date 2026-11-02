@@ -25,6 +25,7 @@ core/
   members.py          猜群友：挑人、拉 QQ 头像、每段露哪几格、认群友说的是谁（Roster）
   audio.py            听歌猜番的音频：ffmpeg 解码、切片段
   answer.py           答案归一化和判定
+  commands.py         认 @bot 说得不准的指令：去空格和客套、按关键词认题型、和指令比像不像；局中的「提示」；中文数字
   store.py            数据目录里 JSON 文件的读写
   hint_data.py        手写的特产、名胜、美食提示
   cn_data.py          手写的盲猜中国地点资料：城市线级、2025 年 GDP、拆成区出题的市（北上广深）
@@ -86,6 +87,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |
 
 - 新配置项写进 `_conf_schema.json`（密钥加 `"secret": true`），并更新 `docs/configuration.md`。
+- 加了题型，在 `core/commands.py` 的 `KEYWORDS` 里给它加关键词（盲猜的在 `BLIND_OF` 里对上同类的看图题型），不然 @bot 说得不准时认不出来。
 - 文档：README 只放概要和索引，细节写进 `docs/` 对应的文件；行为改了要同步改文档。
 
 ## 盲猜系列

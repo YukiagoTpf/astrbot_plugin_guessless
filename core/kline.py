@@ -15,6 +15,7 @@ from pathlib import Path
 
 import aiohttp
 
+from .commands import cn_number
 from .sources import WEB_UA, HttpError
 from .store import load_json, save_json
 
@@ -33,7 +34,6 @@ INDEX = "1.000001"  # 上证指数，当交易日历
 BLOCK_INDUSTRIES = {"BK1229", "BK1230", "BK1231", "BK1232", "BK1233"}
 NUCLEAR = "BK1376"
 BLOCK_NAME = re.compile(r"核|铀|军|兵|航发|中航|船舶")
-CN_DIGITS = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 # 群友说的涨跌：「涨3」「跌1.5%」「+2」「-0.5个点」「涨三个点」「跌一个半点」「涨三点五」「平」。
 # 不带涨跌也不带单位的光秃秃一个数不算（群里随口说的数字太多）
 GUESS = re.compile(
@@ -194,23 +194,6 @@ def question_hints() -> list[list[str]]:
     ]
 
 
-def _cn_number(s: str) -> float | None:
-    """「三」「十五」「二十」「三点五」，最多两位整数。"""
-    whole, _, frac = s.partition("点")
-    if whole.count("十") > 1 or len(whole) > 3:
-        return None
-    if "十" in whole:
-        tens, _, ones = whole.partition("十")
-        if len(tens) > 1 or len(ones) > 1 or tens in ("零", "〇"):
-            return None
-        value = (CN_DIGITS[tens] if tens else 1) * 10 + (CN_DIGITS[ones] if ones else 0)
-    elif len(whole) == 1:
-        value = CN_DIGITS[whole]
-    else:
-        return None
-    return float(f"{value}.{''.join(str(CN_DIGITS[c]) for c in frac)}") if frac else float(value)
-
-
 def parse(text: str) -> float | None:
     """群友这句话猜的涨跌幅（%），不是在猜返回 None。"""
     text = re.sub(r"[\s。！!～~]+", "", text)
@@ -221,7 +204,7 @@ def parse(text: str) -> float | None:
     if not (m := GUESS.fullmatch(text)) or not (m["sign"] or m["unit"]):
         return None
     num = m["num"]
-    value = 0.5 if num == "半" else float(num) if num[0].isdigit() else _cn_number(num)
+    value = 0.5 if num == "半" else float(num) if num[0].isdigit() else cn_number(num)
     if value is None:
         return None
     if m["half"]:
