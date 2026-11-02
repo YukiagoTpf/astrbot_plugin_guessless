@@ -341,7 +341,7 @@ def music(clips: tuple, shown: int, label: str) -> Image.Image:
 
 def kline(bars: list, warm: int, shown: int, reveal: bool) -> Image.Image:
     """猜K线的图区，bars 是 [日期, 开, 收, 高, 低, 量]：前 warm 根只拿来算均线，接着 shown 根给大家看，其余是之后的走势。
-    出题只画给看的那段，纵轴写相对最后一根收盘的涨跌，之后那段留空位打问号；答案全画出来，竖虚线隔开，纵轴写价格，
+    出题只画给看的那段，纵轴不标数、只写网格每格几个点，之后那段留空位打问号；答案全画出来，竖虚线隔开，纵轴写价格，
     下面标日期。纵轴范围只按画出来的那些算，出题图看不出之后涨到多高。A 股习惯红涨绿跌。"""
     s = 2  # 两倍大小画再缩小，均线不起锯齿
     w, h = SIZE * s, PIC_H * s
@@ -367,7 +367,8 @@ def kline(bars: list, warm: int, shown: int, reveal: bool) -> Image.Image:
 
     if reveal:
         draw.rectangle((split, top - 44 * s, w - right, vol_top + vol_h), fill=K_FUTURE)
-    # 横向网格和纵轴：出题按看到的最后一根收盘算涨跌（%），答案写价格
+    # 横向网格：答案在右边写价格。出题不标数（标在问号框旁边，「0% 到 +30%」会被当成之后的涨跌范围），
+    # 网格按看到的最后一根收盘每隔整数个点画一条，图例那行写每格几个点，看得出波动多大、看不出方向
     base = closes[warm + shown - 1]
     small = font(22 * s)
     if reveal:
@@ -376,11 +377,7 @@ def kline(bars: list, warm: int, shown: int, reveal: bool) -> Image.Image:
         ticks = [(v, f"{v:.{digits}f}") for v in _ticks(lo, hi, gap)]
     else:
         gap = _nice_step((hi - lo) / base * 100)
-        digits = 0 if gap >= 1 else 1
-        ticks = [
-            (base * (1 + v / 100), f"{v:+.{digits}f}%" if round(v, 6) else "0%")
-            for v in _ticks((lo / base - 1) * 100, (hi / base - 1) * 100, gap)
-        ]
+        ticks = [(base * (1 + v / 100), "") for v in _ticks((lo / base - 1) * 100, (hi / base - 1) * 100, gap)]
     for p, label in ticks:
         draw.line((left, y(p), w - right, y(p)), fill=K_GRID, width=s)
         draw.text((w - right + 14 * s, y(p)), label, fill=DIM, font=small, anchor="lm")
@@ -409,7 +406,7 @@ def kline(bars: list, warm: int, shown: int, reveal: bool) -> Image.Image:
         draw.text((split, y_date), bars[warm + shown - 1][0], fill=DIM, font=dates, anchor="mt")
         draw.text((w - right, y_date), bars[-1][0], fill=DIM, font=dates, anchor="rt")
     else:
-        x0, x1, y1 = split + 10 * s, w - right - 6 * s, vol_top + vol_h
+        x0, x1, y1 = split + 10 * s, w - left, vol_top + vol_h
         for xx in (x0, x1):
             _dashed(draw, xx, top, y1, MARK, s)
         for yy in (top, y1):
@@ -422,6 +419,8 @@ def kline(bars: list, warm: int, shown: int, reveal: bool) -> Image.Image:
         draw.line((lx, top - 26 * s, lx + 26 * s, top - 26 * s), fill=color, width=3 * s)
         draw.text((lx + 34 * s, top - 26 * s), f"MA{n}", fill=DIM, font=small, anchor="lm")
         lx += 120 * s
+    if not reveal:
+        draw.text((lx, top - 26 * s), f"网格每格 {gap:g}%", fill=DIM, font=small, anchor="lm")
     out = out.resize((SIZE, PIC_H), Image.LANCZOS)
     out.info["grid"] = None
     return out
