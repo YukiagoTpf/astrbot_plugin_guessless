@@ -1,6 +1,6 @@
 """盲猜日本地点：猜一个市町村，对比都道府县、方位、人口、面积、级别、是不是县厅所在地。
 
-Wikidata 里日本的市町村都能猜，东京 23 区并成一个。中文维基浏览量前 POOL 个出题（前 MAIN 个是大众题，村不出），
+Wikidata 里日本的市町村都能猜，东京 23 区并成一个。市、町、村分开按中文维基浏览量各取前几个出题（QUOTA），
 其余只能拿来猜。只查 Wikidata 和维基百科，不用街景的 key。
 """
 
@@ -14,10 +14,18 @@ from ..entries import assign_names, scrub, usable_names
 from ..store import load_json, save_json
 from .base import Blind, away, entry, here, num, size, tiered, touching, yes_no
 
-VERSION = "munis-v5"  # 选题、条目格式、提示规则改了就换个名字，题库重建
+VERSION = "munis-v6"  # 选题、条目格式、提示规则改了就换个名字，题库重建
 COLUMNS = ("都道府县", "方位", "人口", "面积", "级别", "县厅")
 CLUES = ("景点", "邻居", "名胜", "首字")  # 景点是次有名的名胜，名胜是最有名的
-MAIN, POOL = 100, 300  # 中文维基浏览量前 100 个是大众题，前 300 个出题，其余只能拿来猜
+# 出题名额按级别分，各自按浏览量取前几个：(大众题, 小众题)，「市」含政令市、中核市、特别区这些。
+# 混在一起排的话前 300 个九成是市，町一百题才出五道；村太难（白马村、小笠原村都有人反馈），只出小众题
+QUOTA = {"市": (70, 130), "町": (30, 50), "村": (0, 20)}
+# 不出题（还能拿来猜）：出名是因为核事故、核设施、美军基地的
+NO_ANSWER = {
+    "Q385311", "Q1023949", "Q1023937", "Q1023943",  # 大熊町、双叶町、浪江町、富冈町（福岛核事故）
+    "Q1023784", "Q1362335",  # 东海村、六所村
+    "Q1205469",  # 嘉手纳町
+}
 NEAR_KM = 50  # 相距这么近以内（差不多一个都市圈），方位格标黄
 TOKYO = "tokyo23"  # 东京 23 区并成一个，键用这个
 # 名胜只要这些类的（寺社、城、山水、温泉、公园、祭典……），车站、大学、行政区、事件不要
@@ -27,9 +35,9 @@ LANDMARK_CLASS = re.compile(
 )
 # 类里有这些的不要，哪怕也对得上上面（「城市」「大学城」带城，炮台的类是「台场 (军事)」）
 LANDMARK_CLASS_BLOCK = re.compile(r"城市|城镇|行政区|站|机场|大学|学校|道路|公路|铁路|体育|医院|公司|企业|军|战")
-# 不涉政、不碰战争和核：和平公园、原爆、靖国、护国神社、端岛（军舰岛）、领土争议的岛、皇室、陵墓、事件都不要
+# 不涉政、不碰战争和核：和平公园、原爆、靖国、护国神社、端岛（军舰岛）、硫磺岛、领土争议的岛（含冲之鸟）、皇室、陵墓、事件都不要
 LANDMARK_BLOCK = re.compile(
-    r"原爆|原子|核|和平|战|军|舰|靖国|护国|慰灵|空袭|遇刺|暗杀|事件|案|端岛|竹岛|独岛|尖阁|钓鱼|北方|皇|御所|陵|墓|"
+    r"原爆|原子|核|和平|战|军|舰|靖国|护国|慰灵|空袭|遇刺|暗杀|事件|案|端岛|硫磺岛|硫黄岛|竹岛|独岛|尖阁|钓鱼|北方|冲之鸟|沖之鳥|皇|御所|陵|墓|"
     r"刑|监狱|收容|纪念|遗址|大学|站|线|政|议|厅|署"
 )
 
@@ -154,23 +162,33 @@ async def build(bank) -> None:
         for k, m in munis.items()
     }
     places = {k: {"title": munis[k]["zh"], "names": names[k], "attrs": attrs[k]} for k in order if names[k]}
-    # 村不出题（白马村、小笠原村都有人反馈太难），只能拿来猜
-    pool = [k for k in order if k in places and munis[k]["level"] != "村"][:POOL]
+    # places 是按浏览量排的，市、町、村各取前几个（QUOTA）
+    kind = {k: m["level"] if m["level"] in ("町", "村") else "市" for k, m in munis.items()}
+    main, chosen = set(), set()
+    for level, (n_main, n_niche) in QUOTA.items():
+        picked = [k for k in places if kind[k] == level and k not in NO_ANSWER][: n_main + n_niche]
+        main.update(picked[:n_main])
+        chosen.update(picked)
+    pool = [k for k in places if k in chosen]
 
     def make(found: dict) -> list:
         entries = []
-        for i, k in enumerate(pool):
+        for k in pool:
             m = munis[k]
             words = [n for n in names[k] if not n.isascii()]
             sights = landmark_hints(found.get(k, []), words, m["zh"])
-            near = [munis[n]["zh"] for n in sorted(m["neighbours"], key=lambda n: -fame.get(n, 0)) if n in munis][:2]
+            # 名字里带答案的邻居不要（那须町旁边的那须盐原市）
+            near = [
+                munis[n]["zh"] for n in sorted(m["neighbours"], key=lambda n: -fame.get(n, 0))
+                if n in munis and not any(w in munis[n]["zh"] for w in words)
+            ][:2]
             hints = [
                 ["景点", sights[1] if len(sights) > 1 else ""], ["邻居", "、".join(near)],
                 ["名胜", sights[0] if sights else ""],
             ]
             original = " · ".join(x for x in (m["ja"] if m["ja"] != m["zh"] else "", m["en"]) if x)
             answer = f"{m['zh']}（{attrs[k]['pref']}）"
-            entries.append(entry("jd", k, m["zh"], original, answer, names[k], hints, attrs[k], i < MAIN))
+            entries.append(entry("jd", k, m["zh"], original, answer, names[k], hints, attrs[k], k in main))
         return entries
 
     # 名胜要查很久（大城市底下的条目上千），先用缓存里有的出题，查完再换一版。没查全的标成没建完，
