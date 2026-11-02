@@ -3,6 +3,7 @@ import math
 import random
 import re
 import time
+import unicodedata
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -42,6 +43,25 @@ COMMANDS = (
     | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | KLINE_ALIASES | KLINE_BOARD_ALIASES | ALL_BOARDS_ALIASES
     | {a for b in BLIND.values() for a in b.aliases}
 )
+
+
+def squash(text: str) -> str:
+    """去掉空白、全角转半角、不分大小写：「猜 k 线」「猜Ｋ线」都是「猜k线」。"""
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", text)).casefold()
+
+
+# AstrBot 的指令只认原样的写法，@bot 说「猜 k 线」「盲猜 日本地点」这种带空格、大小写不对的，按这张表认：
+# squash 过的说法 -> (开题还是排行榜, 题型)
+LOOSE = {
+    **{squash(b): ("board", cat) for cat, b in BOARDS.items()},
+    **{squash(a): ("board", cat) for cat, names in (("vtuber", VTUBER_BOARD_ALIASES), ("kline", KLINE_BOARD_ALIASES))
+       for a in names},
+    **{squash(m): ("start", cat) for cat, m in MODES.items()},
+    **{squash(a): ("start", cat) for cat, names in (
+        ("geo", GEO_ALIASES), ("jpgeo", JPGEO_ALIASES), ("vtuber", VTUBER_ALIASES), ("kline", KLINE_ALIASES),
+        *((cat, b.aliases) for cat, b in BLIND.items()),
+    ) for a in names},
+}
 # @bot 说「猜xx」「盲猜xx」「听歌猜xx」但没有这个题型时回一句
 UNKNOWN_MODE = re.compile(r"^(?:盲猜|听歌猜|猜)\S{1,12}$")
 AT_TEXT = re.compile(r"\s*@[^@]*?\(\d+\)\s*")  # message_str 里 @ 别人的部分：「 @名片(QQ号) 」
@@ -389,6 +409,15 @@ class GuessPlugin(Star):
         rnd = self.rounds.get(gid)
         text = event.message_str.strip()
         if not text or text.split()[0] in COMMANDS:
+            return
+        if event.is_at_or_wake_command and (hit := LOOSE.get(squash(text))):
+            kind, cat = hit
+            if kind == "start":
+                async for r in self._start(event, cat):
+                    yield r
+            else:
+                yield self._board(event, cat)
+            event.stop_event()
             return
         if not rnd or rnd.entry is None:
             if self._unknown_mode(event, text):
