@@ -20,6 +20,8 @@
 | [さけのわデータ](https://sakenowa.com) | 盲猜日本酒：銘柄、酒蔵、产地、人气排名、风味打分和标签 | 免 key，可商用；要求注明出处，卡片角注和答案卡上写「さけのわ（sakenowa.com）」 |
 | 东方财富 | 猜K线的股票池（沪深300 板块、行业和概念）、日 K、交易日历（上证指数） | 网页行情接口，非官方，免 key |
 | 新浪财经 | 猜K线的前复权因子 | 网页行情接口，非官方，免 key |
+| [wago.tools](https://wago.tools) | 猜魔兽：游戏数据表导出的 CSV（地图的中英文名、大陆、资料片、等级、阵营、子区域） | 免 key，一周最多下一次，缓存一个月 |
+| [warcraft.wiki.gg](https://warcraft.wiki.gg) | 猜魔兽：游戏内的风景截图（「Zone screenshots」分类） | MediaWiki API，免 key；截图版权归暴雪，出题时才下 |
 | [PokeAPI](https://pokeapi.co) | 宝可梦资料；立绘取自 GitHub 上的 PokeAPI/sprites | GraphQL，免 key |
 | [GeoNames](https://www.geonames.org) | 城市坐标、一级行政区、国家主要语言、陆上邻国 | CC BY 4.0 |
 | [Natural Earth](https://www.naturalearthdata.com) | 国家轮廓、邻国底图和世界地图（10m，CHN 视角版本） | 公有领域 |

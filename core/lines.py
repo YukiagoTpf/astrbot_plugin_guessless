@@ -17,6 +17,7 @@ LINES = {
     "card_note_mecha": ["说机体名，{tries} · 「提示」开一格"],
     "card_note_mechadle": ["说机体名，{tries} · 「提示」加线索"],
     "card_note_vtuber": ["说名字，{tries} · 「提示」开一格"],
+    "card_note_wow": ["说地图名，{tries} · 「提示」开一格"],
     "card_note_member": ["名片或 @TA，{tries} ·「提示」放大"],
     "card_note_kline": ["凑满人数就揭晓，每人只认第一句"],
     "tries": ["每人 {limit} 次"],
@@ -113,6 +114,10 @@ LINES = {
         "时间到，全群没一个认出来的。图鉴白集了",
         "两分钟，零人答对。建议回真新镇重新领一次初始宝可梦",
         "时间到。各位的宝可梦知识大概停在了第一世代",
+    ],
+    "timeout_wow": [
+        "时间到，没人认出来。艾泽拉斯这么大，你们是一步没走过",
+        "时间到，零人答对，飞行点都没开全吧",
     ],
     "timeout_vtuber": [
         "时间到，全群没一个认出来的。各位的 DD 含量有待提高",
@@ -220,6 +225,7 @@ LINES = {
     "board_empty_mecha": ["还没人猜对过萝卜，全员门外汉"],
     "board_empty_mechadle": ["还没人盲猜中过萝卜，全员靠看图"],
     "board_empty_vtuber": ["还没人猜对过 Vtuber，全员单推不看别家"],
+    "board_empty_wow": ["还没人猜对过魔兽地图，全员没出过新手村"],
     "board_empty_member": ["还没人猜中过群友，大家果然只是网友"],
     "board_empty_geo": ["还没人猜对过地点，全员宅家，可喜可贺"],
     "board_empty_geodle": ["还没人盲猜中过国家，全员靠街景"],

@@ -60,6 +60,13 @@
 - 盲猜萝卜用同一个题库里有世界观和登场年份的高达机体，对比规则见[玩法](usage.md#盲猜萝卜)。
 - Bangumi 的机体资料缓存在 `bgm_mecha.json`，只查新的；Gundam Wiki 每次重建重新拉（约 80 次请求），拉不到就用上次的 `gundam_wiki.json`。
 
+## 魔兽（`core/wow.py`）
+
+- 地图来自游戏数据表：[wago.tools](https://wago.tools) 导出的 DB2 CSV（`UiMap`、`UiMapAssignment`、`Map`、`ContentTuning`、`AreaTable`，简中、繁中、英文各一份，要带正式服的 build 号，不带给的是测试服）。野外地区是 UiMap 类型 3、所在的 Map 是野外、有等级设置的；主城在数据表里不算野外地区，手写在 `CITIES`（连阵营一起）。同名的只留资料片最早的（重做过的提瑞斯法林地、奥丹姆、永歌森林），外域和德拉诺的纳格兰、影月谷各留一个。
+- 资料片看 `ContentTuning.ExpansionID`（`Map.ExpansionID` 会把海加尔山、奥丹姆算成经典旧世），等级看它的 `MinLevelSquish` / `MaxLevelSquish`，阵营看 `AreaTable.FactionGroupMask`，子区域是 `AreaTable` 里挂在这张地图下的区域，按编号取前两个（名字里带地图名的不要）。
+- 截图来自 [warcraft.wiki.gg](https://warcraft.wiki.gg)（MediaWiki API，UA 要是机器人式的，浏览器 UA 会被 Cloudflare 拦）：地图页里的图，加上「Category:<地图> subzones」里子区域页的首图和直接放在分类里的图。只要「Zone screenshots」分类里、宽 1000 以上、宽高比 1.45 以上的，文件名或分类像地图、图标、加载画面、原画、NPC、过场动画、炉石的不要（`BAD_NAME`、`BAD_CAT`）。存 1280 宽的缩略图地址，每张地图最多 15 张（多了均匀挑）。同一张图挂在好几张地图下的（子区域分类有重叠）只给主城，别的谁都不给。不到 3 张的不出题。
+- 地图资料和截图列表各缓存一个月（`wow_zones.json`、`wow_shots.json`）；首次构建要请求 wiki 四五百次，一秒一次，十分钟左右。图出题时才下，下过的缓存在图片目录。
+
 ## Vtuber
 
 - 名单来自 [vtbs.moe](https://vtbs.moe)：它维护的 VTuber Database（各语言的名字、所属团体、各平台账号）加上它抓的 B 站账号数据（粉丝数、大航海人数、头像）。一个人有几个 B 站号的，取粉丝最多的。

@@ -21,7 +21,7 @@ import aiohttp
 
 from astrbot.api import logger
 
-from . import audio, cards, geo, kline, vtuber_data
+from . import audio, cards, geo, kline, vtuber_data, wow
 from .answer import candidates, find, norm
 from .blind import BLIND
 from .entries import (
@@ -88,7 +88,7 @@ MIN_POOL = 20
 DERIVED = {cat: b.base for cat, b in BLIND.items() if b.base}
 # 只认完整说出某个名字的题型，见 match。盲猜日本地点能猜的有一千七百多个市町村，按一大段算会把闲聊当成猜；
 # 盲猜中国地点同理，「我在苏州」不算猜苏州
-EXACT_ONLY = {"vtuber"} | {cat for cat, b in BLIND.items() if b.exact}
+EXACT_ONLY = {"vtuber", "wow"} | {cat for cat, b in BLIND.items() if b.exact}
 
 
 class Bank:
@@ -99,7 +99,7 @@ class Bank:
         self.config = config
         self.entries: dict[str, list] = {
             cat: [] for cat in (
-                "anime", "anisong", "game", "pokemon", "mecha", "vtuber", "geo", "country", "jpgeo", "kline", *BLIND,
+                "anime", "anisong", "game", "pokemon", "mecha", "vtuber", "wow", "geo", "country", "jpgeo", "kline", *BLIND,
             )
         }
         self.meta: dict[str, dict] = {cat: {} for cat in self.entries}
@@ -156,9 +156,9 @@ class Bank:
         key = find(text, cached[2], prefer, loose=cat not in EXACT_ONLY)
         return key, cached[3].get(key)
 
-    async def image(self, entry: dict) -> bytes:
-        """每次从这道题的几张截图里随机挑一张。"""
-        url = random.choice(entry["images"])
+    async def image(self, entry: dict, url: str = "") -> bytes:
+        """每次从这道题的几张截图里随机挑一张（url 指定就用它）。"""
+        url = url or random.choice(entry["images"])
         path = self.img_dir / f"{entry['id']}-{hashlib.sha1(url.encode()).hexdigest()[:10]}.jpg"
         if path.exists():
             return path.read_bytes()
@@ -229,6 +229,8 @@ class Bank:
             return [MECHA_VERSION]
         if cat == "kline":
             return [kline.VERSION]
+        if cat == "wow":
+            return [wow.VERSION]
         if cat == "vtuber":
             return [self._size("vtuber"), VTUBER_VERSION]
         if cat == "anisong":  # 猜动画题库重建了，这边跟着换
@@ -281,7 +283,7 @@ class Bank:
         # 游戏有缓存时一两分钟就建完，动画要等 B 站慢慢搜，放后面；盲猜不找街景，放在猜地点前面
         builders = {
             "game": self._build_games, "pokemon": self._build_pokemon, "country": self._build_country,
-            "kline": partial(kline.build, self),
+            "kline": partial(kline.build, self), "wow": partial(wow.build, self),
             **{cat: partial(b.build, self) for cat, b in BLIND.items() if b.build},
             "geo": self._build_geo, "jpgeo": self._build_jpgeo,
             "anime": self._build_anime, "anisong": self._build_anisong, "mecha": self._build_mecha,

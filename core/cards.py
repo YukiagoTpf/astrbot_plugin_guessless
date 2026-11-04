@@ -9,7 +9,7 @@ import math
 import random
 from functools import cache
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageStat
 
 SIZE = 1080
 PIC_H = 608  # 16:9
@@ -57,6 +57,11 @@ def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
     except OSError:
         pass
     return ImageFont.load_default(size=size)
+
+
+def brightness(img: Image.Image) -> float:
+    """平均亮度 0–255：猜魔兽有的截图是洞里，几乎全黑。"""
+    return ImageStat.Stat(img.convert("L").resize((64, 36))).mean[0]
 
 
 def load(data: bytes, contain: bool = False) -> Image.Image:

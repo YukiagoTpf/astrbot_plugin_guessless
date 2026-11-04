@@ -22,25 +22,26 @@ from .core.store import load_json, save_json
 # 题型 -> 开题指令，也是卡片标题；排行榜指令去掉开头的「猜」。盲猜系列（不给图，每猜一个回一行对比）见 core/blind
 MODES = {
     "game": "猜游戏", "anime": "猜动画", "anisong": "听歌猜番", "pokemon": "猜宝可梦", "mecha": "猜萝卜",
-    "vtuber": "猜Vtuber", "member": "猜群友", "geo": "猜地点", "country": "猜国家", "jpgeo": "猜日本地点",
+    "vtuber": "猜Vtuber", "wow": "猜魔兽", "member": "猜群友", "geo": "猜地点", "country": "猜国家", "jpgeo": "猜日本地点",
     "kline": "猜K线", **{cat: b.command for cat, b in BLIND.items()},
 }
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
 OFFLINE = {"country"}  # 暂时下线的题型：开题和排行榜都只回一句，不出题、不播报
-GRID = {"game", "anime", "pokemon", "mecha", "vtuber"}  # 九宫格逐格揭开的题型
+GRID = {"game", "anime", "pokemon", "mecha", "vtuber", "wow"}  # 九宫格逐格揭开的题型
 # 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对；
-# Vtuber 的名字也常互相包含；群友按 @、QQ 号、名片认人
-BY_KEY = {"mecha", "mechadle", "vtuber", "member"}
+# Vtuber 的名字也常互相包含；魔兽地图也是（东、西瘟疫之地）；群友按 @、QQ 号、名片认人
+BY_KEY = {"mecha", "mechadle", "vtuber", "wow", "member"}
 GEO_ALIASES = {"猜街景"}
 JPGEO_ALIASES = {"猜日本街景"}
 VTUBER_ALIASES = {"猜vtuber", "猜VTuber", "猜V", "猜v"}
 VTUBER_BOARD_ALIASES = {"vtuber排行榜", "VTuber排行榜", "V排行榜"}
 KLINE_ALIASES = {"猜k线"}
+WOW_ALIASES = {"猜魔兽世界", "猜wow", "猜WOW", "魔兽图寻"}
 KLINE_BOARD_ALIASES = {"k线排行榜"}
 ALL_BOARDS_ALIASES = {"战斗力榜", "总排行榜"}  # 管理员提前发整点排行榜，指令本身是「排行榜」
 COMMANDS = (
     set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始", "排行榜", "宵禁", "取消宵禁", "恢复宵禁"} | GEO_ALIASES | JPGEO_ALIASES
-    | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | KLINE_ALIASES | KLINE_BOARD_ALIASES | ALL_BOARDS_ALIASES
+    | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | KLINE_ALIASES | KLINE_BOARD_ALIASES | WOW_ALIASES | ALL_BOARDS_ALIASES
     | {a for b in BLIND.values() for a in b.aliases}
 )
 # AstrBot 的指令只认原样的写法，@bot 说「猜 k 线」「盲猜 日本地点」这种带空格、大小写不对的，先按这张表认，
@@ -52,6 +53,7 @@ LOOSE = {
     **{squash(m): ("start", cat) for cat, m in MODES.items()},
     **{squash(a): ("start", cat) for cat, names in (
         ("geo", GEO_ALIASES), ("jpgeo", JPGEO_ALIASES), ("vtuber", VTUBER_ALIASES), ("kline", KLINE_ALIASES),
+        ("wow", WOW_ALIASES),
         *((cat, b.aliases) for cat, b in BLIND.items()),
     ) for a in names},
     "排行榜": ("boards", ""), **{squash(a): ("boards", "") for a in ALL_BOARDS_ALIASES},
@@ -72,6 +74,7 @@ ADD_QUOTA = rf"^\s*再?(?:增加|加|多加|添加|多开|多给|放开)\s*({NUM
 UNKNOWN_MODE = re.compile(r"^(?:盲猜|听歌猜|猜)\S{1,12}$")
 AT_TEXT = re.compile(r"\s*@[^@]*?\(\d+\)\s*")  # message_str 里 @ 别人的部分：「 @名片(QQ号) 」
 HOUR = 3600
+WOW_MIN_LIGHT = 45  # 猜魔兽的题图平均亮度（0–255）低于这个就换一张
 BOARD_TOP = 5  # 整点排行榜每个题型列前几名
 
 
@@ -192,6 +195,12 @@ class GuessPlugin(Star):
         async for r in self._start(event, "vtuber"):
             yield r
 
+    @filter.command("猜魔兽", alias=WOW_ALIASES)
+    async def guess_wow(self, event: AstrMessageEvent):
+        """开一道猜魔兽（魔兽世界的游戏截图，猜是哪张地图）"""
+        async for r in self._start(event, "wow"):
+            yield r
+
     @filter.command("猜群友")
     async def guess_member(self, event: AstrMessageEvent):
         """开一道猜群友（看头像的一小块）"""
@@ -251,6 +260,11 @@ class GuessPlugin(Star):
     async def vtuber_board(self, event: AstrMessageEvent):
         """猜Vtuber答对次数排行"""
         yield self._board(event, "vtuber")
+
+    @filter.command("魔兽排行榜")
+    async def wow_board(self, event: AstrMessageEvent):
+        """猜魔兽答对次数排行"""
+        yield self._board(event, "wow")
 
     @filter.command("群友排行榜")
     async def member_board(self, event: AstrMessageEvent):
@@ -635,6 +649,9 @@ class GuessPlugin(Star):
             rnd.hints = [["曲目", label], *entry["hints"]]
             rnd.song = " · ".join(x for x in (label, theme["song"], " / ".join(theme["artists"])) if x)
             rnd.reveal = cards.load(await self.bank.image(entry))
+        elif cat == "wow":
+            rnd.image = await self._bright(entry)
+            rnd.order = cards.reveal_order(rnd.image)
         elif entry.get("fit") == "panels":
             rnd.image = cards.load_panels(await self.bank.panels(entry))
         elif entry.get("fit") == "outline":
@@ -645,6 +662,16 @@ class GuessPlugin(Star):
             rnd.image = cards.load(await self.bank.image(entry), contain=entry.get("fit") == "contain")
             rnd.order = cards.reveal_order(rnd.image)
         rnd.entry = entry
+
+    async def _bright(self, entry: dict, tries: int = 4) -> object:
+        """猜魔兽的题图：随机试几张，太暗的（洞里的截图几乎全黑）换下一张，都暗就用最亮的。"""
+        tried = []
+        for url in random.sample(entry["images"], min(tries, len(entry["images"]))):
+            img = cards.load(await self.bank.image(entry, url))
+            if (light := cards.brightness(img)) >= WOW_MIN_LIGHT:
+                return img
+            tried.append((light, img))
+        return max(tried, key=lambda t: t[0])[1]
 
     def _hourly_limit(self, gid: str) -> int:
         """本群每小时能开几道：group_hourly_limits 里写了「群号:题数」的按它，没写的用 hourly_limit。0 不限。"""
