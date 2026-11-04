@@ -1,4 +1,5 @@
-"""猜魔兽地图：魔兽世界的一张地图（野外地区和主城），九宫格揭开一张游戏内截图，猜是哪张地图。
+"""魔兽世界的资料。猜魔兽地图：一张地图（野外地区和主城），九宫格揭开一张游戏内截图，猜是哪张地图；
+盲猜魔兽Boss（core/blind/bossdle.py）的首领资料也从这里拉（fetch_bosses）。
 
 地图的中英文名、大陆、资料片、等级、阵营、子区域来自游戏数据表（wago.tools 导出的 DB2 CSV：UiMap、UiMapAssignment、
 Map、ContentTuning、AreaTable），截图来自 warcraft.wiki.gg（MediaWiki API）「Zone screenshots」分类里的图。
@@ -38,6 +39,10 @@ CITIES = {
     1670: ("Oribos", "中立"), 2112: ("Valdrakken", "中立"), 2339: ("Dornogal", "中立"),
 }
 ALIASES = {"奥格瑞玛": ["奥格"], "暴风城": ["暴风"]}  # 群里常说的简称
+# 盲猜魔兽Boss：冒险指南的资料片归错的副本（JournalInstance ID -> EXPANSIONS 的下标）。奥妮克希亚的巢穴按 2008 年
+# 重做放在巫妖王之怒下，其实是经典旧世的团本
+BOSS_EXPANSION = {"760": 0}
+BOSS_SKIP = {"1301"}  # 不要的副本：20 周年活动的黑石深渊团本，首领和地下城版同名
 FACTIONS = {"2": "联盟", "4": "部落"}  # AreaTable 的 FactionGroupMask，别的算争夺地区
 MIN_SHOTS, MAX_SHOTS = 3, 15
 MIN_WIDTH, MIN_RATIO = 1000, 1.45  # 题图要居中裁成 16:9，太窄的裁掉太多
@@ -75,10 +80,24 @@ async def _table(session: aiohttp.ClientSession, name: str, build: str, locale: 
     return list(csv.DictReader(io.StringIO(text)))
 
 
+async def _build(session: aiohttp.ClientSession) -> str:
+    """正式服当前的版本号，拉 DB2 表要带上。"""
+    return json.loads(await _text(session, f"{WAGO}/api/builds/latest", "wago.tools"))["wow"]["version"]
+
+
+def _up(uimaps: dict, i: str):
+    """UiMap 从自己开始一层层往上的父地图。"""
+    seen = set()
+    while i in uimaps and i not in seen:
+        seen.add(i)
+        yield uimaps[i]
+        i = uimaps[i]["ParentUiMapID"]
+
+
 async def fetch_zones(session: aiohttp.ClientSession) -> list[dict]:
     """能出题的地图：野外地区（UiMap 类型 3、所在的 Map 是野外、有等级设置的），加上 CITIES 里的主城。
     同名的只留资料片最早的（重做过的提瑞斯法林地、奥丹姆……），外域和德拉诺的纳格兰、影月谷是两个地方，各留一个。"""
-    build = json.loads(await _text(session, f"{WAGO}/api/builds/latest", "wago.tools"))["wow"]["version"]
+    build = await _build(session)
     names = {loc: {r["ID"]: r["Name_lang"] for r in await _table(session, "UiMap", build, loc)} for loc in ("zhCN", "zhTW")}
     uimaps = {r["ID"]: r for r in await _table(session, "UiMap", build)}
     maps = {r["ID"]: r for r in await _table(session, "Map", build)}
@@ -137,6 +156,71 @@ async def fetch_zones(session: aiohttp.ClientSession) -> list[dict]:
             "expansion": exp, "continent": continent(i), "level": level,
             "faction": faction, "subzones": subs[:6],
         })
+    return out
+
+
+async def fetch_bosses(session: aiohttp.ClientSession) -> list[dict]:
+    """冒险指南里的首领（JournalEncounter），带所在副本、类型、资料片、在副本里排第几个、副本入口所在的地区和大陆、
+    冒险指南里列的技能名。死亡矿井、影牙城堡新旧两版的首领都挂在一个副本下，按显示条件（MapDisplayConditionID）
+    分开排第几个；同一个副本里重名的（普通、英雄各一条）只留一个。不在任何资料片下的（活动、史诗钥石合集）和
+    BOSS_SKIP 里的不要。"""
+    build = await _build(session)
+    rows = await _table(session, "JournalEncounter", build, "zhCN")
+    en = {r["ID"]: r["Name_lang"] for r in await _table(session, "JournalEncounter", build)}
+    tw = {r["ID"]: r["Name_lang"] for r in await _table(session, "JournalEncounter", build, "zhTW")}
+    insts = {r["ID"]: r for r in await _table(session, "JournalInstance", build, "zhCN")}
+    tiers = {r["ID"]: r["Name_lang"] for r in await _table(session, "JournalTier", build, "zhCN")}
+    exps: dict[str, list[int]] = defaultdict(list)
+    for r in await _table(session, "JournalTierXInstance", build):
+        if (t := tiers.get(r["JournalTierID"])) in EXPANSIONS:
+            exps[r["JournalInstanceID"]].append(EXPANSIONS.index(t))
+    kinds = {r["ID"]: r["InstanceType"] for r in await _table(session, "Map", build)}
+    uimaps = {r["ID"]: r for r in await _table(session, "UiMap", build, "zhCN")}
+    assigned: dict[str, set] = defaultdict(set)
+    for r in await _table(session, "UiMapAssignment", build):
+        assigned[r["UiMapID"]].add(r["MapID"])
+    skills: dict[str, list[str]] = defaultdict(list)
+    for r in await _table(session, "JournalEncounterSection", build, "zhCN"):
+        # 老副本的技能条目没有名字，只写「第6部分」
+        if r["Type"] == "2" and r["Title_lang"] and not re.search(r"第\d+部分", r["Title_lang"]):
+            skills[r["JournalEncounterID"]].append(r["Title_lang"])
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for r in rows:
+        iid = r["JournalInstanceID"]
+        if iid in insts and exps[iid] and iid not in BOSS_SKIP:
+            # 新旧两版挂在两个资料片下（死亡矿井、影牙城堡）；别的副本显示条件不同的（奥杜尔的奥尔加隆）还是一起排
+            groups[iid, r["MapDisplayConditionID"] if len(set(exps[iid])) > 1 else ""].append(r)
+    out, seen = [], set()
+    for (iid, _), members in sorted(groups.items(), key=lambda kv: (min(exps[kv[0][0]]), int(kv[0][0]), kv[0][1])):
+        inst = insts[iid]
+        order = []
+        for r in sorted(members, key=lambda r: (int(r["OrderIndex"]), int(r["ID"]))):
+            if (iid, r["Name_lang"]) not in seen:
+                seen.add((iid, r["Name_lang"]))
+                order.append(r)
+        if not order:
+            continue
+        ui = next((r["UiMapID"] for r in order if r["UiMapID"] in uimaps), "")
+        # 野外首领（「潘达利亚」「艾泽拉斯」这种按大陆归的）：所在的地图不属于冒险指南给的副本地图
+        world = int(inst["Flags"]) & 2 and not any(inst["MapID"] in assigned[r["UiMapID"]] for r in order)
+        kind = "野外" if world else {"1": "地下城", "2": "团本"}.get(kinds.get(inst["MapID"], ""), "")
+        if not kind:
+            continue
+        top = max(int(r["OrderIndex"]) for r in order)
+        tops = [r for r in order if int(r["OrderIndex"]) == top]
+        for n, r in enumerate(order, 1):
+            here = list(_up(uimaps, r["UiMapID"] if r["UiMapID"] in uimaps else ui))
+            out.append({
+                "id": r["ID"], "zh": r["Name_lang"], "en": en.get(r["ID"], ""), "tw": tw.get(r["ID"], ""),
+                "instance": inst["Name_lang"], "instance_id": iid, "kind": kind,
+                "expansion": BOSS_EXPANSION.get(iid, min(exps[iid])),
+                # 副本入口所在的地区：往上第一个野外地区，副本自己的地图有的也算类型 3（暴富矿区！！），跳过
+                "zone": next((u["Name_lang"] for u in here if u["Type"] == "3" and inst["MapID"] not in assigned[u["ID"]]),
+                             ""),
+                "continent": next((u["Name_lang"] for u in here if u["Type"] == "2"), ""),
+                "order": 0 if world else n, "count": len(order), "last": len(tops) == 1 and tops[0] is r,
+                "skills": dedupe(skills.get(r["ID"], [])), "mates": [m["Name_lang"] for m in order if m is not r],
+            })
     return out
 
 

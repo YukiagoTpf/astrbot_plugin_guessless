@@ -32,7 +32,7 @@ core/
   sake_data.py        手写的盲猜日本酒资料：銘柄的简称、さけのわ风味标签的中文
   mecha_data.py       手写的 Gundam Wiki 资料中译（世界观、阵营、机型、机械设计）和机体外号
   vtuber_data.py      手写的猜Vtuber不出题名单（品牌号、搬运号、成人向、有争议的）
-  wow.py              猜魔兽地图：地图资料（wago.tools 的 DB2 CSV）、截图（warcraft.wiki.gg）、条目
+  wow.py              魔兽世界：猜魔兽地图的地图资料（wago.tools 的 DB2 CSV）、截图（warcraft.wiki.gg）、条目；盲猜魔兽Boss的首领资料
   kline.py            猜K线：股票池（东方财富沪深300）、出题时拉一段日 K 并按新浪的因子复权、揭晓的统计、认群友说的涨跌幅
   lines.py            所有发到群里的文案
 docs/                 用户文档
@@ -86,6 +86,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 盲猜日本地点的选题、条目格式、提示规则（`LANDMARK_CLASS` / `LANDMARK_BLOCK`） | `blind/jpgeodle.py` 的 `VERSION` |
   | 盲猜中国地点的选题、条目格式、提示规则（`CN_SIGHT_BLOCK`、`geo.CN_PROVINCES`）、`cn_data.py` | `blind/cngeodle.py` 的 `VERSION` |
   | 盲猜日本酒的选题（`AREA_TOP`、`NO_ANSWER`）、条目格式、提示规则、`sake_data.py` | `blind/sakedle.py` 的 `VERSION` |
+  | 盲猜魔兽Boss的选题（`NOT_ONE`、`MAIN_UNTIL`）、条目格式、提示、叫法规则 | `blind/bossdle.py` 的 `VERSION` |
   | 听歌猜番的选曲规则（`sources.anime_themes`） | `bank.ANISONG_VERSION` |
   | 街景取景规则（全景缓存作废重找） | `geo.SAMPLING` |
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |
@@ -136,7 +137,7 @@ AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blin
 - AniList 约每分钟 30 次，用别名把多个查询合成一次请求。
 - Wikidata SPARQL：用 `VALUES` 批量查；查询太重会 504，拆小或换查法。在查询里用 `COALESCE` 挑中文标签、顺着 `P131+` 往上找都会超时，标签取回来在 Python 里挑，日本市町村的所属县看团体代码（P429），中国地级行政区的所属省份看行政区划代码（P442）。
 - 中文维基浏览量：Wikimedia REST 的逐条接口并发几个就 429（让等 100 秒），只能挨个查；量大的用 MediaWiki API 的 `prop=pageviews`（一次 50 条，最近 60 天）。UA 要带联系方式（`sources.WIKI_UA`）。
-- warcraft.wiki.gg（猜魔兽地图）：`api.php` 要用机器人式的 UA（`sources.WIKI_UA`），浏览器 UA 会被 Cloudflare 拦成 403；一秒一个请求。wago.tools 的 DB2 CSV 要带正式服的 `build`（`/api/builds/latest` 的 `wow.version`），不带给的是测试服。
+- warcraft.wiki.gg（猜魔兽地图）、wago.tools（猜魔兽地图、盲猜魔兽Boss）：`api.php` 要用机器人式的 UA（`sources.WIKI_UA`），浏览器 UA 会被 Cloudflare 拦成 403；一秒一个请求。wago.tools 的 DB2 CSV 要带正式服的 `build`（`/api/builds/latest` 的 `wow.version`），不带给的是测试服。
 - 东方财富行情（猜K线）：板块成分股 `clist` 一页最多 100 只；日 K 每行是「日期,开,收,高,低,量」，收盘在第二个。它和腾讯的前复权是把分红直接减掉，老价格会成负数，只拉不复权的（`fqt=0`），按新浪 `qfq.js` 的因子等比调整。返回的 Content-Type 不是 JSON，用 `json.loads(await r.text())`。
 - Metacritic 评分榜是网页前端的非官方接口，目前不用 key；以后要是又要 key 了，从配置读，不要写死在代码里。
 
