@@ -1,4 +1,4 @@
-"""猜魔兽：魔兽世界的一张地图（野外地区和主城），九宫格揭开一张游戏内截图，猜是哪张地图。
+"""猜魔兽地图：魔兽世界的一张地图（野外地区和主城），九宫格揭开一张游戏内截图，猜是哪张地图。
 
 地图的中英文名、大陆、资料片、等级、阵营、子区域来自游戏数据表（wago.tools 导出的 DB2 CSV：UiMap、UiMapAssignment、
 Map、ContentTuning、AreaTable），截图来自 warcraft.wiki.gg（MediaWiki API）「Zone screenshots」分类里的图。

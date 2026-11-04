@@ -60,7 +60,7 @@ def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
 
 
 def brightness(img: Image.Image) -> float:
-    """平均亮度 0–255：猜魔兽有的截图是洞里，几乎全黑。"""
+    """平均亮度 0–255：猜魔兽地图有的截图是洞里，几乎全黑。"""
     return ImageStat.Stat(img.convert("L").resize((64, 36))).mean[0]
 
 
