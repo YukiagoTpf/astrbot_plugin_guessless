@@ -32,6 +32,7 @@ core/
   sake_data.py        手写的盲猜日本酒资料：銘柄的简称、さけのわ风味标签的中文
   mecha_data.py       手写的 Gundam Wiki 资料中译（世界观、阵营、机型、机械设计）和机体外号
   vtuber_data.py      手写的猜Vtuber不出题名单（品牌号、搬运号、成人向、有争议的）
+  teacher.py          猜老师：名单（Wikidata、日文维基的信息框）、FANZA 头像的地址、条目
   wow.py              魔兽世界：猜魔兽地图的地图资料（wago.tools 的 DB2 CSV）、截图（warcraft.wiki.gg）、条目；盲猜魔兽Boss的首领资料
   kline.py            猜K线：股票池（沪深300、日经225、标普500、纳指100）、出题时拉一段日 K 并复权（A 股按新浪的因子，日股美股用
                       Yahoo 的 adjclose）、揭晓的统计、认群友说的涨跌幅
@@ -82,6 +83,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 萝卜的选题、条目格式、`mecha_data.py` | `entries.MECHA_VERSION` |
   | Vtuber 的选题、条目格式、`vtuber_data.py` | `entries.VTUBER_VERSION` |
   | 猜K线的选股（`kline.BLOCK_*`、`NUCLEAR`、`JP_BLOCK_*`、`US_BLOCK_*`）、条目格式 | `kline.VERSION` |
+  | 猜老师的选人（`MIN_DEBUT_*`、`NO_IMAGE`）、资料、提示、叫法、拼头像地址的规则 | `teacher.VERSION` |
   | 猜魔兽地图的选地图（`CITIES`）、挑图规则（`BAD_NAME` / `BAD_CAT`、尺寸）、提示 | `wow.VERSION` |
   | 盲猜地点的条目格式、选题分档、地区划分（`geo.REGIONS`） | `blind/geodle.py` 的 `VERSION` |
   | 盲猜日本地点的选题、条目格式、提示规则（`LANDMARK_CLASS` / `LANDMARK_BLOCK`） | `blind/jpgeodle.py` 的 `VERSION` |
@@ -119,7 +121,8 @@ AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blin
 ## 红线
 
 - 仓库里不能有密钥、QQ 号、群号、本机路径等个人信息。key 一律从插件配置读。
-- 题目、提示、文案不涉政、不涉黄、不擦边：不放政治人物、议会和政府机关、战争、核相关的内容。
+- 题目、提示、文案不涉政：不放政治人物、议会和政府机关、战争、核相关的内容。不放露骨的色情：裸露、性行为的图和文字都不行（猜老师只用只拍脸的官方头像，三围、作品内容不写）。
+- 猜老师只出确定成年后出道的（`teacher.MIN_DEBUT_AGE`，出道那年减出生那年满 19）和 2000 年以后出道的（`MIN_DEBUT_YEAR`，之前的头像是写真扫描，有露出的）；头像不合适的加进 `NO_IMAGE`，只能加不能删。
 - 不要改动这些处理方式：`geo.EXCLUDE` 里的地区不出题；国界只用 Natural Earth 的 CHN 视角数据；邻国底图按 `FCLASS_CN` 合并（`geo.MERGED_FCLASS`）、`geo.SKIP_FEATURES` 不画。
 - 提示里不能出现答案的国名、县名、首都名，也不能用「法式」「日元」这种拿国名首字的说法。
 - 听歌猜番不用 AnimeThemes 标了 NSFW 的版本；音频只在出题时现下，不存盘。

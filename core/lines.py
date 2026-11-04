@@ -20,6 +20,7 @@ LINES = {
     "card_note_mechadle": ["说机体名，{tries} · 「提示」加线索"],
     "card_note_vtuber": ["说名字，{tries} · 「提示」开一格"],
     "card_note_wow": ["说地图名，{tries} · 「提示」开一格"],
+    "card_note_teacher": ["说名字，{tries} · 「提示」看清一点"],
     "card_note_member": ["名片或 @TA，{tries} ·「提示」放大"],
     "card_note_kline": ["凑满人数就揭晓，每人只认第一句"],
     "tries": ["每人 {limit} 次"],
@@ -61,6 +62,7 @@ LINES = {
         "整段前奏都给你了，剩下的靠耳朵——如果有的话。剩 {left} 秒",
     ],
     "hint_exhausted_blind": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
+    "hint_exhausted_teacher": ["马赛克已经最细了，再细就违规了。剩 {left} 秒"],
     "hint_exhausted_member": [
         "头像都露出一大块了还认不出？平时水群光看字不看人。剩 {left} 秒",
         "没有更大的格子了，剩下的靠你们对群友的了解——如果有的话。剩 {left} 秒",
@@ -127,6 +129,10 @@ LINES = {
         "时间到，全群没一个认出来的。各位的 DD 含量有待提高",
         "两分钟，零人答对。建议去直播间多挂几小时再来",
         "时间到。看来本群和这位的粉丝圈没有交集",
+    ],
+    "timeout_teacher": [
+        "时间到，没人认出来。看来本群都是正经人",
+        "两分钟，零人答对。老师们白教了",
     ],
     "timeout_member": [
         "时间到，没人认出来。天天在群里聊，原来谁都不认识谁",
@@ -238,6 +244,7 @@ LINES = {
     "board_empty_mechadle": ["还没人盲猜中过萝卜，全员靠看图"],
     "board_empty_vtuber": ["还没人猜对过 Vtuber，全员单推不看别家"],
     "board_empty_wow": ["还没人猜对过魔兽地图，全员没出过新手村"],
+    "board_empty_teacher": ["还没人猜对过老师，全员没上过课"],
     "board_empty_member": ["还没人猜中过群友，大家果然只是网友"],
     "board_empty_geo": ["还没人猜对过地点，全员宅家，可喜可贺"],
     "board_empty_geodle": ["还没人盲猜中过国家，全员靠街景"],

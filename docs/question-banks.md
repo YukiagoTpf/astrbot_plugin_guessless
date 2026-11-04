@@ -67,6 +67,15 @@
 - 截图来自 [warcraft.wiki.gg](https://warcraft.wiki.gg)（MediaWiki API，UA 要是机器人式的，浏览器 UA 会被 Cloudflare 拦）：地图页里的图，加上「Category:<地图> subzones」里子区域页的首图和直接放在分类里的图。只要「Zone screenshots」分类里、宽 1000 以上、宽高比 1.45 以上的，文件名或分类像地图、图标、加载画面、原画、NPC、过场动画、炉石的不要（`BAD_NAME`、`BAD_CAT`）。存 1280 宽的缩略图地址，每张地图最多 15 张（多了均匀挑）。同一张图挂在好几张地图下的（子区域分类有重叠）只给主城，别的谁都不给。不到 3 张的不出题。
 - 地图资料和截图列表各缓存一个月（`wow_zones.json`、`wow_shots.json`）；首次构建要请求 wiki 四五百次，一秒一次，十分钟左右。图出题时才下，下过的缓存在图片目录。
 
+## 猜老师（`core/teacher.py`）
+
+- 名单：Wikidata 上国籍日本、有 FANZA 女优 ID（P9781）、日文或中文维基上有条目的人。职业有的标 AV 女优（Q1079215）有的标色情演员（Q488111），所以不看职业。
+- 资料优先读日文维基的「AV女優」信息框（ふりがな、生年月日、身長、AV出演期間、専属契約），没有再用 Wikidata（P1814 读音、P569 生日、P2048 身高、P2031 / P2032 活动期间）。去世了的（P570）不出。
+- 头像：FANZA 的女优头像在 `pics.dmm.co.jp/mono/actjpgs/<姓>_<名>.jpg`，罗马字是读音按训令式拼的（し→si、ち→ti、つ→tu、ふ→hu、じ→zi，长音照写：おおつき→ootuki）。拼出来的那张不存在会 302 到「now printing」，这样的不出题。查过的记在 `teacher_cache.json`，一个月内不再查；名单和信息框也缓存一个月。
+- 不出：出道那年减出生那年不到 19 的、2000 年以前出道的（`MIN_DEBUT_YEAR`）、头像拉黑的（`NO_IMAGE`）。
+- 人气：日文维基和中文维基最近 60 天的浏览量加起来。
+- 叫法：同名的归浏览量高的（`entries.assign_names`）。
+
 ## Vtuber
 
 - 名单来自 [vtbs.moe](https://vtbs.moe)：它维护的 VTuber Database（各语言的名字、所属团体、各平台账号）加上它抓的 B 站账号数据（粉丝数、大航海人数、头像）。一个人有几个 B 站号的，取粉丝最多的。

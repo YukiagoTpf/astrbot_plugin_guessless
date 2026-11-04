@@ -172,8 +172,8 @@ async def zhwiki_titles(session: aiohttp.ClientSession, prop: str, ids: list[str
     return out
 
 
-async def zhwiki_views(session: aiohttp.ClientSession, titles: list[str]) -> dict[str, int]:
-    """中文维基百科条目最近 60 天的浏览量，拿来当国内的知名度。
+async def zhwiki_views(session: aiohttp.ClientSession, titles: list[str], api: str = ZH_API) -> dict[str, int]:
+    """中文维基百科条目最近 60 天的浏览量，拿来当国内的知名度。api 换成别的语言版本的也行（猜老师查日文维基）。
 
     用 MediaWiki 的 pageviews 属性，一次查 50 条、分几页回，挨个请求不并发。逐条查的 REST 接口
     并发几个就 429、让等 100 秒。没有浏览数据的算 0；哪一批查失败了，那一批不在结果里。
@@ -188,7 +188,7 @@ async def zhwiki_views(session: aiohttp.ClientSession, titles: list[str]) -> dic
                     "action": "query", "prop": "pageviews", "titles": "|".join(batch), "pvipdays": 60,
                     "format": "json", "formatversion": 2, **cont,
                 }
-                async with session.get(ZH_API, params=params, headers={"User-Agent": WIKI_UA}, timeout=timeout) as r:
+                async with session.get(api, params=params, headers={"User-Agent": WIKI_UA}, timeout=timeout) as r:
                     r.raise_for_status()
                     data = await r.json(content_type=None)
                 query = data.get("query") or {}

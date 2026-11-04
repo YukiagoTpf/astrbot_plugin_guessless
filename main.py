@@ -11,7 +11,7 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, StarTools
 
-from .core import audio, cards, commands, geo, kline, members
+from .core import audio, cards, commands, geo, kline, members, teacher
 from .core.answer import candidates, is_correct
 from .core.bank import Bank
 from .core.blind import BLIND
@@ -22,15 +22,15 @@ from .core.store import load_json, save_json
 # 题型 -> 开题指令，也是卡片标题；排行榜指令去掉开头的「猜」。盲猜系列（不给图，每猜一个回一行对比）见 core/blind
 MODES = {
     "game": "猜游戏", "anime": "猜动画", "anisong": "听歌猜番", "pokemon": "猜宝可梦", "mecha": "猜萝卜",
-    "vtuber": "猜Vtuber", "wow": "猜魔兽地图", "member": "猜群友", "geo": "猜地点", "country": "猜国家", "jpgeo": "猜日本地点",
+    "vtuber": "猜Vtuber", "wow": "猜魔兽地图", "member": "猜群友", "teacher": "猜老师", "geo": "猜地点", "country": "猜国家", "jpgeo": "猜日本地点",
     "kline": "猜K线", **{cat: b.command for cat, b in BLIND.items()},
 }
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
 OFFLINE = {"country"}  # 暂时下线的题型：开题和排行榜都只回一句，不出题、不播报
 GRID = {"game", "anime", "pokemon", "mecha", "vtuber", "wow"}  # 九宫格逐格揭开的题型
 # 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对；
-# Vtuber 的名字也常互相包含；魔兽地图也是（东、西瘟疫之地）；群友按 @、QQ 号、名片认人
-BY_KEY = {"mecha", "mechadle", "vtuber", "wow", "member"}
+# Vtuber 的名字也常互相包含；魔兽地图也是（东、西瘟疫之地）；群友按 @、QQ 号、名片认人；老师的名字也常互相包含
+BY_KEY = {"mecha", "mechadle", "vtuber", "wow", "member", "teacher"}
 GEO_ALIASES = {"猜街景"}
 JPGEO_ALIASES = {"猜日本街景"}
 VTUBER_ALIASES = {"猜vtuber", "猜VTuber", "猜V", "猜v"}
@@ -38,11 +38,13 @@ VTUBER_BOARD_ALIASES = {"vtuber排行榜", "VTuber排行榜", "V排行榜"}
 KLINE_ALIASES = {"猜k线"}
 WOW_ALIASES = {"猜魔兽", "猜魔兽世界", "猜wow", "猜WOW", "魔兽图寻"}
 WOW_BOARD_ALIASES = {"魔兽排行榜"}
+TEACHER_ALIASES = {"猜女优", "猜AV女优", "猜av女优", "猜AV", "猜av"}
 KLINE_BOARD_ALIASES = {"k线排行榜"}
 ALL_BOARDS_ALIASES = {"战斗力榜", "总排行榜"}  # 管理员提前发整点排行榜，指令本身是「排行榜」
 COMMANDS = (
     set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始", "排行榜", "宵禁", "取消宵禁", "恢复宵禁"} | GEO_ALIASES | JPGEO_ALIASES
-    | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | KLINE_ALIASES | KLINE_BOARD_ALIASES | WOW_ALIASES | WOW_BOARD_ALIASES | ALL_BOARDS_ALIASES
+    | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | KLINE_ALIASES | KLINE_BOARD_ALIASES | WOW_ALIASES | WOW_BOARD_ALIASES | TEACHER_ALIASES
+    | ALL_BOARDS_ALIASES
     | {a for b in BLIND.values() for a in b.aliases}
 )
 # AstrBot 的指令只认原样的写法，@bot 说「猜 k 线」「盲猜 日本地点」这种带空格、大小写不对的，先按这张表认，
@@ -55,7 +57,7 @@ LOOSE = {
     **{squash(m): ("start", cat) for cat, m in MODES.items()},
     **{squash(a): ("start", cat) for cat, names in (
         ("geo", GEO_ALIASES), ("jpgeo", JPGEO_ALIASES), ("vtuber", VTUBER_ALIASES), ("kline", KLINE_ALIASES),
-        ("wow", WOW_ALIASES),
+        ("wow", WOW_ALIASES), ("teacher", TEACHER_ALIASES),
         *((cat, b.aliases) for cat, b in BLIND.items()),
     ) for a in names},
     "排行榜": ("boards", ""), **{squash(a): ("boards", "") for a in ALL_BOARDS_ALIASES},
@@ -209,6 +211,12 @@ class GuessPlugin(Star):
         async for r in self._start(event, "member"):
             yield r
 
+    @filter.command("猜老师", alias=TEACHER_ALIASES)
+    async def guess_teacher(self, event: AstrMessageEvent):
+        """开一道猜老师（日本 AV 女优的官方头像打马赛克）"""
+        async for r in self._start(event, "teacher"):
+            yield r
+
     @filter.command("猜地点", alias=GEO_ALIASES)
     async def guess_geo(self, event: AstrMessageEvent):
         """开一道猜地点（Google 街景，猜国家）"""
@@ -272,6 +280,11 @@ class GuessPlugin(Star):
     async def member_board(self, event: AstrMessageEvent):
         """猜群友答对次数排行"""
         yield self._board(event, "member")
+
+    @filter.command("老师排行榜")
+    async def teacher_board(self, event: AstrMessageEvent):
+        """猜老师答对次数排行"""
+        yield self._board(event, "teacher")
 
     @filter.command("地点排行榜")
     async def geo_board(self, event: AstrMessageEvent):
@@ -651,6 +664,10 @@ class GuessPlugin(Star):
             rnd.hints = [["曲目", label], *entry["hints"]]
             rnd.song = " · ".join(x for x in (label, theme["song"], " / ".join(theme["artists"])) if x)
             rnd.reveal = cards.load(await self.bank.image(entry))
+        elif cat == "teacher":
+            # 头像整道题不变，每段按 teacher.STAGES 打不同粗细的马赛克（_question），答案卡不打码
+            rnd.avatar = cards.square(await self.bank.image(entry))
+            rnd.reveal = cards.pixelate(rnd.avatar)
         elif cat == "wow":
             rnd.image = await self._bright(entry)
             rnd.order = cards.reveal_order(rnd.image)
@@ -788,6 +805,8 @@ class GuessPlugin(Star):
             return 9
         if rnd.category == "member":
             return len(members.STAGES)
+        if rnd.category == "teacher":
+            return len(teacher.STAGES)
         if rnd.category == "anisong":
             return len(audio.CLIPS)
         return len(rnd.hints)
@@ -818,6 +837,8 @@ class GuessPlugin(Star):
         if rnd.category == "member":
             image = cards.mosaic(rnd.avatar, *rnd.plan[rnd.shown - 1])
             status = f"露出 {members.LABELS[rnd.shown - 1]} · 剩 {rnd.left()} 秒"
+        if rnd.category == "teacher":
+            image = cards.pixelate(rnd.avatar, teacher.STAGES[rnd.shown - 1])
         if rnd.category == "anisong":
             sec = audio.CLIPS[rnd.shown - 1]
             image = cards.music(audio.CLIPS, rnd.shown, say("song_step", n=rnd.shown, sec=sec))
@@ -878,7 +899,7 @@ class GuessPlugin(Star):
         live = [cat for cat in MODES if cat not in OFFLINE]
         text = say(
             "help",
-            grid=" ".join(MODES[c] for c in live if c in GRID or c == "member"),
+            grid=" ".join(MODES[c] for c in live if c in GRID or c in ("member", "teacher")),
             street=" ".join(MODES[c] for c in live if c in ("geo", "jpgeo")),
             other=" ".join(MODES[c] for c in live if c in ("anisong", "kline")),
             blind=" ".join(MODES[c] for c in live if c in BLIND),
@@ -931,7 +952,7 @@ class GuessPlugin(Star):
         n, steps = rnd.shown, self._steps(rnd)
         edge = max(1, round(steps * 2 / 9))  # 九宫格是 ≤ 2 格算快、≥ 7 格算慢，其他按比例
         tier = "correct_fast" if n <= edge else "correct_slow" if n > steps - edge else "correct"
-        unit = {"anisong": "段", "member": "段提示"}.get(rnd.category, "格" if rnd.category in GRID else "条线索")
+        unit = {"anisong": "段", "member": "段提示", "teacher": "段马赛克"}.get(rnd.category, "格" if rnd.category in GRID else "条线索")
         return tier, f"{n} {unit}"
 
     def _finish(self, gid: str, rnd: Round, uid: str | None = None, name: str = "") -> list | None:

@@ -111,6 +111,27 @@ def mosaic(img: Image.Image, grid: int | None = None, cells: list[int] = ()) -> 
     return out
 
 
+def square(data: bytes) -> Image.Image:
+    """猜老师的头像：居中裁成正方形。"""
+    img = Image.open(io.BytesIO(data)).convert("RGB")
+    side = min(img.size)
+    x, y = (img.width - side) // 2, (img.height - side) // 2
+    return img.crop((x, y, x + side, y + side))
+
+
+def pixelate(img: Image.Image, blocks: int | None = None) -> Image.Image:
+    """猜老师：正方形头像放在图区正中，切成 blocks×blocks 块马赛克（每块取平均色）。blocks 为 None 是答案卡，不打码。"""
+    out = Image.new("RGB", (SIZE, PIC_H), BG)
+    face = img.convert("RGB")
+    if blocks:
+        face = face.resize((blocks, blocks), Image.Resampling.BOX).resize((PIC_H, PIC_H), Image.Resampling.NEAREST)
+    else:
+        face = face.resize((PIC_H, PIC_H), Image.Resampling.LANCZOS)
+    out.paste(face, ((SIZE - PIC_H) // 2, 0))
+    out.info["grid"] = None
+    return out
+
+
 def leaderboard(title: str, sections: list) -> str:
     """整点播报的排行榜，返回 base64 JPEG。sections 是 [(题型名, [(名次, 名字, 答对次数, 这段时间新增), ...]), ...]，
     两列排，新增的次数用黄字标在后面。"""
