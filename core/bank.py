@@ -3,7 +3,7 @@
 动画取 Bangumi 最热门的作品，游戏从 Metacritic 高分游戏里按热度和评分分大众 / 小众两档，宝可梦取 PokeAPI 全图鉴，
 地点和日本地点是 Google 街景随机取景，国家是 Natural Earth 轮廓。找不到图的作品不进题库。
 听歌猜番是猜动画题库里在 AnimeThemes 有 OP / ED 的作品；猜萝卜是 Bangumi 上高达系列动画和超级机器人大战里的机体；
-猜Vtuber是 vtbs.moe 名单里 B 站粉丝最多的国内和国外虚拟主播；猜K线的题库只是沪深300 成分股，K 线出题时现拉（kline.py）。
+猜Vtuber是 vtbs.moe 名单里 B 站粉丝最多的国内和国外虚拟主播；猜K线的题库只是沪深300、日经225、标普500、纳指100 的成分股，K 线出题时现拉（kline.py）。
 盲猜系列各题型的规则和题库构建在 blind/ 下，各一个模块，这里按 blind.BLIND 接上构建和刷新。
 题库、各数据源的查询结果和图片都缓存在插件数据目录，出题时只有首次用到的图片和街景需要联网。
 """
@@ -137,7 +137,8 @@ class Bank:
     def pick(self, cat: str, exclude) -> dict:
         """按 niche_ratio 的概率出小众题（默认大约五题一道），其余出大众题；没分档的题都算大众题。"""
         tier = "niche" if random.random() < self.config.get("niche_ratio", 0.2) else "main"
-        pool = [e for e in self.entries[cat] if e.get("tier", "main") == tier] or self.entries[cat]
+        entries = kline.pick(self.entries[cat]) if cat == "kline" else self.entries[cat]
+        pool = [e for e in entries if e.get("tier", "main") == tier] or entries
         return random.choice([e for e in pool if e.get("group", e["id"]) not in exclude] or pool)
 
     def match(self, cat: str, text: str, prefer: str = "") -> tuple[str | None, dict | None]:

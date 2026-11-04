@@ -33,7 +33,8 @@ core/
   mecha_data.py       手写的 Gundam Wiki 资料中译（世界观、阵营、机型、机械设计）和机体外号
   vtuber_data.py      手写的猜Vtuber不出题名单（品牌号、搬运号、成人向、有争议的）
   wow.py              魔兽世界：猜魔兽地图的地图资料（wago.tools 的 DB2 CSV）、截图（warcraft.wiki.gg）、条目；盲猜魔兽Boss的首领资料
-  kline.py            猜K线：股票池（东方财富沪深300）、出题时拉一段日 K 并按新浪的因子复权、揭晓的统计、认群友说的涨跌幅
+  kline.py            猜K线：股票池（沪深300、日经225、标普500、纳指100）、出题时拉一段日 K 并复权（A 股按新浪的因子，日股美股用
+                      Yahoo 的 adjclose）、揭晓的统计、认群友说的涨跌幅
   lines.py            所有发到群里的文案
 docs/                 用户文档
 ```
@@ -80,7 +81,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 宝可梦条目格式（盲猜宝可梦的 `attrs`） | `entries.POKEMON_VERSION` |
   | 萝卜的选题、条目格式、`mecha_data.py` | `entries.MECHA_VERSION` |
   | Vtuber 的选题、条目格式、`vtuber_data.py` | `entries.VTUBER_VERSION` |
-  | 猜K线的选股（`kline.BLOCK_*`、`NUCLEAR`）、条目格式 | `kline.VERSION` |
+  | 猜K线的选股（`kline.BLOCK_*`、`NUCLEAR`、`JP_BLOCK_*`、`US_BLOCK_*`）、条目格式 | `kline.VERSION` |
   | 猜魔兽地图的选地图（`CITIES`）、挑图规则（`BAD_NAME` / `BAD_CAT`、尺寸）、提示 | `wow.VERSION` |
   | 盲猜地点的条目格式、选题分档、地区划分（`geo.REGIONS`） | `blind/geodle.py` 的 `VERSION` |
   | 盲猜日本地点的选题、条目格式、提示规则（`LANDMARK_CLASS` / `LANDMARK_BLOCK`） | `blind/jpgeodle.py` 的 `VERSION` |
@@ -127,7 +128,7 @@ AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blin
 - 盲猜中国地点不出、不认三沙市（`geo.CN_EXCLUDE`），港澳台不在里面；名胜过滤（`blind/cngeodle.py` 的 `CN_SIGHT_BLOCK`：红色景点、陵墓、领导人、战争……）只能加不能删。
 - 盲猜日本地点不出、不认北方四岛上的村（`geo.disputed`），不出因核事故、核设施、美军基地出名的町村（`blind/jpgeodle.py` 的 `NO_ANSWER`，只能加不能删）；名胜过滤（`blind/jpgeodle.py` 的 `LANDMARK_BLOCK`：和平公园、原爆、靖国和护国神社、端岛、硫磺岛、领土争议的岛、皇室、陵墓、事件……）只能加不能删。
 - 盲猜日本酒不出名字带「皇国」「尊皇」「旭日」「戦勝」「軍」这些的銘柄（`blind/sakedle.py` 的 `NO_ANSWER`），只能加不能删；用さけのわ的数据要注明出处（卡片角注、答案卡的「数据」），不能去掉。
-- 猜K线不出军工、核相关的股票（`kline.BLOCK_INDUSTRIES`、`NUCLEAR`、`BLOCK_NAME`），只能加不能删。
+- 猜K线不出军工、核相关的股票（`kline.BLOCK_INDUSTRIES`、`NUCLEAR`、`BLOCK_NAME`，日股的 `JP_BLOCK_SECTORS`、`JP_BLOCK_NAME`，美股的 `US_BLOCK_INDUSTRY`、`US_BLOCK_NAME`），只能加不能删。
 - 猜国家暂时下线（`main.OFFLINE`）：开题和排行榜都只回「好危险，不踩啦」，也不进整点播报。
 
 ## 外部接口
@@ -139,6 +140,7 @@ AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blin
 - 中文维基浏览量：Wikimedia REST 的逐条接口并发几个就 429（让等 100 秒），只能挨个查；量大的用 MediaWiki API 的 `prop=pageviews`（一次 50 条，最近 60 天）。UA 要带联系方式（`sources.WIKI_UA`）。
 - warcraft.wiki.gg（猜魔兽地图）、wago.tools（猜魔兽地图、盲猜魔兽Boss）：`api.php` 要用机器人式的 UA（`sources.WIKI_UA`），浏览器 UA 会被 Cloudflare 拦成 403；一秒一个请求。wago.tools 的 DB2 CSV 要带正式服的 `build`（`/api/builds/latest` 的 `wow.version`），不带给的是测试服。
 - 东方财富行情（猜K线）：板块成分股 `clist` 一页最多 100 只；日 K 每行是「日期,开,收,高,低,量」，收盘在第二个。它和腾讯的前复权是把分红直接减掉，老价格会成负数，只拉不复权的（`fqt=0`），按新浪 `qfq.js` 的因子等比调整。返回的 Content-Type 不是 JSON，用 `json.loads(await r.text())`。
+- Yahoo Finance（猜K线的日股、美股）：UA 带 Chrome 字样会被限流成 429，用 `kline.YAHOO_UA`（光一个 `Mozilla/5.0`）；日经官网反过来要浏览器 UA，维基要 `sources.WIKI_UA`。
 - Metacritic 评分榜是网页前端的非官方接口，目前不用 key；以后要是又要 key 了，从配置读，不要写死在代码里。
 
 ## Git

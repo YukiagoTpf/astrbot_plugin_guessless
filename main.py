@@ -229,7 +229,7 @@ class GuessPlugin(Star):
 
     @filter.command("猜K线", alias=KLINE_ALIASES)
     async def guess_kline(self, event: AstrMessageEvent):
-        """开一道猜K线（沪深300 的一段日 K，猜之后 20 个交易日涨跌几个点）"""
+        """开一道猜K线（A 股、日股、美股的一段日 K，猜之后 20 个交易日涨跌几个点）"""
         async for r in self._start(event, "kline"):
             yield r
 
@@ -640,7 +640,7 @@ class GuessPlugin(Star):
             bars = await kline.load(self.bank.http(), entry, self.bank.dir)
             rnd.image = cards.kline(bars, kline.WARM, kline.SHOWN, reveal=False)
             rnd.reveal = cards.kline(bars, kline.WARM, kline.SHOWN, reveal=True)
-            rnd.hints = kline.question_hints()
+            rnd.hints = kline.question_hints(entry)
             rnd.shown = len(rnd.hints)
             entry = {**entry, **kline.outcome(entry, bars)}
         elif cat == "anisong":

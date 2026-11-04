@@ -1,11 +1,17 @@
-"""猜K线：随机挑一只沪深300 成分股的一段日 K，藏起名字和日期给大家看 SHOWN 根，猜之后 AHEAD 个交易日涨跌了几个点。
+"""猜K线：随机挑一只股票的一段日 K，藏起名字和日期给大家看 SHOWN 根，猜之后 AHEAD 个交易日涨跌了几个点。
+股票池是 A 股的沪深300、日股的日经225、美股的标普500 和纳指100，出题先随机挑市场（三个一样多），再挑股票。
 
-股票池和 K 线用东方财富的行情接口，复权因子用新浪的，都免 key。题库只存股票池，K 线出题时现拉（一只股票的全部历史，
-几百 KB），交易日历（上证指数有行情的日子）建题库时存一份，用来挑出中间没停牌的一段。
-东财和腾讯的前复权是把分红直接减掉，老价格会变成负数，算涨跌幅不准，所以拉不复权的价格，自己按新浪的因子等比调整。
+A 股的股票池和 K 线用东方财富的行情接口，复权因子用新浪的，都免 key。东财和腾讯的前复权是把分红直接减掉，老价格会变成
+负数，算涨跌幅不准，所以拉不复权的价格，自己按新浪的因子等比调整。
+日股、美股的 K 线用 Yahoo Finance 的 chart 接口：收盘价按拆股调整过，adjclose 再按分红调整，开高低收都乘
+adjclose / close，也是等比的。成分股：日经225 看日经官网的名单，标普500 看英文维基的列表，纳指100 看纳斯达克官网；
+美股的中文名、行业用东财的。
+题库只存股票池，K 线出题时现拉（一只股票的全部历史，几百 KB），交易日历（上证指数、日经225、标普500 指数有行情的日子）
+建题库时存一份，用来挑出中间没停牌的一段。
 """
 
 import asyncio
+import html
 import json
 import random
 import re
@@ -16,10 +22,10 @@ from pathlib import Path
 import aiohttp
 
 from .commands import cn_number
-from .sources import WEB_UA, HttpError
+from .sources import WEB_UA, WIKI_UA, HttpError
 from .store import load_json, save_json
 
-VERSION = "hs300-v1"  # 选股规则、条目格式改了就换个名字，题库重建
+VERSION = "markets-v1"  # 选股规则、条目格式改了就换个名字，题库重建
 WARM, SHOWN, AHEAD = 19, 60, 20  # 前 19 根只用来算 20 日均线，给看 60 根，猜之后 20 根
 MIN_AGE = 250  # 上市满一年（约 250 个交易日）以后的才出，避开新股头几天的大涨大跌
 START = "2010-01-01"  # 只出这以后的
@@ -28,12 +34,36 @@ KLINE = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 QFQ = "https://finance.sina.com.cn/realstock/company/{}/qfq.js"
 HS300 = "BK0500"  # 东财的沪深300 板块
 INDEX = "1.000001"  # 上证指数，当交易日历
+YAHOO = "https://query1.finance.yahoo.com/v8/finance/chart/{}"
+YAHOO_UA = "Mozilla/5.0"  # 带 Chrome 字样的浏览器 UA 会被 Yahoo 限流成 429
+NIKKEI = "https://indexes.nikkei.co.jp/nkave/index/component?idx=nk225"
+SP500 = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+NDX = "https://api.nasdaq.com/api/quote/list-type/nasdaq100"
+US_NAMES = "m:105,m:106,m:107"  # 东财的美股（纳斯达克、纽交所、美交所），按市值取前 US_TOP 只对中文名
+US_TOP = 3000
+# 市场 -> (叫法, 交易日历用的指数, 日历文件)
+MARKETS = {
+    "cn": ("A股", INDEX, "kline_calendar.json"),
+    "jp": ("日股", "^N225", "kline_calendar_jp.json"),
+    "us": ("美股", "^GSPC", "kline_calendar_us.json"),
+}
 # 不出军工、核相关的（红线）：申万国防军工下面的二级行业（地面兵装、航海装备、航空装备、航天装备、军工电子），
 # 核力发电（三级行业，中国核电、中国广核的二级行业是「电力」，按二级拦不住），概念带「军工」的，
 # 名字带这些字的（中国铀业的行业是「小金属」）
 BLOCK_INDUSTRIES = {"BK1229", "BK1230", "BK1231", "BK1232", "BK1233"}
 NUCLEAR = "BK1376"
 BLOCK_NAME = re.compile(r"核|铀|军|兵|航发|中航|船舶")
+# 日股：日经的「造船」（川崎重工）、「電力」（都有核电站）整类不出，三菱重工、IHI、日本製鋼所、住友重机（造机枪）也不出
+JP_BLOCK_SECTORS = {"造船", "電力"}
+JP_BLOCK_NAME = re.compile(r"三菱重工|川崎重工|IHI|日本製鋼所|住友重機械|防衛|原子|核")
+# 美股：GICS 的 Aerospace & Defense 整类不出（波音、洛马、通用动力……），纳指100 里没有 GICS 的按名字拦；
+# 核电为主的（Constellation Energy、Vistra）、军方合同为主的（Palantir、Leidos）、电击枪（Axon）也不出
+US_BLOCK_INDUSTRY = "Aerospace & Defense"
+US_BLOCK_NAME = re.compile(
+    r"Lockheed|Northrop|General Dynamics|\bRTX\b|Raytheon|L3Harris|Huntington Ingalls|Textron|Leidos|Palantir|Axon|"
+    r"Rocket Lab|SpaceX|Aerospace|Defen[cs]e|Constellation Energy|Vistra|Nuclear|BWX|Oklo|Centrus|Uranium|Cameco|NuScale",
+    re.I,
+)
 # 群友说的涨跌：「涨3」「跌1.5%」「+2」「-0.5个点」「涨三个点」「跌一个半点」「涨三点五」「平」。
 # 不带涨跌也不带单位的光秃秃一个数不算（群里随口说的数字太多）
 GUESS = re.compile(
@@ -46,11 +76,12 @@ NEED_NUMBER = {"涨", "跌", "看涨", "看跌"}  # 只说了方向，提醒一�
 PLUS_ONE = {"+1", "＋1"}  # 群里「+1」是附和，不算猜涨 1%
 
 
-async def _get(session: aiohttp.ClientSession, url: str, source: str, params: dict | None = None) -> str:
+async def _get(session: aiohttp.ClientSession, url: str, source: str, params: dict | None = None,
+               ua: str = WEB_UA) -> str:
     timeout = aiohttp.ClientTimeout(total=30)
     for attempt in range(3):
         try:
-            async with session.get(url, params=params, headers={"User-Agent": WEB_UA}, timeout=timeout) as r:
+            async with session.get(url, params=params, headers={"User-Agent": ua}, timeout=timeout) as r:
                 if r.status >= 400:
                     raise HttpError(source, r.status)
                 return await r.text()
@@ -61,15 +92,16 @@ async def _get(session: aiohttp.ClientSession, url: str, source: str, params: di
     return ""
 
 
-async def _clist(session: aiohttp.ClientSession, board: str, fields: str) -> list[dict]:
-    """东财板块的成分股，一页最多 100 只。"""
+async def _clist(session: aiohttp.ClientSession, board: str, fields: str, fid: str = "f12",
+                limit: int = 0) -> list[dict]:
+    """东财板块的成分股（board 不带「:」就是板块号），一页最多 100 只，按 fid 从大到小，limit 是最多取几只。"""
     rows, page = [], 1
     while True:
-        params = {"pn": page, "pz": 100, "po": 1, "np": 1, "fltt": 2, "invt": 2, "fid": "f12", "fs": f"b:{board}",
-                  "fields": fields}
+        params = {"pn": page, "pz": 100, "po": 1, "np": 1, "fltt": 2, "invt": 2, "fid": fid,
+                  "fs": board if ":" in board else f"b:{board}", "fields": fields}
         data = json.loads(await _get(session, CLIST, "东方财富", params)).get("data") or {}
         rows += data.get("diff") or []
-        if not data.get("diff") or len(rows) >= data.get("total", 0):
+        if not data.get("diff") or len(rows) >= data.get("total", 0) or limit and len(rows) >= limit:
             return rows
         page += 1
 
@@ -101,41 +133,163 @@ def blocked(row: dict, name: str, nuclear: set[str]) -> bool:
             or bool(BLOCK_NAME.search(name)))
 
 
-async def build(bank) -> None:
-    session = bank.http()
-    bank.status["kline"] = "正在拉沪深300 成分股"
+async def _yahoo(session: aiohttp.ClientSession, symbol: str) -> tuple[list[list], str]:
+    """Yahoo 的全部日 K，返回 ([日期, 开, 收, 高, 低, 量, 复权比], 交易所当地的今天)，从旧到新。日期按交易所当地的，
+    没成交的（全是 null）跳过。复权比是 adjclose / close，前复权价 = 价格 × 复权比（最新一根是 1）。"""
+    params = {"period1": 0, "period2": int(time.time()), "interval": "1d", "events": "div,split"}
+    data = json.loads(await _get(session, YAHOO.format(symbol), "Yahoo", params, YAHOO_UA))["chart"]["result"]
+    if not data or not data[0].get("timestamp"):
+        raise RuntimeError(f"Yahoo 没有 {symbol} 的 K 线")
+    meta, stamps, ind = data[0]["meta"], data[0]["timestamp"], data[0]["indicators"]
+    q, adj = ind["quote"][0], (ind.get("adjclose") or [{}])[0].get("adjclose")
+    offset = meta.get("gmtoffset", 0)
+
+    def day(t: int) -> str:
+        return time.strftime("%Y-%m-%d", time.gmtime(t + offset))
+
+    rows = []
+    for i, t in enumerate(stamps):
+        o, c, h, lo = q["open"][i], q["close"][i], q["high"][i], q["low"][i]
+        if None in (o, c, h, lo) or not c:
+            continue
+        rows.append([day(t), o, c, h, lo, q["volume"][i] or 0, (adj[i] or c) / c if adj else 1.0])
+    return rows, day(int(time.time()))
+
+
+def _cells(row: str) -> list[str]:
+    return [html.unescape(re.sub(r"<[^>]+>", "", c)).strip() for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row, re.S)]
+
+
+async def _nikkei(session: aiohttp.ClientSession) -> list[dict]:
+    """日经官网的日经225 名单：按业种分节，每行是代码、略称、社名。"""
+    text = await _get(session, NIKKEI, "日经")
+    out = []
+    for sector, body in re.findall(r'<h3 class="idx-section-subheading">(.*?)</h3>(.*?)</table>', text, re.S):
+        for row in re.findall(r"<tr>(.*?)</tr>", body, re.S):
+            if len(c := _cells(row)) == 3 and re.fullmatch(r"\d{3}[0-9A-Z]", c[0]):  # 表头那行是「コード」
+                name = re.sub(r"\(株\)", "", unicodedata.normalize("NFKC", c[2])).strip()
+                out.append({"code": c[0], "name": name, "industry": html.unescape(sector).strip()})
+    return out
+
+
+async def _sp500(session: aiohttp.ClientSession) -> list[dict]:
+    """英文维基的标普500 列表（id="constituents" 那张表）：代码、公司、GICS 行业、细分行业……"""
+    text = await _get(session, SP500, "维基百科", ua=WIKI_UA)
+    i = text.index('id="constituents"')
+    rows = [_cells(r) for r in re.findall(r"<tr[^>]*>(.*?)</tr>", text[i: text.index("</table>", i)], re.S)]
+    return [{"code": r[0], "name": r[1], "sub": r[3]} for r in rows[1:] if len(r) >= 4]
+
+
+async def _ndx(session: aiohttp.ClientSession) -> list[dict]:
+    """纳斯达克官网的纳指100 成分股，只有代码和英文名。"""
+    data = json.loads(await _get(session, NDX, "纳斯达克"))
+    return [{"code": r["symbol"], "name": r["companyName"]} for r in data["data"]["data"]["rows"]]
+
+
+def _entry(market: str, code: str, name: str, index: str, industry: str, **extra) -> dict:
+    group = code if market == "cn" else f"{market}-{code}"  # A 股的键沿用以前的，最近出过的不变
+    return {"id": f"k-{group}", "group": group, "code": code, "title": name, "names": [name],
+            "answer": f"{name}（{code}）", "market": market, "index": index, "industry": industry, "hints": [], **extra}
+
+
+async def _build_cn(session: aiohttp.ClientSession) -> list[dict]:
     rows = await _clist(session, HS300, "f12,f13,f14,f26,f100,f103,f265")
     nuclear = {r["f12"] for r in await _clist(session, NUCLEAR, "f12")}
-    bank.status["kline"] = "正在拉交易日历"
-    save_json(bank.dir / "kline_calendar.json", await _klines(session, INDEX, "f51"))
     # 上市日（f26，YYYYMMDD）晚于这天的凑不出一段能出题的（MIN_AGE + 99 根，差不多一年半），不进股票池
-    cutoff = int(time.strftime("%Y%m%d", time.localtime(time.time() - 540 * 86400)))
+    cutoff = _cutoff()
     entries = []
     for r in rows:
-        if int(r.get("f26") or 0) > cutoff:
+        if _date(r.get("f26")) > cutoff:
             continue
         # 东财的名字是全角、带空格的（「万  科Ａ」），科创板的带 -U、-W 后缀
         name = re.sub(r"-[A-Z]+$", "", unicodedata.normalize("NFKC", r["f14"]).replace(" ", ""))
         if blocked(r, name, nuclear):
             continue
         code = r["f12"]
-        entries.append({
-            "id": f"k-{code}", "group": code, "title": name, "names": [name], "answer": f"{name}（{code}）",
-            "secid": f"{r['f13']}.{code}", "symbol": ("sh" if r["f13"] == 1 else "sz") + code,
-            "industry": r.get("f100") or "", "hints": [],
-        })
+        entries.append(_entry("cn", code, name, "沪深300", r.get("f100") or "", secid=f"{r['f13']}.{code}",
+                              symbol=("sh" if r["f13"] == 1 else "sz") + code))
+    return entries
+
+
+async def _build_jp(session: aiohttp.ClientSession) -> list[dict]:
+    return [
+        _entry("jp", r["code"], r["name"], "日经225", r["industry"], yahoo=f"{r['code']}.T")
+        for r in await _nikkei(session)
+        if r["industry"] not in JP_BLOCK_SECTORS and not JP_BLOCK_NAME.search(r["name"])
+    ]
+
+
+async def _build_us(session: aiohttp.ClientSession) -> list[dict]:
+    sp, ndx = await _sp500(session), await _ndx(session)
+    # 东财的代码 BRK_B，维基 BRK.B，Yahoo BRK-B
+    cn = {r["f12"].replace("_", "."): r for r in await _clist(session, US_NAMES, "f12,f14,f26,f100", "f20", US_TOP)}
+    stocks: dict[str, dict] = {}
+    for src, label in ((sp, "标普500"), (ndx, "纳指100")):
+        for r in src:
+            if (code := r["code"].replace("-", ".")) in stocks:
+                stocks[code]["index"] += f" / {label}"
+            else:
+                stocks[code] = {**r, "code": code, "index": label}
+    cutoff, seen, entries = _cutoff(), set(), []
+    for code, r in stocks.items():
+        em = cn.get(code) or {}
+        if _date(em.get("f26")) > cutoff or r.get("sub") == US_BLOCK_INDUSTRY or US_BLOCK_NAME.search(r["name"]):
+            continue
+        name = em.get("f14") or r["name"]
+        if BLOCK_NAME.search(name) or US_BLOCK_NAME.search(name):
+            continue
+        # 同一家公司的几种股（谷歌-A、谷歌-C）只留一只
+        if (base := re.sub(r"-[A-Z]$", "", name)) in seen:
+            continue
+        seen.add(base)
+        entries.append(_entry("us", code, base, r["index"], em.get("f100") or "", yahoo=code.replace(".", "-")))
+    return entries
+
+
+def _date(v) -> int:
+    """东财的上市日 YYYYMMDD，没有的是「-」。"""
+    return int(v) if str(v).isdigit() else 0
+
+
+def _cutoff() -> int:
+    return int(time.strftime("%Y%m%d", time.localtime(time.time() - 540 * 86400)))
+
+
+async def build(bank) -> None:
+    session = bank.http()
+    entries = []
+    for market, (label, index, calendar) in MARKETS.items():
+        bank.status["kline"] = f"正在拉{label}的股票池和交易日历"
+        entries += await {"cn": _build_cn, "jp": _build_jp, "us": _build_us}[market](session)
+        if market == "cn":
+            days = await _klines(session, index, "f51")
+        else:
+            days = [r[0] for r in (await _yahoo(session, index))[0]]
+        save_json(bank.dir / calendar, days)
     bank.commit("kline", entries)
+
+
+def pick(entries: list[dict]) -> list[dict]:
+    """出题先随机挑市场，三个市场一样多：美股的股票池比 A 股大，混在一起挑美股会占一半。"""
+    markets = sorted({e.get("market", "cn") for e in entries})
+    market = random.choice(markets) if markets else "cn"
+    return [e for e in entries if e.get("market", "cn") == market]
 
 
 async def load(session: aiohttp.ClientSession, entry: dict, data_dir: Path) -> list[list]:
     """随机挑一段 WARM + SHOWN + AHEAD 根的日 K：中间没停牌（和交易日历一天不差），上市满 MIN_AGE 个交易日、
-    START 以后，不含今天（盘中还没收完）。返回 [日期, 开, 收, 高, 低, 量]，价格按复权因子等比调整到这段的最后一天，
-    这段里有分红送转也是连着的。"""
-    cal = load_json(data_dir / "kline_calendar.json") or []
+    START 以后，不含今天（盘中还没收完）。返回 [日期, 开, 收, 高, 低, 量]，价格按复权等比调整到这段的最后一天，
+    这段里有分红送转、拆股也是连着的。"""
+    market = entry.get("market", "cn")
+    cal = load_json(data_dir / MARKETS[market][2]) or []
+    if market == "cn":
+        rows = [line.split(",") for line in await _klines(session, entry["secid"], "f51,f52,f53,f54,f55,f56")]
+        today = time.strftime("%Y-%m-%d")
+    else:
+        rows, today = await _yahoo(session, entry["yahoo"])
     pos = {d: i for i, d in enumerate(cal)}
-    rows = [line.split(",") for line in await _klines(session, entry["secid"], "f51,f52,f53,f54,f55,f56")]
     at = [pos.get(r[0], -1) for r in rows]
-    n, today = WARM + SHOWN + AHEAD, time.strftime("%Y-%m-%d")
+    n = WARM + SHOWN + AHEAD
     starts = [
         j for j in range(MIN_AGE, len(rows) - n + 1)
         if rows[j][0] >= START and rows[j + n - 1][0] < today and at[j] >= 0 and at[j + n - 1] - at[j] == n - 1
@@ -143,12 +297,16 @@ async def load(session: aiohttp.ClientSession, entry: dict, data_dir: Path) -> l
     if not starts:
         raise RuntimeError(f"{entry['title']} 没有能出题的一段")
     window = rows[(j := random.choice(starts)): j + n]
-    factors = await _factors(session, entry["symbol"])
-    end = _factor(factors, window[-1][0])
+    if market == "cn":
+        factors = await _factors(session, entry["symbol"])
+        ratio = {day: 1 / _factor(factors, day) for day, *_ in window}
+    else:
+        ratio = {r[0]: r[6] for r in window}
+    end = ratio[window[-1][0]]
     bars = []
     for day, *nums in window:
-        o, c, h, lo, vol = map(float, nums)
-        k = end / _factor(factors, day)
+        o, c, h, lo, vol = map(float, nums[:5])
+        k = ratio[day] / end
         bars.append([day, round(o * k, 3), round(c * k, 3), round(h * k, 3), round(lo * k, 3), round(vol / k)])
     return bars
 
@@ -167,7 +325,8 @@ def outcome(entry: dict, bars: list[list]) -> dict:
     return {
         "change": change,
         # 东财的行业是申万二级，和一级同名的带「Ⅱ」
-        "original": " · ".join(x for x in (entry["group"], (entry.get("industry") or "").rstrip("Ⅱ")) if x),
+        "original": " · ".join(x for x in (MARKETS[entry.get("market", "cn")][0], entry.get("code") or entry["group"],
+                                           (entry.get("industry") or "").rstrip("Ⅱ")) if x),
         "hints": [
             ["区间", f"{bars[WARM][0]} ~ {bars[-1][0]}"], ["看到", bars[WARM + SHOWN - 1][0]],
             [f"{AHEAD}日涨跌", pct(change)], ["走势", trend(change, up, down)],
@@ -187,9 +346,10 @@ def trend(change: float, up: float, down: float) -> str:
     return "冲高回落" if up >= 3 else "探底回升" if change - down >= 5 else "一路下跌"
 
 
-def question_hints() -> list[list[str]]:
+def question_hints(entry: dict) -> list[list[str]]:
+    market = entry.get("market", "cn")
     return [
-        ["市场", "A股 · 沪深300 · 日K"], ["给看", f"{SHOWN} 个交易日"],
+        ["市场", f"{MARKETS[market][0]} · {entry.get('index') or '沪深300'} · 日K"], ["给看", f"{SHOWN} 个交易日"],
         ["猜", f"之后 {AHEAD} 个交易日的涨跌幅"], ["说法", "涨3、跌1.5、-2%、平"],
     ]
 
