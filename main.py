@@ -839,6 +839,8 @@ class GuessPlugin(Star):
             status = f"露出 {members.LABELS[rnd.shown - 1]} · 剩 {rnd.left()} 秒"
         if rnd.category == "teacher":
             image = cards.blur(rnd.avatar, teacher.STAGES[rnd.shown - 1])
+            if rnd.shown == len(teacher.STAGES):
+                return [self._card(rnd, image, status, rnd.hints)]
         if rnd.category == "anisong":
             sec = audio.CLIPS[rnd.shown - 1]
             image = cards.music(audio.CLIPS, rnd.shown, say("song_step", n=rnd.shown, sec=sec))
