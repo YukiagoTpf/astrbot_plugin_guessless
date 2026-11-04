@@ -23,6 +23,8 @@
 | Yahoo Finance | 猜K线的日股、美股日 K（拆股、分红调整过的）和交易日历（日经225、标普500 指数） | chart 接口，非官方，免 key；带 Chrome 字样的 UA 会被限流成 429 |
 | 日经官网、纳斯达克官网、英文维基百科 | 猜K线的股票池：日经225（含业种）、纳指100、标普500（含 GICS 行业） | 网页 / 网页前端的接口，免 key |
 | [wago.tools](https://wago.tools) | 猜魔兽地图、盲猜魔兽Boss：游戏数据表导出的 CSV（地图的中英文名、大陆、资料片、等级、阵营、子区域；冒险指南里的副本、首领、技能名） | 免 key，一周最多下一次，缓存一个月 |
+| [以撒官方 wiki](https://bindingofisaacrebirth.wiki.gg) | 盲猜以撒道具：道具的编号、英文名、品质、主动 / 被动、道具池、充能、最早出现的版本、要不要解锁、拾取台词 | MediaWiki 的 Cargo 查询（`action=cargoquery`），免 key，一秒一页，缓存一个月 |
+| [External Item Descriptions](https://github.com/wofsauge/External-Item-Descriptions) | 盲猜以撒道具的官方简中名（`descriptions/names/zh_cn.lua`，按道具编号） | GitHub 上的模组文件，免 key |
 | [warcraft.wiki.gg](https://warcraft.wiki.gg) | 猜魔兽地图：游戏内的风景截图（「Zone screenshots」分类） | MediaWiki API，免 key；截图版权归暴雪，出题时才下 |
 | [PokeAPI](https://pokeapi.co) | 宝可梦资料；立绘取自 GitHub 上的 PokeAPI/sprites | GraphQL，免 key |
 | [GeoNames](https://www.geonames.org) | 城市坐标、一级行政区、国家主要语言、陆上邻国 | CC BY 4.0 |

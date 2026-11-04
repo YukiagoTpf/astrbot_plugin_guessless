@@ -11,6 +11,7 @@ LINES = {
     "card_note_cngeodle": ["说地名，{tries} · 「提示」加线索"],
     "card_note_sakedle": ["说酒名，{tries} · 数据：さけのわ"],
     "card_note_bossdle": ["说首领名，{tries} · 「提示」加线索"],
+    "card_note_isaacdle": ["说道具名，{tries} · 「提示」加线索"],
     "card_note_country": ["说国家名，{tries} · 「提示」加线索"],
     "card_note_jpgeo": ["说都道府县，{tries}·「提示」加线索"],
     "card_note_pokedle": ["说宝可梦名，{tries} · 「提示」加线索"],
@@ -38,6 +39,7 @@ LINES = {
     "cngeodle_empty": ["说个地级市或北上广深的区（苏州、海淀），看看差在哪"],
     "sakedle_empty": ["说个日本酒的銘柄（獭祭、十四代、久保田都行），看看和答案差在哪"],
     "bossdle_empty": ["说个副本首领（拉格纳罗斯、伊利丹、巫妖王都行），看看差在哪"],
+    "isaacdle_empty": ["说个以撒道具（硫磺火、悲伤洋葱、Brimstone 都行），看看差在哪"],
     "song_step": ["第 {n} 段 · {sec} 秒"],
     "guess_left": ["{name} 还能猜 {left} 次"],
     "guess_used_up": [
@@ -156,6 +158,10 @@ LINES = {
         "时间到，没人猜中。这个 Boss 你们是一次没打过",
         "时间到，零人答对，开荒都没开到这",
     ],
+    "timeout_isaacdle": [
+        "时间到，没人猜中。这道具你们是一次都没摸过",
+        "时间到，零人答对，看来群里都没打过妈妈",
+    ],
     "timeout_country": [
         "时间到，全群没一个认出来的。地理课都在睡觉吧",
         "两分钟，零人答对。建议把地球仪买回来摆桌上",
@@ -239,6 +245,7 @@ LINES = {
     "board_empty_cngeodle": ["还没人盲猜中过中国地点，全员没出过省"],
     "board_empty_sakedle": ["还没人盲猜中过日本酒，全员滴酒不沾"],
     "board_empty_bossdle": ["还没人盲猜中过魔兽 Boss，全员只打过木桩"],
+    "board_empty_isaacdle": ["还没人盲猜中过以撒道具，全员还在地下室第一层"],
     "board_empty_country": ["还没人猜对过国家，地理老师哭晕在厕所"],
     "board_empty_jpgeo": ["还没人猜对过日本地点，全员只认识东京"],
     "board_empty_kline": ["还没人在猜K线里拿过第一，全员韭菜"],

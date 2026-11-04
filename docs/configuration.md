@@ -11,6 +11,7 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `cngeodle_round_seconds` | 420 | 盲猜中国地点限时（秒），能猜的有三百多个，同盲猜日本地点 |
 | `sakedle_round_seconds` | 420 | 盲猜日本酒限时（秒），能猜的有三千多个銘柄 |
 | `bossdle_round_seconds` | 420 | 盲猜魔兽Boss限时（秒），能猜的有一千多个首领 |
+| `isaacdle_round_seconds` | 420 | 盲猜以撒道具限时（秒），能猜的有七百多个道具 |
 | `blind_round_seconds` | 300 | 其他盲猜的限时（秒），要一个个推，比其他题型久 |
 | `hint_cooldown_seconds` | 5 | 两次「提示」的最短间隔（秒） |
 | `max_guesses` | 5 | 每人每题最多猜几次，怎么算一次见[玩法](usage.md#猜的次数和距离)；0 为不限 |
@@ -19,6 +20,7 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `cngeodle_max_guesses` | 10 | 盲猜中国地点每人每题最多猜几次；0 为不限 |
 | `sakedle_max_guesses` | 10 | 盲猜日本酒每人每题最多猜几次；0 为不限 |
 | `bossdle_max_guesses` | 10 | 盲猜魔兽Boss每人每题最多猜几次；0 为不限 |
+| `isaacdle_max_guesses` | 10 | 盲猜以撒道具每人每题最多猜几次；0 为不限 |
 | `kline_round_seconds` | 180 | 猜K线限时（秒）；凑满人数提前揭晓，到点没凑满按已经猜了的排名 |
 | `kline_players` | 5 | 猜K线凑满几个人揭晓；每人只认第一句，按离实际涨跌幅的远近排名次，第一名记一次 |
 | `hourly_limit` | 10 | 每个群每小时最多开几道题，所有题型共用，每个整点清零；0 为不限 |
@@ -28,7 +30,7 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `help_extra` | 空 | @机器人 说「帮助」时追加在猜题玩法后面的话（比如别的插件的用法），每行一条；写成「群号:文字」只在那个群加 |
 | `board_interval_hours` | 1 | 每隔几小时在玩过的群里播报一张各题型排行榜的图，这段时间没人答对就不发；0 关闭，见[玩法](usage.md#整点排行榜) |
 | `anime_pool_size` | 1000 | 动画题库大小 |
-| `niche_ratio` | 0.2 | 每道题出小众题的概率，0.2 大约五题一道；0 只出大众题。游戏、宝可梦、萝卜、Vtuber、魔兽、盲猜地点、盲猜日本地点、盲猜日本酒、盲猜魔兽Boss分档，动画、地点、盲猜中国地点不分档 |
+| `niche_ratio` | 0.2 | 每道题出小众题的概率，0.2 大约五题一道；0 只出大众题。游戏、宝可梦、萝卜、Vtuber、魔兽、盲猜地点、盲猜日本地点、盲猜日本酒、盲猜魔兽Boss、盲猜以撒道具分档，动画、地点、盲猜中国地点不分档 |
 | `game_pool_size` | 500 | 游戏大众题数量 |
 | `game_niche_size` | 300 | 游戏小众题数量 |
 | `game_min_score` | 75 | 游戏最低 Metacritic 分 |

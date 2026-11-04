@@ -76,6 +76,18 @@
     "default": 10,
     "hint": "要多猜几个才推得出来。0 不限"
   },
+  "isaacdle_round_seconds": {
+    "description": "盲猜以撒道具限时（秒）",
+    "type": "int",
+    "default": 420,
+    "hint": "能猜的有七百多个道具，比其他盲猜多给两分钟"
+  },
+  "isaacdle_max_guesses": {
+    "description": "盲猜以撒道具每人每题最多猜几次",
+    "type": "int",
+    "default": 10,
+    "hint": "要多猜几个才推得出来。0 不限"
+  },
   "kline_round_seconds": {
     "description": "猜K线限时（秒）",
     "type": "int",

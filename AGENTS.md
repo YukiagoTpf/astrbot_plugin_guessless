@@ -88,6 +88,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 盲猜中国地点的选题、条目格式、提示规则（`CN_SIGHT_BLOCK`、`geo.CN_PROVINCES`）、`cn_data.py` | `blind/cngeodle.py` 的 `VERSION` |
   | 盲猜日本酒的选题（`AREA_TOP`、`NO_ANSWER`）、条目格式、提示规则、`sake_data.py` | `blind/sakedle.py` 的 `VERSION` |
   | 盲猜魔兽Boss的选题（`NOT_ONE`、`MAIN_UNTIL`）、条目格式、提示、叫法规则 | `blind/bossdle.py` 的 `VERSION` |
+  | 盲猜以撒道具的选题（`NO_ANSWER`、`MAIN_QUALITY`）、条目格式、提示、叫法规则 | `blind/isaacdle.py` 的 `VERSION` |
   | 听歌猜番的选曲规则（`sources.anime_themes`） | `bank.ANISONG_VERSION` |
   | 街景取景规则（全景缓存作废重找） | `geo.SAMPLING` |
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |
@@ -128,6 +129,7 @@ AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blin
 - 盲猜中国地点不出、不认三沙市（`geo.CN_EXCLUDE`），港澳台不在里面；名胜过滤（`blind/cngeodle.py` 的 `CN_SIGHT_BLOCK`：红色景点、陵墓、领导人、战争……）只能加不能删。
 - 盲猜日本地点不出、不认北方四岛上的村（`geo.disputed`），不出因核事故、核设施、美军基地出名的町村（`blind/jpgeodle.py` 的 `NO_ANSWER`，只能加不能删）；名胜过滤（`blind/jpgeodle.py` 的 `LANDMARK_BLOCK`：和平公园、原爆、靖国和护国神社、端岛、硫磺岛、领土争议的岛、皇室、陵墓、事件……）只能加不能删。
 - 盲猜日本酒不出名字带「皇国」「尊皇」「旭日」「戦勝」「軍」这些的銘柄（`blind/sakedle.py` 的 `NO_ANSWER`），只能加不能删；用さけのわ的数据要注明出处（卡片角注、答案卡的「数据」），不能去掉。
+- 盲猜以撒道具不出涉黄、擦边、自残自杀、毒品、战争的道具（`blind/isaacdle.py` 的 `NO_ANSWER`），只能加不能删。
 - 猜K线不出军工、核相关的股票（`kline.BLOCK_INDUSTRIES`、`NUCLEAR`、`BLOCK_NAME`，日股的 `JP_BLOCK_SECTORS`、`JP_BLOCK_NAME`，美股的 `US_BLOCK_INDUSTRY`、`US_BLOCK_NAME`），只能加不能删。
 - 猜国家暂时下线（`main.OFFLINE`）：开题和排行榜都只回「好危险，不踩啦」，也不进整点播报。
 
@@ -141,6 +143,7 @@ AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blin
 - warcraft.wiki.gg（猜魔兽地图）、wago.tools（猜魔兽地图、盲猜魔兽Boss）：`api.php` 要用机器人式的 UA（`sources.WIKI_UA`），浏览器 UA 会被 Cloudflare 拦成 403；一秒一个请求。wago.tools 的 DB2 CSV 要带正式服的 `build`（`/api/builds/latest` 的 `wow.version`），不带给的是测试服。
 - 东方财富行情（猜K线）：板块成分股 `clist` 一页最多 100 只；日 K 每行是「日期,开,收,高,低,量」，收盘在第二个。它和腾讯的前复权是把分红直接减掉，老价格会成负数，只拉不复权的（`fqt=0`），按新浪 `qfq.js` 的因子等比调整。返回的 Content-Type 不是 JSON，用 `json.loads(await r.text())`。
 - Yahoo Finance（猜K线的日股、美股）：UA 带 Chrome 字样会被限流成 429，用 `kline.YAHOO_UA`（光一个 `Mozilla/5.0`）；日经官网反过来要浏览器 UA，维基要 `sources.WIKI_UA`。
+- bindingofisaacrebirth.wiki.gg（盲猜以撒道具）：Cargo 查询一页 500 行，一秒一页；不带 UA 会被拦，用 `sources.WIKI_UA`。
 - Metacritic 评分榜是网页前端的非官方接口，目前不用 key；以后要是又要 key 了，从配置读，不要写死在代码里。
 
 ## Git
