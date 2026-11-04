@@ -64,19 +64,27 @@ def attrs_of(b: dict, key: str) -> dict:
 
 def row(guess: dict, answer: dict) -> list[list[str]]:
     """资料片：同一个绿、差一个黄，箭头指答案更新（↑）还是更老（↓）。副本：同一个绿，入口在同一个地区（都在黑石山）黄。
-    类型：团本、地下城、野外。顺序：在副本里第几个打（「3/8」是八个里的第三个），差一个黄，箭头指答案更靠后（↑）还是
-    更靠前（↓）；野外首领写「—」。大陆：副本入口所在的大陆。"""
+    类型：团本、地下城、野外。顺序：在副本里第几个打（「3/8」是八个里的第三个），连总数都一样才绿，第几个一样、总数
+    不一样（答案「1/10」猜了「1/1」）或差一个黄，箭头指答案更靠后（↑）还是更靠前（↓）；野外首领写「—」。
+    大陆：副本入口所在的大陆。"""
     x, y = guess["exp"], answer["exp"]
     if guess["iid"] == answer["iid"]:
         place = [guess["instance"], "hit", ""]
     else:
         place = [guess["instance"], "near" if guess["zone"] and guess["zone"] == answer["zone"] else "miss", ""]
     m, n = guess["order"], answer["order"]
+    if m and n:
+        text = f"{m}/{guess['count']}"
+        order = num(m, n, text, abs(m - n) == 1)
+        if m == n and guess["count"] != answer["count"]:
+            order = [text, "near", ""]
+    else:
+        order = blank()
     return [
         num(x, y, wow.EXPANSIONS[x], abs(x - y) == 1),
         place,
         same(guess["kind"], answer["kind"]),
-        num(m, n, f"{m}/{guess['count']}", abs(m - n) == 1) if m and n else blank(),
+        order,
         same(guess["continent"], answer["continent"]),
     ]
 
