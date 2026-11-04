@@ -119,14 +119,12 @@ def square(data: bytes) -> Image.Image:
     return img.crop((x, y, x + side, y + side))
 
 
-def pixelate(img: Image.Image, blocks: int | None = None) -> Image.Image:
-    """猜老师：正方形头像放在图区正中，切成 blocks×blocks 块马赛克（每块取平均色）。blocks 为 None 是答案卡，不打码。"""
+def blur(img: Image.Image, radius: int | None = None) -> Image.Image:
+    """猜老师：正方形头像放在图区正中，按 radius（图区里的像素）高斯模糊。radius 为 None 是答案卡，不模糊。"""
     out = Image.new("RGB", (SIZE, PIC_H), BG)
-    face = img.convert("RGB")
-    if blocks:
-        face = face.resize((blocks, blocks), Image.Resampling.BOX).resize((PIC_H, PIC_H), Image.Resampling.NEAREST)
-    else:
-        face = face.resize((PIC_H, PIC_H), Image.Resampling.LANCZOS)
+    face = img.convert("RGB").resize((PIC_H, PIC_H), Image.Resampling.LANCZOS)
+    if radius:
+        face = face.filter(ImageFilter.GaussianBlur(radius))
     out.paste(face, ((SIZE - PIC_H) // 2, 0))
     out.info["grid"] = None
     return out

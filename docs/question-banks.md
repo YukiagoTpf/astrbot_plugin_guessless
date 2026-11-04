@@ -74,7 +74,7 @@
 - 头像：FANZA 的女优头像在 `pics.dmm.co.jp/mono/actjpgs/<姓>_<名>.jpg`，罗马字是读音按训令式拼的（し→si、ち→ti、つ→tu、ふ→hu、じ→zi，长音照写：おおつき→ootuki）。拼出来的那张不存在会 302 到「now printing」，这样的不出题。查过的记在 `teacher_cache.json`，一个月内不再查；名单和信息框也缓存一个月。
 - 不出：出道那年减出生那年不到 19 的、2000 年以前出道的（`MIN_DEBUT_YEAR`）、头像拉黑的（`NO_IMAGE`）。
 - 人气：日文维基和中文维基最近 60 天的浏览量加起来。
-- 叫法：同名的归浏览量高的（`entries.assign_names`）。
+- 叫法：日文名（也转成简体）、Wikidata 的中文名，加上中文维基里指向这个条目的重定向（常用译名、旧艺名，和名单一起缓存一个月）；同名的归浏览量高的（`entries.assign_names`）。
 
 ## Vtuber
 

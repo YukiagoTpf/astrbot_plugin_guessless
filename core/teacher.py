@@ -1,4 +1,4 @@
-"""猜老师：日本 AV 女优的官方头像打马赛克，「提示」一段段变细，猜是谁。
+"""猜老师：日本 AV 女优的官方头像高斯模糊，「提示」一段段变清楚，猜是谁。
 
 名单来自 Wikidata（国籍日本、有 FANZA 女优 ID、日文或中文维基上有条目的；职业有的标 Q488111 有的标 Q1079215，不看），资料（读音、生日、身高、出道期间、专属厂牌）
 优先读日文维基百科的信息框，没有再用 Wikidata 的。人气按日文和中文维基最近 60 天的浏览量排。
@@ -19,14 +19,14 @@ import aiohttp
 from astrbot.api import logger
 
 from .entries import assign_names, finish_entry, to_hans, usable_names
-from .sources import WIKI_UA, WIKIDATA, dedupe, zhwiki_views
+from .sources import WIKI_UA, WIKIDATA, ZH_API, dedupe, zhwiki_views
 from .store import load_json, save_json
 
-VERSION = "fanza-v3"  # 选人、资料、提示、叫法、拼头像地址的规则改了就换个名字，题库重建
+VERSION = "fanza-v4"  # 选人、资料、提示、叫法、拼头像地址的规则改了就换个名字，题库重建
 JA_API = "https://ja.wikipedia.org/w/api.php"
 PICS = "https://pics.dmm.co.jp/mono/actjpgs/{}.jpg"
 CACHE_DAYS = 30
-STAGES = (6, 9, 14, 22, 36)  # 每一段马赛克横竖切几块，「提示」一次细一段
+STAGES = (48, 32, 20, 12, 6)  # 每一段高斯模糊的半径（608 像素高的图区里），「提示」一次清楚一段
 MAIN_TOP = 150  # 浏览量前这么多名是大众题
 POOL = 500  # 只出浏览量前这么多名，再往后多是没人认识的
 MIN_DEBUT_AGE = 19  # 出道那年减出生那年至少这么多：只知道年份时，这样才确定出道时满 18
@@ -181,22 +181,49 @@ async def _jawiki(session: aiohttp.ClientSession, titles: list[str], status) -> 
     return out
 
 
+async def _zh_redirects(session: aiohttp.ClientSession, titles: list[str], status) -> dict[str, list[str]]:
+    """中文维基上指向这些条目的重定向，{条目名: [重定向名, ...]}。群里常用的中文译名、旧艺名多半在这里。"""
+    out: dict[str, list[str]] = {}
+    for i in range(0, len(titles), 50):
+        status(f"正在查中文维基的译名 {i}/{len(titles)}")
+        cont: dict = {}
+        while True:
+            params = {"action": "query", "prop": "redirects", "rdprop": "title", "rdnamespace": "0", "rdlimit": "max",
+                      "titles": "|".join(titles[i:i + 50]), "format": "json", "formatversion": "2", **cont}
+            async with session.get(ZH_API, params=params, headers={"User-Agent": WIKI_UA},
+                                   timeout=aiohttp.ClientTimeout(total=60)) as r:
+                r.raise_for_status()
+                data = await r.json(content_type=None)
+            q = data.get("query") or {}
+            back = {m["to"]: m["from"] for m in q.get("normalized") or []}
+            for p in q.get("pages") or []:
+                out.setdefault(back.get(p["title"], p["title"]), []).extend(x["title"] for x in p.get("redirects") or [])
+            await asyncio.sleep(1)
+            if "continue" not in data:
+                break
+            cont = data["continue"]
+    return out
+
+
 async def _has_image(session: aiohttp.ClientSession, slug: str) -> bool:
     """FANZA 的头像在不在：在是 200，没有的 302 到 now printing。"""
     async with session.get(PICS.format(slug), allow_redirects=False, timeout=aiohttp.ClientTimeout(total=20)) as r:
         return r.status == 200
 
 
-def names_of(wd: dict, kana: str, slug: str, jawiki: str) -> list[str]:
-    """能猜的叫法：日文名、中文名（简繁）、读音、英文名（去掉长音符号、姓名倒过来也行）、头像文件名那种罗马字。"""
+def names_of(wd: dict, kana: str, slug: str, jawiki: str, redirects: list[str] = ()) -> list[str]:
+    """能猜的叫法：日文名（也转成简体，沢→泽）、中文名（简繁）、中文维基的重定向（常用译名、旧艺名）、读音、
+    英文名（去掉长音符号、姓名倒过来也行）、头像文件名那种罗马字。"""
     en = wd.get("en", "")
     plain = en.translate(str.maketrans("āēīōūĀĒĪŌŪ", "aeiouAEIOU"))
     long = en.translate(str.maketrans({"ā": "aa", "ē": "ee", "ī": "ii", "ō": "ou", "ū": "uu"}))
     flips = [" ".join(reversed(n.split())) for n in (plain, long) if len(n.split()) == 2]
     # 中文标签有的把几个艺名写在一起（「橋本有菜, 新有菜」）
     zh = [x.strip() for n in (wd.get("hans"), wd.get("zh"), wd.get("tw")) if n for x in re.split(r"[,，、/]", n) if x.strip()]
+    ja = [wd.get("ja", ""), re.sub(r"\s*[（(][^）)]*[）)]$", "", jawiki)]
+    zh += [re.sub(r"\s*[（(][^）)]*[）)]$", "", n) for n in redirects]
     return usable_names(dedupe([
-        wd.get("ja", ""), re.sub(r"\s*[（(][^）)]*[）)]$", "", jawiki), *zh, *(to_hans(n) for n in zh),
+        *ja, *(to_hans(n) for n in ja if n), *zh, *(to_hans(n) for n in zh),
         kana.replace(" ", ""), plain, long, *flips, slug.replace("_", " "), " ".join(reversed(slug.split("_"))),
     ]))
 
@@ -214,7 +241,12 @@ async def build(bank) -> None:
             p["box"] = boxes.get(p.get("jawiki", ""), {})
         cache = {"at": now, "people": people, "images": cache.get("images", {})}
         save_json(path, cache)
-    people, images = cache["people"], cache["images"]
+    if "zh_redirects" not in cache:  # 跟着名单一个月一换
+        cache["zh_redirects"] = await _zh_redirects(
+            session, sorted({p["zhwiki"] for p in cache["people"].values() if p.get("zhwiki")}),
+            lambda s: bank.status.__setitem__("teacher", s))
+        save_json(path, cache)
+    people, images, redirects = cache["people"], cache["images"], cache["zh_redirects"]
     rows = []
     for qid, p in people.items():
         box = p.get("box") or {}
@@ -252,7 +284,8 @@ async def build(bank) -> None:
     for r in rows:
         r["views"] = ja_views.get(r["p"].get("jawiki", ""), 0) + zh_views.get(r["p"].get("zhwiki", ""), 0)
     rows = sorted(rows, key=lambda r: -r["views"])[:POOL]
-    names = assign_names({r["qid"]: names_of(r["p"], r["kana"], r["slug"], r["p"].get("jawiki", "")) for r in rows},
+    names = assign_names({r["qid"]: names_of(r["p"], r["kana"], r["slug"], r["p"].get("jawiki", ""),
+                                             redirects.get(r["p"].get("zhwiki", ""), [])) for r in rows},
                          [r["qid"] for r in rows])
     entries = []
     for rank, r in enumerate(rows):

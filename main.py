@@ -213,7 +213,7 @@ class GuessPlugin(Star):
 
     @filter.command("猜老师", alias=TEACHER_ALIASES)
     async def guess_teacher(self, event: AstrMessageEvent):
-        """开一道猜老师（日本 AV 女优的官方头像打马赛克）"""
+        """开一道猜老师（日本 AV 女优的官方头像模糊处理）"""
         async for r in self._start(event, "teacher"):
             yield r
 
@@ -665,9 +665,9 @@ class GuessPlugin(Star):
             rnd.song = " · ".join(x for x in (label, theme["song"], " / ".join(theme["artists"])) if x)
             rnd.reveal = cards.load(await self.bank.image(entry))
         elif cat == "teacher":
-            # 头像整道题不变，每段按 teacher.STAGES 打不同粗细的马赛克（_question），答案卡不打码
+            # 头像整道题不变，每段按 teacher.STAGES 模糊得不一样（_question），答案卡不模糊
             rnd.avatar = cards.square(await self.bank.image(entry))
-            rnd.reveal = cards.pixelate(rnd.avatar)
+            rnd.reveal = cards.blur(rnd.avatar)
         elif cat == "wow":
             rnd.image = await self._bright(entry)
             rnd.order = cards.reveal_order(rnd.image)
@@ -838,7 +838,7 @@ class GuessPlugin(Star):
             image = cards.mosaic(rnd.avatar, *rnd.plan[rnd.shown - 1])
             status = f"露出 {members.LABELS[rnd.shown - 1]} · 剩 {rnd.left()} 秒"
         if rnd.category == "teacher":
-            image = cards.pixelate(rnd.avatar, teacher.STAGES[rnd.shown - 1])
+            image = cards.blur(rnd.avatar, teacher.STAGES[rnd.shown - 1])
         if rnd.category == "anisong":
             sec = audio.CLIPS[rnd.shown - 1]
             image = cards.music(audio.CLIPS, rnd.shown, say("song_step", n=rnd.shown, sec=sec))
@@ -952,7 +952,7 @@ class GuessPlugin(Star):
         n, steps = rnd.shown, self._steps(rnd)
         edge = max(1, round(steps * 2 / 9))  # 九宫格是 ≤ 2 格算快、≥ 7 格算慢，其他按比例
         tier = "correct_fast" if n <= edge else "correct_slow" if n > steps - edge else "correct"
-        unit = {"anisong": "段", "member": "段提示", "teacher": "段马赛克"}.get(rnd.category, "格" if rnd.category in GRID else "条线索")
+        unit = {"anisong": "段", "member": "段提示", "teacher": "段模糊"}.get(rnd.category, "格" if rnd.category in GRID else "条线索")
         return tier, f"{n} {unit}"
 
     def _finish(self, gid: str, rnd: Round, uid: str | None = None, name: str = "") -> list | None:
