@@ -1,7 +1,8 @@
 """猜老师：日本 AV 女优的官方头像高斯模糊，「提示」一段段变清楚，猜是谁。
 
 名单来自 Wikidata（国籍日本、有 FANZA 女优 ID、日文或中文维基上有条目的；职业有的标 Q488111 有的标 Q1079215，不看），资料（读音、生日、身高、出道期间、专属厂牌）
-优先读日文维基百科的信息框，没有再用 Wikidata 的。人气按日文和中文维基最近 60 天的浏览量排。
+优先读日文维基百科的信息框，没有再用 Wikidata 的。人气按日文和中文维基最近 60 天的浏览量排，中文维基的算三倍（群里认得的多是国内有名的）。
+作品数是 FANZA 上挂了她名字的商品数（含合集），查 FANZA 网页前端用的 GraphQL。
 头像是 FANZA 女优页上的那张（pics.dmm.co.jp/mono/actjpgs/<罗马字>.jpg，只拍脸，125×125），地址按读音拼
 （训令式：し→si、ち→ti、つ→tu、ふ→hu、じ→zi），拼出来的那张不存在（302 到 now printing）就不出题。
 
@@ -22,13 +23,15 @@ from .entries import assign_names, finish_entry, to_hans, usable_names
 from .sources import WIKI_UA, WIKIDATA, ZH_API, dedupe, zhwiki_views
 from .store import load_json, save_json
 
-VERSION = "fanza-v4"  # 选人、资料、提示、叫法、拼头像地址的规则改了就换个名字，题库重建
+VERSION = "fanza-v5"  # 选人、资料、提示、叫法、拼头像地址的规则改了就换个名字，题库重建
 JA_API = "https://ja.wikipedia.org/w/api.php"
 PICS = "https://pics.dmm.co.jp/mono/actjpgs/{}.jpg"
+FANZA_API = "https://api.video.dmm.co.jp/graphql"
 CACHE_DAYS = 30
 STAGES = (18, 12, 7, 3)  # 每一段高斯模糊的半径（608 像素高的图区里），「提示」一次清楚一段；资料比段数多，最后一段全给
-MAIN_TOP = 150  # 浏览量前这么多名是大众题
-POOL = 500  # 只出浏览量前这么多名，再往后多是没人认识的
+MAIN_TOP = 100  # 人气前这么多名是大众题
+POOL = 300  # 只出人气前这么多名，再往后群里多半没人认识（2026-11 群友嫌 500 名太冷门）
+ZH_WEIGHT = 3  # 中文维基的浏览量乘这么多再和日文的加起来
 MIN_DEBUT_AGE = 19  # 出道那年减出生那年至少这么多：只知道年份时，这样才确定出道时满 18
 MIN_DEBUT_YEAR = 2000  # FANZA 上 2000 年以前出道的头像是写真扫描，有露出的；之后的都是只拍脸的标准头像
 # 头像不合适的（不是只拍脸、有挑逗动作、太糊认不出），按头像文件名的罗马字拉黑（只能加不能删）。2026-11 审过前 500 名
@@ -205,6 +208,36 @@ async def _zh_redirects(session: aiohttp.ClientSession, titles: list[str], statu
     return out
 
 
+async def _works(session: aiohttp.ClientSession, ids: list[str], status) -> dict[str, int]:
+    """FANZA 上各女优 ID 的作品数（挂了她名字的商品数，含合集），一次查 50 个。查不到的不在结果里。"""
+    out: dict[str, int] = {}
+    for i in range(0, len(ids), 50):
+        status(f"正在查 FANZA 的作品数 {i}/{len(ids)}")
+        chunk = ids[i:i + 50]
+        query = "{" + " ".join(
+            f'a{j}: legacySearchPPV(limit: 1, offset: 0, sort: SALES_RANK_SCORE, '
+            f'filter: {{actressIds: {{ids: [{{id: "{d}"}}]}}}}) {{ result {{ pageInfo {{ totalCount }} }} }}'
+            for j, d in enumerate(chunk) if d.isdigit()) + "}"
+        async with session.post(FANZA_API, json={"query": query}, headers={"User-Agent": WIKI_UA},
+                                timeout=aiohttp.ClientTimeout(total=60)) as r:
+            r.raise_for_status()
+            data = (await r.json(content_type=None)).get("data") or {}
+        for j, d in enumerate(chunk):
+            if n := (((data.get(f"a{j}") or {}).get("result") or {}).get("pageInfo") or {}).get("totalCount"):
+                out[d] = n
+        await asyncio.sleep(1)
+    return out
+
+
+def works_text(n: int) -> str:
+    """作品数说个大概：一百以内到十位，以上到百位。"""
+    if not n:
+        return ""
+    if n < 10:
+        return "不到 10 部"
+    return f"约 {round(n, -1 if n < 100 else -2)} 部"
+
+
 async def _has_image(session: aiohttp.ClientSession, slug: str) -> bool:
     """FANZA 的头像在不在：在是 200，没有的 302 到 now printing。"""
     async with session.get(PICS.format(slug), allow_redirects=False, timeout=aiohttp.ClientTimeout(total=20)) as r:
@@ -282,8 +315,20 @@ async def build(bank) -> None:
     ja_views = await zhwiki_views(session, [r["p"]["jawiki"] for r in rows if r["p"].get("jawiki")], api=JA_API)
     zh_views = await bank.views("teacher", [r["p"]["zhwiki"] for r in rows if r["p"].get("zhwiki")])
     for r in rows:
-        r["views"] = ja_views.get(r["p"].get("jawiki", ""), 0) + zh_views.get(r["p"].get("zhwiki", ""), 0)
+        r["views"] = ja_views.get(r["p"].get("jawiki", ""), 0) + ZH_WEIGHT * zh_views.get(r["p"].get("zhwiki", ""), 0)
     rows = sorted(rows, key=lambda r: -r["views"])[:POOL]
+    works = cache.setdefault("works", {})  # {FANZA ID: [作品数, 查的时间]}
+    if todo := [r["p"]["dmm"] for r in rows if now - works.get(r["p"]["dmm"], [0, 0])[1] > CACHE_DAYS * 86400]:
+        try:
+            found = await _works(session, todo, lambda s: bank.status.__setitem__("teacher", s))
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            logger.warning(f"[guess] teacher: FANZA works count failed: {type(e).__name__}")
+            found = None
+        if found is not None:  # 查不到的记 0，一个月后再查
+            works.update({d: [found.get(d, 0), now] for d in todo})
+            save_json(path, cache)
+    for r in rows:
+        r["works"] = works.get(r["p"]["dmm"], [0])[0]
     names = assign_names({r["qid"]: names_of(r["p"], r["kana"], r["slug"], r["p"].get("jawiki", ""),
                                              redirects.get(r["p"].get("zhwiki", ""), [])) for r in rows},
                          [r["qid"] for r in rows])
@@ -297,7 +342,8 @@ async def build(bank) -> None:
 
 
 def entry(r: dict, names: list[str], main: bool) -> dict:
-    """提示从宽到窄：出道（年份、现役还是引退）、出生（年份、星座）、身高、专属厂牌，最后是首字。"""
+    """提示：出道（年份、现役还是引退）、作品数、首字，最后一段再给出生（年份、星座）、身高、专属厂牌。
+    首字提前到第三段，群友要的（#21）；只有一张图，前几段太糊时靠它们缩小范围。"""
     p, box = r["p"], r["box"]
     zh = re.split(r"[,，、/]", p.get("hans") or p.get("zh") or p.get("tw") or "")[0].strip()
     title = to_hans(zh) if zh else p["ja"]
@@ -309,10 +355,13 @@ def entry(r: dict, names: list[str], main: bool) -> dict:
     # 专属厂牌：一行一个，去掉括号里的时间和名义，最多两个
     labels = [re.sub(r"[（(][^）)]*[）)]?", "", x).strip(" 、,") for x in box.get("専属契約", "").splitlines()]
     label = "、".join([x for x in labels if x][:2])
-    return finish_entry({
+    e = finish_entry({
         "id": f"av-{r['qid']}", "group": f"av-{r['qid']}", "title": title, "original": p["ja"],
         "answer": f"{title}（{p['ja']}）" if title != p["ja"] else title, "names": names,
         "images": [PICS.format(r["slug"])], "tier": "main" if main else "niche",
-        "hints": [["出道", debut], ["出生", born], ["身高", f"{r['height']} cm" if r["height"] else ""],
-                  ["专属", label[:24]]],
+        "hints": [["出道", debut], ["作品", works_text(r.get("works", 0))], ["出生", born],
+                  ["身高", f"{r['height']} cm" if r["height"] else ""], ["专属", label[:24]]],
     })
+    # finish_entry 把首字补在最后，挪到第三条
+    e["hints"].insert(min(2, len(e["hints"]) - 1), e["hints"].pop())
+    return e
