@@ -27,6 +27,7 @@ MODES = {
 }
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
 OFFLINE = {"country"}  # 暂时下线的题型：开题和排行榜都只回一句，不出题、不播报
+RECENT = 200  # 每个题型记最近出过的这么多道，出题时避开（Bank.pick）
 GRID = {"game", "anime", "pokemon", "mecha", "vtuber", "wow"}  # 九宫格逐格揭开的题型
 # 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对；
 # Vtuber 的名字也常互相包含；魔兽地图也是（东、西瘟疫之地）；群友按 @、QQ 号、名片认人；老师的名字也常互相包含
@@ -126,7 +127,9 @@ class GuessPlugin(Star):
         self.data_dir = StarTools.get_data_dir("astrbot_plugin_guessless")
         self.bank = Bank(self.data_dir, config)
         self.rounds: dict[str, Round] = {}  # 群号 -> 进行中的题目，一个群同时只有一道
-        self.recent = {cat: deque(maxlen=100) for cat in MODES}
+        # 题型 -> 最近出过的题（组），出题时避开；存盘是为了重启后不从头随机、刚出过的又出
+        recent = load_json(self.data_dir / "recent.json") or {}
+        self.recent = {cat: deque(recent.get(cat, []), maxlen=RECENT) for cat in MODES}
         self.scores = load_json(self.data_dir / "scores.json") or {}
         self.paused: set[str] = set(load_json(self.data_dir / "paused.json") or [])
         # 群号 -> 最近一小时内开题的时间戳，所有猜题共用一个额度；存盘是为了重启不清零
@@ -606,6 +609,7 @@ class GuessPlugin(Star):
                 logger.warning(f"[guess] media of {entry['id']} failed: {e}")
                 continue
             self.recent[cat].append(entry.get("group", entry["id"]))
+            save_json(self.data_dir / "recent.json", {c: list(q) for c, q in self.recent.items() if q})
             return True
         raise RuntimeError("连续 3 道题的素材都没下载下来")
 

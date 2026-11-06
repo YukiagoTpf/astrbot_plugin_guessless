@@ -14,12 +14,17 @@ from ..entries import assign_names, scrub, usable_names
 from ..store import load_json, save_json
 from .base import Blind, away, entry, here, num, size, tiered, touching, yes_no
 
-VERSION = "munis-v6"  # 选题、条目格式、提示规则改了就换个名字，题库重建
+VERSION = "munis-v7"  # 选题、条目格式、提示规则改了就换个名字，题库重建
 COLUMNS = ("都道府县", "方位", "人口", "面积", "级别", "县厅")
 CLUES = ("景点", "邻居", "名胜", "首字")  # 景点是次有名的名胜，名胜是最有名的
 # 出题名额按级别分，各自按浏览量取前几个：(大众题, 小众题)，「市」含政令市、中核市、特别区这些。
 # 混在一起排的话前 300 个九成是市，町一百题才出五道；村太难（白马村、小笠原村都有人反馈），只出小众题
 QUOTA = {"市": (70, 130), "町": (30, 50), "村": (0, 20)}
+# 东北、北关东、甲信越的小地方（町村和人口 FOCUS_POP 以下的市）另给名额，也按级别分、按浏览量取：
+# 只按浏览量排，这几处的小地方很少排得上（群友反馈）。村照样只出小众题
+FOCUS_JIS = {*range(2, 11), 15, 19, 20}  # 青森到群马、新潟、山梨、长野
+FOCUS_POP = 50000
+FOCUS_QUOTA = {"市": (15, 35), "町": (10, 30), "村": (0, 10)}
 # 不出题（还能拿来猜）：出名是因为核事故、核设施、美军基地的
 NO_ANSWER = {
     "Q385311", "Q1023949", "Q1023937", "Q1023943",  # 大熊町、双叶町、浪江町、富冈町（福岛核事故）
@@ -167,6 +172,14 @@ async def build(bank) -> None:
     main, chosen = set(), set()
     for level, (n_main, n_niche) in QUOTA.items():
         picked = [k for k in places if kind[k] == level and k not in NO_ANSWER][: n_main + n_niche]
+        main.update(picked[:n_main])
+        chosen.update(picked)
+    for level, (n_main, n_niche) in FOCUS_QUOTA.items():
+        picked = [
+            k for k in places
+            if kind[k] == level and k not in chosen and k not in NO_ANSWER
+            and prefs[munis[k]["pref"]]["jis"] in FOCUS_JIS and (level != "市" or munis[k]["pop"] < FOCUS_POP)
+        ][: n_main + n_niche]
         main.update(picked[:n_main])
         chosen.update(picked)
     pool = [k for k in places if k in chosen]

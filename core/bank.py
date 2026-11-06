@@ -136,11 +136,14 @@ class Bank:
         return len(self.entries[cat]) >= MIN_POOL
 
     def pick(self, cat: str, exclude) -> dict:
-        """按 niche_ratio 的概率出小众题（默认大约五题一道），其余出大众题；没分档的题都算大众题。"""
+        """按 niche_ratio 的概率出小众题（默认大约五题一道），其余出大众题；没分档的题都算大众题。
+        exclude 是最近出过的（从旧到新），避开它们；这一档都出过了，就从最久没出的那些里挑。"""
         tier = "niche" if random.random() < self.config.get("niche_ratio", 0.2) else "main"
         entries = kline.pick(self.entries[cat]) if cat == "kline" else self.entries[cat]
         pool = [e for e in entries if e.get("tier", "main") == tier] or entries
-        return random.choice([e for e in pool if e.get("group", e["id"]) not in exclude] or pool)
+        last = {g: i for i, g in enumerate(exclude)}
+        seen = [last.get(e.get("group", e["id"]), -1) for e in pool]
+        return random.choice([e for e, i in zip(pool, seen) if i == min(seen)])
 
     def match(self, cat: str, text: str, prefer: str = "") -> tuple[str | None, dict | None]:
         """群友这句话猜的是哪个答案，返回 (键, 资料)：地点类是国家 / 都道府县代码和 places 里那一项，
