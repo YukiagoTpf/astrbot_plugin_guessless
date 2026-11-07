@@ -18,9 +18,10 @@ core/
   blind/              盲猜系列，一个题型一个模块（对比的列、一行怎么算、题库怎么建），见下文「盲猜系列」
     base.py           盲猜的底层：题型规格 Blind、对比表各格的算法（num、ratio、tiered、away……）、条目 entry
     __init__.py       BLIND：登记了哪些盲猜题型
-  sources.py          外部数据源：Wikidata、中文维基浏览量、B 站、AniList、AnimeThemes、IGDB、Steam、PokeAPI、Gundam Wiki、vtbs.moe；HttpError
+  sources.py          外部数据源：Wikidata、中文维基浏览量、B 站、AniList（含猜声优的 staff 名单）、AnimeThemes、IGDB、Steam、PokeAPI、
+                      Gundam Wiki、vtbs.moe；HttpError
   geo.py              地理：GeoNames、Wikidata 国家资料、日本市町村和中国地级行政区（含北上广深的区）、街景取景、Natural Earth 轮廓、盲猜地点的地区划分和方位，以及各种版本常量
-  cards.py            卡片渲染（Pillow）：九宫格、街景三联、国家轮廓（答案卡带邻国底图）、世界地图、对比表、听歌进度条、
+  cards.py            卡片渲染（Pillow）：九宫格、街景三联、猜声优的三宫格、国家轮廓（答案卡带邻国底图）、世界地图、对比表、听歌进度条、
                       猜群友的头像棋盘、猜K线的 K 线图、整点排行榜长图
   members.py          猜群友：挑人、拉 QQ 头像、每段露哪几格、认群友说的是谁（Roster）
   audio.py            听歌猜番的音频：ffmpeg 解码、切片段
@@ -33,6 +34,7 @@ core/
   mecha_data.py       手写的 Gundam Wiki 资料中译（世界观、阵营、机型、机械设计）和机体外号
   vtuber_data.py      手写的猜Vtuber不出题名单（品牌号、搬运号、成人向、有争议的）
   teacher.py          猜老师：名单（Wikidata、日文维基的信息框）、FANZA 头像的地址、条目
+  seiyuu.py           猜声优：名单（AniList 的 staff，按日文名对上 Bangumi 的人物）、能出的角色、条目、每道题挑哪三个角色
   wow.py              魔兽世界：猜魔兽地图的地图资料（wago.tools 的 DB2 CSV）、截图（warcraft.wiki.gg）、条目；盲猜魔兽Boss的首领资料
   kline.py            猜K线：股票池（沪深300、日经225、标普500、纳指100）、出题时拉一段日 K 并复权（A 股按新浪的因子，日股美股用
                       Yahoo 的 adjclose）、揭晓的统计、认群友说的涨跌幅
@@ -84,6 +86,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | Vtuber 的选题、条目格式、`vtuber_data.py` | `entries.VTUBER_VERSION` |
   | 猜K线的选股（`kline.BLOCK_*`、`NUCLEAR`、`JP_BLOCK_*`、`US_BLOCK_*`）、条目格式 | `kline.VERSION` |
   | 猜老师的选人（`MIN_DEBUT_*`、`NO_IMAGE`）、资料、提示、叫法、拼头像地址的规则 | `teacher.VERSION` |
+  | 猜声优的选人、选角色（`BLOCK_WORKS`、`MIN_CHARS`）、资料、提示、叫法 | `seiyuu.VERSION` |
   | 猜魔兽地图的选地图（`CITIES`）、挑图规则（`BAD_NAME` / `BAD_CAT`、尺寸）、提示 | `wow.VERSION` |
   | 盲猜地点的条目格式、选题分档、地区划分（`geo.REGIONS`） | `blind/geodle.py` 的 `VERSION` |
   | 盲猜日本地点的选题、条目格式、提示规则（`LANDMARK_CLASS` / `LANDMARK_BLOCK`） | `blind/jpgeodle.py` 的 `VERSION` |
@@ -129,6 +132,7 @@ AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blin
 - 萝卜的阵营不翻 G 高达里以现实国家命名的（新香港、新中国……），对比表和提示里显示「—」。
 - 猜Vtuber不出 `vtuber_data.py` 里的账号；名单要扩只能往里加，不要删掉成人向和有争议的那几项。
 - 猜群友的头像只在内存里出图，不存盘；答案只公布群名片 / 昵称，不发 QQ 号。
+- 猜声优不出成人向（AniList 的 `isAdult`）、Ecchi 作品里的角色；舰船、国家拟人的作品（`seiyuu.BLOCK_WORKS`）不出，只能加不能删。
 - 盲猜中国地点不出、不认三沙市（`geo.CN_EXCLUDE`），港澳台不在里面；名胜过滤（`blind/cngeodle.py` 的 `CN_SIGHT_BLOCK`：红色景点、陵墓、领导人、战争……）只能加不能删。
 - 盲猜日本地点不出、不认北方四岛上的村（`geo.disputed`），不出因核事故、核设施、美军基地出名的町村（`blind/jpgeodle.py` 的 `NO_ANSWER`，只能加不能删）；名胜过滤（`blind/jpgeodle.py` 的 `LANDMARK_BLOCK`：和平公园、原爆、靖国和护国神社、端岛、硫磺岛、领土争议的岛、皇室、陵墓、事件……）只能加不能删。
 - 盲猜日本酒不出名字带「皇国」「尊皇」「旭日」「戦勝」「軍」这些的銘柄（`blind/sakedle.py` 的 `NO_ANSWER`），只能加不能删；用さけのわ的数据要注明出处（卡片角注、答案卡的「数据」），不能去掉。
@@ -140,7 +144,8 @@ AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blin
 
 - Google Street View Static API 的图片按张计费。构建题库只能用免费的元数据接口（`StreetView.find`），图片只在出题时取，不缓存。
 - B 站搜索：先访问首页拿 `buvid3` cookie；3 秒一次，412 是被限流。
-- AniList 约每分钟 30 次，用别名把多个查询合成一次请求。
+- AniList 约每分钟 30 次，用别名把多个查询合成一次请求。分页最多翻到第 5000 条（`perPage` 50 就是 100 页），再往后报 400。
+- Bangumi 的 `/v0/search/persons` 按名字搜人物，`filter.career` 填 `seiyu` 只搜声优；结果里带信息框和收藏人数，不用再查详情。
 - Wikidata SPARQL：用 `VALUES` 批量查；查询太重会 504，拆小或换查法。在查询里用 `COALESCE` 挑中文标签、顺着 `P131+` 往上找都会超时，标签取回来在 Python 里挑，日本市町村的所属县看团体代码（P429），中国地级行政区的所属省份看行政区划代码（P442）。
 - 中文维基浏览量：Wikimedia REST 的逐条接口并发几个就 429（让等 100 秒），只能挨个查；量大的用 MediaWiki API 的 `prop=pageviews`（一次 50 条，最近 60 天）。UA 要带联系方式（`sources.WIKI_UA`）。
 - warcraft.wiki.gg（猜魔兽地图）、wago.tools（猜魔兽地图、盲猜魔兽Boss）：`api.php` 要用机器人式的 UA（`sources.WIKI_UA`），浏览器 UA 会被 Cloudflare 拦成 403；一秒一个请求。wago.tools 的 DB2 CSV 要带正式服的 `build`（`/api/builds/latest` 的 `wow.version`），不带给的是测试服。

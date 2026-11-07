@@ -184,6 +184,12 @@
     "default": 300,
     "hint": "按 B 站粉丝数取，国内（主要说中文的）三分之二、国外三分之一；每边前六成算大众题"
   },
+  "seiyuu_pool_size": {
+    "description": "声优题库大小",
+    "type": "int",
+    "default": 500,
+    "hint": "日本女声优按 Bangumi 收藏数取前这么多位，前六成算大众题；能出的一共六百位上下"
+  },
   "refresh_days": {
     "description": "题库刷新间隔（天）",
     "type": "int",

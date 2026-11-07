@@ -11,7 +11,7 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, StarTools
 
-from .core import audio, cards, commands, geo, kline, members, teacher
+from .core import audio, cards, commands, geo, kline, members, seiyuu, teacher
 from .core.answer import candidates, is_correct
 from .core.bank import Bank
 from .core.blind import BLIND
@@ -22,7 +22,8 @@ from .core.store import load_json, save_json
 # 题型 -> 开题指令，也是卡片标题；排行榜指令去掉开头的「猜」。盲猜系列（不给图，每猜一个回一行对比）见 core/blind
 MODES = {
     "game": "猜游戏", "anime": "猜动画", "anisong": "听歌猜番", "pokemon": "猜宝可梦", "mecha": "猜萝卜",
-    "vtuber": "猜Vtuber", "wow": "猜魔兽地图", "member": "猜群友", "teacher": "猜老师", "geo": "猜地点", "country": "猜国家", "jpgeo": "猜日本地点",
+    "vtuber": "猜Vtuber", "wow": "猜魔兽地图", "member": "猜群友", "teacher": "猜老师", "seiyuu": "猜声优", "geo": "猜地点", "country": "猜国家",
+    "jpgeo": "猜日本地点",
     "kline": "猜K线", **{cat: b.command for cat, b in BLIND.items()},
 }
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
@@ -30,8 +31,8 @@ OFFLINE = {"country"}  # 暂时下线的题型：开题和排行榜都只回一�
 RECENT = 200  # 每个题型记最近出过的这么多道，出题时避开（Bank.pick）
 GRID = {"game", "anime", "pokemon", "mecha", "vtuber", "wow"}  # 九宫格逐格揭开的题型
 # 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对；
-# Vtuber 的名字也常互相包含；魔兽地图也是（东、西瘟疫之地）；群友按 @、QQ 号、名片认人；老师的名字也常互相包含
-BY_KEY = {"mecha", "mechadle", "vtuber", "wow", "member", "teacher"}
+# Vtuber 的名字也常互相包含；魔兽地图也是（东、西瘟疫之地）；群友按 @、QQ 号、名片认人；老师、声优的名字也常互相包含
+BY_KEY = {"mecha", "mechadle", "vtuber", "wow", "member", "teacher", "seiyuu"}
 GEO_ALIASES = {"猜街景"}
 JPGEO_ALIASES = {"猜日本街景"}
 VTUBER_ALIASES = {"猜vtuber", "猜VTuber", "猜V", "猜v"}
@@ -40,11 +41,13 @@ KLINE_ALIASES = {"猜k线"}
 WOW_ALIASES = {"猜魔兽", "猜魔兽世界", "猜wow", "猜WOW", "魔兽图寻"}
 WOW_BOARD_ALIASES = {"魔兽排行榜"}
 TEACHER_ALIASES = {"猜女优", "猜AV女优", "猜av女优", "猜AV", "猜av"}
+SEIYUU_ALIASES = {"猜女声优", "猜日本女声优", "猜日本声优", "猜声優", "猜CV", "猜cv"}
 KLINE_BOARD_ALIASES = {"k线排行榜"}
 ALL_BOARDS_ALIASES = {"战斗力榜", "总排行榜"}  # 管理员提前发整点排行榜，指令本身是「排行榜」
 COMMANDS = (
     set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始", "排行榜", "宵禁", "取消宵禁", "恢复宵禁"} | GEO_ALIASES | JPGEO_ALIASES
     | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | KLINE_ALIASES | KLINE_BOARD_ALIASES | WOW_ALIASES | WOW_BOARD_ALIASES | TEACHER_ALIASES
+    | SEIYUU_ALIASES
     | ALL_BOARDS_ALIASES
     | {a for b in BLIND.values() for a in b.aliases}
 )
@@ -58,7 +61,7 @@ LOOSE = {
     **{squash(m): ("start", cat) for cat, m in MODES.items()},
     **{squash(a): ("start", cat) for cat, names in (
         ("geo", GEO_ALIASES), ("jpgeo", JPGEO_ALIASES), ("vtuber", VTUBER_ALIASES), ("kline", KLINE_ALIASES),
-        ("wow", WOW_ALIASES), ("teacher", TEACHER_ALIASES),
+        ("wow", WOW_ALIASES), ("teacher", TEACHER_ALIASES), ("seiyuu", SEIYUU_ALIASES),
         *((cat, b.aliases) for cat, b in BLIND.items()),
     ) for a in names},
     "排行榜": ("boards", ""), **{squash(a): ("boards", "") for a in ALL_BOARDS_ALIASES},
@@ -108,6 +111,7 @@ class Round:
     avatar: object = None  # 猜群友：头像（只在内存里）
     plan: list = field(default_factory=list)  # 猜群友：每段露哪几格，见 members.plan
     roster: object = None  # 猜群友：开题时的群成员，认人用，见 members.Roster
+    cast: list = field(default_factory=list)  # 猜声优：这道题的三个角色 [(图, 作品名)]，按露出的顺序
     votes: dict = field(default_factory=dict)  # 猜K线：用户 -> (名字, 猜的涨跌幅)，按说的先后，每人只认第一句
     nudged: set = field(default_factory=set)  # 猜K线：提醒过「要带数字」的人，每人只提醒一次
 
@@ -220,6 +224,12 @@ class GuessPlugin(Star):
         async for r in self._start(event, "teacher"):
             yield r
 
+    @filter.command("猜声优", alias=SEIYUU_ALIASES)
+    async def guess_seiyuu(self, event: AstrMessageEvent):
+        """开一道猜声优（日本女声优配过的三个角色，猜是谁配的）"""
+        async for r in self._start(event, "seiyuu"):
+            yield r
+
     @filter.command("猜地点", alias=GEO_ALIASES)
     async def guess_geo(self, event: AstrMessageEvent):
         """开一道猜地点（Google 街景，猜国家）"""
@@ -288,6 +298,11 @@ class GuessPlugin(Star):
     async def teacher_board(self, event: AstrMessageEvent):
         """猜老师答对次数排行"""
         yield self._board(event, "teacher")
+
+    @filter.command("声优排行榜")
+    async def seiyuu_board(self, event: AstrMessageEvent):
+        """猜声优答对次数排行"""
+        yield self._board(event, "seiyuu")
 
     @filter.command("地点排行榜")
     async def geo_board(self, event: AstrMessageEvent):
@@ -672,6 +687,12 @@ class GuessPlugin(Star):
             # 头像整道题不变，每段按 teacher.STAGES 模糊得不一样（_question），答案卡不模糊
             rnd.avatar = cards.square(await self.bank.image(entry))
             rnd.reveal = cards.blur(rnd.avatar)
+        elif cat == "seiyuu":
+            # 三个角色整道题不变，一段多露一个（_question）；答案卡写上角色名
+            cast = seiyuu.cast(entry["chars"])
+            pics = await asyncio.gather(*(self.bank.image(entry, c["image"]) for c in cast))
+            rnd.cast = [(pic, c["work"]) for pic, c in zip(pics, cast)]
+            rnd.reveal = cards.trio(pics, len(cast), [[c["name"], c["work"]] for c in cast])
         elif cat == "wow":
             rnd.image = await self._bright(entry)
             rnd.order = cards.reveal_order(rnd.image)
@@ -804,13 +825,15 @@ class GuessPlugin(Star):
         save_json(self.data_dir / "bonus.json", self.bonus)
 
     def _steps(self, rnd: Round) -> int:
-        """九宫格 9 格；听歌猜番按片段数；猜群友 4 段；街景、轮廓、盲猜宝可梦是整图直接给，「提示」只加文字线索。"""
+        """九宫格 9 格；听歌猜番按片段数；猜群友、猜老师、猜声优 4 段；街景、轮廓、盲猜宝可梦是整图直接给，「提示」只加文字线索。"""
         if rnd.category in GRID:
             return 9
         if rnd.category == "member":
             return len(members.STAGES)
         if rnd.category == "teacher":
             return len(teacher.STAGES)
+        if rnd.category == "seiyuu":
+            return seiyuu.STEPS
         if rnd.category == "anisong":
             return len(audio.CLIPS)
         return len(rnd.hints)
@@ -845,6 +868,9 @@ class GuessPlugin(Star):
             image = cards.blur(rnd.avatar, teacher.STAGES[rnd.shown - 1])
             if rnd.shown == len(teacher.STAGES):
                 return [self._card(rnd, image, status, rnd.hints)]
+        if rnd.category == "seiyuu":
+            image = cards.trio([pic for pic, _ in rnd.cast], rnd.shown, [[work] for _, work in rnd.cast])
+            return [self._card(rnd, image, status, seiyuu.clues(rnd.hints, rnd.shown))]
         if rnd.category == "anisong":
             sec = audio.CLIPS[rnd.shown - 1]
             image = cards.music(audio.CLIPS, rnd.shown, say("song_step", n=rnd.shown, sec=sec))
@@ -905,7 +931,7 @@ class GuessPlugin(Star):
         live = [cat for cat in MODES if cat not in OFFLINE]
         text = say(
             "help",
-            grid=" ".join(MODES[c] for c in live if c in GRID or c in ("member", "teacher")),
+            grid=" ".join(MODES[c] for c in live if c in GRID or c in ("member", "teacher", "seiyuu")),
             street=" ".join(MODES[c] for c in live if c in ("geo", "jpgeo")),
             other=" ".join(MODES[c] for c in live if c in ("anisong", "kline")),
             blind=" ".join(MODES[c] for c in live if c in BLIND),
@@ -958,7 +984,8 @@ class GuessPlugin(Star):
         n, steps = rnd.shown, self._steps(rnd)
         edge = max(1, round(steps * 2 / 9))  # 九宫格是 ≤ 2 格算快、≥ 7 格算慢，其他按比例
         tier = "correct_fast" if n <= edge else "correct_slow" if n > steps - edge else "correct"
-        unit = {"anisong": "段", "member": "段提示", "teacher": "段模糊"}.get(rnd.category, "格" if rnd.category in GRID else "条线索")
+        unit = {"anisong": "段", "member": "段提示", "teacher": "段模糊", "seiyuu": "段"}.get(
+            rnd.category, "格" if rnd.category in GRID else "条线索")
         return tier, f"{n} {unit}"
 
     def _finish(self, gid: str, rnd: Round, uid: str | None = None, name: str = "") -> list | None:

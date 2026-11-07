@@ -1,6 +1,6 @@
 """出题卡片：正方形，中间 16:9 是图（九宫格，未揭开的格子盖色块），上下黑边写标题和提示。
 
-图区还有几种不分格的：街景三联、国家剪影、猜国家猜错时的世界地图、盲猜的对比表、听歌猜番的进度条、猜K线的 K 线图。
+图区还有几种不分格的：街景三联、猜声优的三宫格、国家剪影、猜国家猜错时的世界地图、盲猜的对比表、听歌猜番的进度条、猜K线的 K 线图。
 """
 
 import base64
@@ -126,6 +126,29 @@ def blur(img: Image.Image, radius: int | None = None) -> Image.Image:
     if radius:
         face = face.filter(ImageFilter.GaussianBlur(radius))
     out.paste(face, ((SIZE - PIC_H) // 2, 0))
+    out.info["grid"] = None
+    return out
+
+
+def trio(images: list[bytes], shown: int, labels: list[list[str]]) -> Image.Image:
+    """猜声优：三个角色图并排，前 shown 个露出来，其余盖色块打问号。露出来的底下压一条字：
+    出题时是作品名，答案卡是角色名和作品名（labels 里每个是一两行）。"""
+    out = Image.new("RGB", (SIZE, PIC_H), BG)
+    draw = ImageDraw.Draw(out, "RGBA")
+    w = (SIZE - GAP * 2) // 3
+    mark, line = font(PIC_H // 6, bold=True), font(26)
+    for i, (data, label) in enumerate(zip(images, labels)):
+        x = i * (w + GAP)
+        if i >= shown:
+            draw.rectangle((x, 0, x + w - 1, PIC_H - 1), fill=COVER)
+            draw.text((x + w / 2, PIC_H / 2), "?", fill=MARK, font=mark, anchor="mm")
+            continue
+        out.paste(_cover_fit(Image.open(io.BytesIO(data)).convert("RGB"), w, PIC_H), (x, 0))
+        if label := [t for t in label if t]:
+            top = PIC_H - 14 - 36 * len(label)
+            draw.rectangle((x, top, x + w - 1, PIC_H - 1), fill=(0, 0, 0, 176))
+            for j, text in enumerate(label):
+                draw.text((x + w / 2, top + 25 + 36 * j), fit(text, line, w - 24), fill=TEXT, font=line, anchor="mm")
     out.info["grid"] = None
     return out
 

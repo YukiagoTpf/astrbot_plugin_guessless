@@ -3,7 +3,7 @@
 动画取 Bangumi 最热门的作品，游戏从 Metacritic 高分游戏里按热度和评分分大众 / 小众两档，宝可梦取 PokeAPI 全图鉴，
 地点和日本地点是 Google 街景随机取景，国家是 Natural Earth 轮廓。找不到图的作品不进题库。
 听歌猜番是猜动画题库里在 AnimeThemes 有 OP / ED 的作品；猜萝卜是 Bangumi 上高达系列动画和超级机器人大战里的机体；
-猜Vtuber是 vtbs.moe 名单里 B 站粉丝最多的国内和国外虚拟主播；猜K线的题库只是沪深300、日经225、标普500、纳指100 的成分股，K 线出题时现拉（kline.py）。
+猜Vtuber是 vtbs.moe 名单里 B 站粉丝最多的国内和国外虚拟主播；猜声优是 AniList 和 Bangumi 上的日本女声优（seiyuu.py）；猜K线的题库只是沪深300、日经225、标普500、纳指100 的成分股，K 线出题时现拉（kline.py）。
 盲猜系列各题型的规则和题库构建在 blind/ 下，各一个模块，这里按 blind.BLIND 接上构建和刷新。
 题库、各数据源的查询结果和图片都缓存在插件数据目录，出题时只有首次用到的图片和街景需要联网。
 """
@@ -21,7 +21,7 @@ import aiohttp
 
 from astrbot.api import logger
 
-from . import audio, cards, geo, kline, teacher, vtuber_data, wow
+from . import audio, cards, geo, kline, seiyuu, teacher, vtuber_data, wow
 from .answer import candidates, find, norm
 from .blind import BLIND
 from .entries import (
@@ -88,7 +88,7 @@ MIN_POOL = 20
 DERIVED = {cat: b.base for cat, b in BLIND.items() if b.base}
 # 只认完整说出某个名字的题型，见 match。盲猜日本地点能猜的有一千七百多个市町村，按一大段算会把闲聊当成猜；
 # 盲猜中国地点同理，「我在苏州」不算猜苏州
-EXACT_ONLY = {"vtuber", "wow", "teacher"} | {cat for cat, b in BLIND.items() if b.exact}
+EXACT_ONLY = {"vtuber", "wow", "teacher", "seiyuu"} | {cat for cat, b in BLIND.items() if b.exact}
 
 
 class Bank:
@@ -99,7 +99,8 @@ class Bank:
         self.config = config
         self.entries: dict[str, list] = {
             cat: [] for cat in (
-                "anime", "anisong", "game", "pokemon", "mecha", "vtuber", "wow", "teacher", "geo", "country", "jpgeo", "kline",
+                "anime", "anisong", "game", "pokemon", "mecha", "vtuber", "wow", "teacher", "seiyuu", "geo", "country", "jpgeo",
+                "kline",
                 *BLIND,
             )
         }
@@ -238,6 +239,8 @@ class Bank:
             return [wow.VERSION]
         if cat == "teacher":
             return [teacher.VERSION]
+        if cat == "seiyuu":
+            return [self._size("seiyuu"), seiyuu.VERSION]
         if cat == "vtuber":
             return [self._size("vtuber"), VTUBER_VERSION]
         if cat == "anisong":  # 猜动画题库重建了，这边跟着换
@@ -291,6 +294,7 @@ class Bank:
         builders = {
             "game": self._build_games, "pokemon": self._build_pokemon, "country": self._build_country,
             "kline": partial(kline.build, self), "wow": partial(wow.build, self), "teacher": partial(teacher.build, self),
+            "seiyuu": partial(seiyuu.build, self),
             **{cat: partial(b.build, self) for cat, b in BLIND.items() if b.build},
             "geo": self._build_geo, "jpgeo": self._build_jpgeo,
             "anime": self._build_anime, "anisong": self._build_anisong, "mecha": self._build_mecha,

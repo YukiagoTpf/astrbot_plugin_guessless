@@ -1,4 +1,4 @@
-"""外部数据源：Wikidata（各地区译名、跨站 ID）、中文维基百科浏览量（国内知名度）、B 站 / AniList（动画）、AnimeThemes（动画 OP / ED）、
+"""外部数据源：Wikidata（各地区译名、跨站 ID）、中文维基百科浏览量（国内知名度）、B 站 / AniList（动画、声优和角色）、AnimeThemes（动画 OP / ED）、
 IGDB / Steam（游戏）、PokeAPI（宝可梦）、Gundam Wiki（高达机体资料和设定图）、vtbs.moe（虚拟主播）、さけのわ（日本酒）。"""
 
 import asyncio
@@ -29,6 +29,11 @@ BILI_HOME = "https://www.bilibili.com/"
 BILI_SEARCH = "https://api.bilibili.com/x/web-interface/search/type"
 ANILIST = "https://graphql.anilist.co"
 ANILIST_FIELDS = "id title { romaji english native } synonyms bannerImage startDate { year } format"
+# 猜声优：按收藏数排的 staff，每人带收藏最多的 10 个角色和角色出自的作品（成人向、Ecchi 的在 seiyuu.py 里筛掉）
+ANILIST_STAFF = """query($page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } staff(sort: FAVOURITES_DESC) {
+  id name { full native } gender languageV2 favourites dateOfBirth { year } dateOfDeath { year } yearsActive
+  characters(perPage: 10, sort: FAVOURITES_DESC) { edges { node { id name { full native } image { large } favourites }
+    media { title { native romaji } isAdult genres popularity } } } } } }"""
 # Bangumi 的放送类型 → AniList 的 format，只靠年份匹配时用来排除 OVA、特别篇
 ANILIST_FORMATS = {"TV": {"TV", "TV_SHORT"}, "WEB": {"ONA", "TV", "TV_SHORT"}, "剧场版": {"MOVIE"}}
 # 免 key，限速每分钟 90 次；按 AniList / MAL 的 ID 查，音频是几 MB 的 ogg
@@ -337,7 +342,7 @@ def _bili_pick(results: list, s: dict, media_id: str | None) -> dict | None:
 
 
 class Anilist:
-    """横幅图（B 站没有时兜底）和罗马音 / 英文名。免 key，限速每分钟 30 次，所以按 ID 一次查 50 部，搜索一次并 10 个。"""
+    """横幅图（B 站没有时兜底）和罗马音 / 英文名，猜声优的名单。免 key，限速每分钟 30 次，所以按 ID 一次查 50 部，搜索一次并 10 个。"""
 
     def __init__(self, session: aiohttp.ClientSession):
         self.session = session
@@ -369,6 +374,11 @@ class Anilist:
                 if m := _anilist_pick((data.get(f"q{j}") or {}).get("media") or [], s):
                     out[str(s["id"])] = m
         return out
+
+    async def staff(self, page: int) -> tuple[list[dict], bool]:
+        """按收藏数排的 staff 第 page 页（一页 50 个），和后面还有没有。AniList 最多翻到第 5000 个，再往后报 400。"""
+        data = (await self._post(ANILIST_STAFF, {"page": page})).get("Page") or {}
+        return data.get("staff") or [], bool((data.get("pageInfo") or {}).get("hasNextPage"))
 
     async def _post(self, query: str, variables: dict) -> dict:
         headers = {"User-Agent": UA, "Accept": "application/json"}

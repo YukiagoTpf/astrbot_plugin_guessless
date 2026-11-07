@@ -21,6 +21,7 @@ LINES = {
     "card_note_vtuber": ["说名字，{tries} · 「提示」开一格"],
     "card_note_wow": ["说地图名，{tries} · 「提示」开一格"],
     "card_note_teacher": ["说名字，{tries} · 「提示」看清一点"],
+    "card_note_seiyuu": ["说声优名，{tries} ·「提示」多一个"],
     "card_note_member": ["名片或 @TA，{tries} ·「提示」放大"],
     "card_note_kline": ["凑满人数就揭晓，每人只认第一句"],
     "tries": ["每人 {limit} 次"],
@@ -63,6 +64,7 @@ LINES = {
     ],
     "hint_exhausted_blind": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
     "hint_exhausted_teacher": ["已经是最清楚的一档了，再清楚就违规了。剩 {left} 秒"],
+    "hint_exhausted_seiyuu": ["三个角色、首字都给了，再认不出就是看番不看 staff 表。剩 {left} 秒"],
     "hint_exhausted_member": [
         "头像都露出一大块了还认不出？平时水群光看字不看人。剩 {left} 秒",
         "没有更大的格子了，剩下的靠你们对群友的了解——如果有的话。剩 {left} 秒",
@@ -133,6 +135,10 @@ LINES = {
     "timeout_teacher": [
         "时间到，没人认出来。看来本群都是正经人",
         "两分钟，零人答对。老师们白教了",
+    ],
+    "timeout_seiyuu": [
+        "时间到，没人认出来。角色天天看，声优一个不认识",
+        "两分钟，零人答对。建议看番别跳 ED，把 staff 表看完",
     ],
     "timeout_member": [
         "时间到，没人认出来。天天在群里聊，原来谁都不认识谁",
@@ -245,6 +251,7 @@ LINES = {
     "board_empty_vtuber": ["还没人猜对过 Vtuber，全员单推不看别家"],
     "board_empty_wow": ["还没人猜对过魔兽地图，全员没出过新手村"],
     "board_empty_teacher": ["还没人猜对过老师，全员没上过课"],
+    "board_empty_seiyuu": ["还没人猜对过声优，全员只看脸不听声"],
     "board_empty_member": ["还没人猜中过群友，大家果然只是网友"],
     "board_empty_geo": ["还没人猜对过地点，全员宅家，可喜可贺"],
     "board_empty_geodle": ["还没人盲猜中过国家，全员靠街景"],
