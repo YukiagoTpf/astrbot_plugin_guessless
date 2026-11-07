@@ -5,7 +5,9 @@
 中文名、读音、罗马字、出身地、事务所和收藏数都从 Bangumi 拿；人气按 Bangumi 的收藏数排（群里认得的多是国内有名的）。
 角色：她在 AniList 上收藏最多的 10 个，作品名用 Bangumi 上她的角色表里那个角色最早的动画的中文名，对不上用 AniList 的日文名。
 成人向、Ecchi 作品里的角色不出（角色图常是擦边的），BLOCK_WORKS 里的作品不出，旁白、她本人演自己的角色不出，
-能用的角色不到 3 个的人不出。已经去世的不出。
+近 20 年没再配过的角色不出（群里认不得八九十年代的老番），能用的角色不到 3 个的人不出。已经去世的不出。
+近 20 年要接过新角色（MIN_NEW 个是这些年才开始配的），只靠老角色的续作撑着的不出。
+出题时热门（收藏数前 HOT 位）和冷门的掺着出，各占多少看 seiyuu_niche_ratio。
 
 AniList 的名单和 Bangumi 的资料都缓存一个月（seiyuu_cache.json）。
 """
@@ -24,13 +26,16 @@ from .entries import assign_names, finish_entry, to_hans, usable_names
 from .sources import Anilist, HttpError, dedupe
 from .store import load_json, save_json
 
-VERSION = "anilist-bgm-v1"  # 选人、选角色、资料、提示、叫法的规则改了就换个名字，题库重建
+VERSION = "anilist-bgm-v2"  # 选人、选角色、资料、提示、叫法的规则改了就换个名字，题库重建
 BGM = "https://api.bgm.tv/v0"
 CACHE_DAYS = 30
+SCAN = 2  # AniList 名单存的字段改了就加一，缓存的名单作废重翻（Bangumi 的资料照用）
 PAGES = 100  # AniList 一页 50 个，最多翻到第 5000 个
 STEPS = 4  # 一段露一个角色，第 4 段不加角色，把剩下的资料和首字给完
 MIN_CHARS = 3
-MAIN_SHARE = 0.6  # 题库里收藏数排前六成的是大众题
+RECENT_YEARS = 20  # 角色在这么多年内的作品里还配过才出
+MIN_NEW = 3  # 能出的角色里至少这么多个是近 RECENT_YEARS 年才开始配的，人才出
+HOT = 100  # 收藏数前这么多位是热门（大众题），往后是冷门；只按收藏数均匀挑的话，大半是中不溜的，热门冷门都不显
 # 舰船、国家拟人的作品不出：角色是照着真实的军舰、国家画的，容易把群聊带到战争、政治上（只能加不能删）
 BLOCK_WORKS = (
     "艦隊これくしょん", "艦これ", "kancolle", "kantai collection", "舰队collection", "舰c",
@@ -56,12 +61,15 @@ def _trim(s: dict) -> dict | None:
         if not c or not media:
             continue
         cname = c.get("name") or {}
+        years = [y for m in media if (y := (m.get("startDate") or {}).get("year"))]
         chars.append({
             "id": c["id"], "name": cname.get("native") or cname.get("full") or "", "full": cname.get("full") or "",
             "image": (c.get("image") or {}).get("large") or "", "fav": c.get("favourites") or 0,
             "work": (media[0].get("title") or {}).get("native") or (media[0].get("title") or {}).get("romaji") or "",
             "titles": dedupe(t for m in media[:5] for t in ((m.get("title") or {}).get("native"), (m.get("title") or {}).get("romaji"))),
             "nsfw": any(m.get("isAdult") or "Ecchi" in (m.get("genres") or []) for m in media),
+            # 她头一回和最近一次配这个角色的作品是哪年开播的
+            "first": min(years, default=0), "last": max(years, default=0),
         })
     if not chars:
         return None
@@ -125,21 +133,30 @@ def _blocked(*titles: str) -> bool:
     return any(w in norm(t) for t in titles if t for w in words)
 
 
+def _since() -> int:
+    return time.localtime().tm_year - RECENT_YEARS
+
+
 def usable(s: dict, works: dict) -> list[dict]:
-    """能出的角色，收藏多的在前：有图、不是成人向 / Ecchi / BLOCK_WORKS 的、不是旁白、不是她本人、作品名里没有她的名字。
-    作品名换成 Bangumi 的中文名。"""
+    """能出的角色，收藏多的在前：有图、近 RECENT_YEARS 年还配过、不是成人向 / Ecchi / BLOCK_WORKS 的、不是旁白、不是她本人、
+    作品名里没有她的名字。作品名换成 Bangumi 的中文名。"""
     me = {k for k in (norm(s["native"]), norm(s["full"])) if len(k) >= 2}
-    out, seen = [], set()
+    since, out, seen = _since(), [], set()
     for c in s["chars"]:
         work = works.get(norm(c["name"])) or c["work"]
         key = norm(c["name"])
-        if (not c["image"] or c["image"].endswith("/default.jpg") or c["image"] in seen or c["nsfw"]
+        if (not c["image"] or c["image"].endswith("/default.jpg") or c["image"] in seen or c["nsfw"] or c["last"] < since
                 or _blocked(work, *c["titles"]) or NARRATOR.search(f"{c['name']} {c['full']}")
                 or any(k in key or k in norm(c["full"]) or k in norm(work) for k in me)):
             continue
         seen.add(c["image"])
-        out.append({"name": c["name"], "work": work, "image": c["image"], "fav": c["fav"]})
+        out.append({"name": c["name"], "work": work, "image": c["image"], "fav": c["fav"], "first": c["first"]})
     return out
+
+
+def active(chars: list[dict]) -> bool:
+    """近 RECENT_YEARS 年还在接新角色：能出的角色（usable 的）里够 MIN_NEW 个是这些年才开始配的。"""
+    return sum(c["first"] >= _since() for c in chars) >= MIN_NEW
 
 
 def _latin(text: str) -> list[str]:
@@ -220,18 +237,18 @@ def cast(chars: list[dict]) -> list[dict]:
 
 async def build(bank) -> None:
     session, now = bank.http(), time.time()
-    path = bank.dir / "seiyuu_cache.json"  # {"at": …, "staff": [AniList 的名单], "people": {AniList ID: {"at", "person", "works"}}}
+    path = bank.dir / "seiyuu_cache.json"  # {"at": …, "scan": SCAN, "staff": [AniList 的名单], "people": {AniList ID: {"at", "person", "works"}}}
     cache = load_json(path) or {}
 
     def status(text: str) -> None:
         bank.status["seiyuu"] = text
 
-    if now - cache.get("at", 0) > CACHE_DAYS * 86400:
-        cache = {"at": now, "staff": await _scan(session, status), "people": cache.get("people", {})}
+    if now - cache.get("at", 0) > CACHE_DAYS * 86400 or cache.get("scan") != SCAN:
+        cache = {"at": now, "scan": SCAN, "staff": await _scan(session, status), "people": cache.get("people", {})}
         save_json(path, cache)
     people = cache["people"]
     # 只查角色够用的，省得在 VTuber、歌手身上白跑
-    staff = [s for s in cache["staff"] if not s["dead"] and len(usable(s, {})) >= MIN_CHARS]
+    staff = [s for s in cache["staff"] if not s["dead"] and len(chars := usable(s, {})) >= MIN_CHARS and active(chars)]
     todo = [s for s in staff if now - people.get(str(s["id"]), {}).get("at", 0) > CACHE_DAYS * 86400]
     failures = 0
     try:
@@ -254,12 +271,12 @@ async def build(bank) -> None:
         rec = people.get(str(s["id"])) or {}
         if not (person := rec.get("person")):
             continue
-        if len(chars := usable(s, rec.get("works") or {})) >= MIN_CHARS:
+        if len(chars := usable(s, rec.get("works") or {})) >= MIN_CHARS and active(chars):
             rows.append((person["collects"], s["fav"], s, person, chars))
     rows.sort(key=lambda r: (-r[0], -r[1]))
     rows = rows[: bank._size("seiyuu")]
     names = assign_names({str(s["id"]): names_of(s, person) for _, _, s, person, _ in rows}, [str(r[2]["id"]) for r in rows])
-    entries = [entry(s, person, chars, names[str(s["id"])], i < len(rows) * MAIN_SHARE)
+    entries = [entry(s, person, chars, names[str(s["id"])], i < HOT)
                for i, (_, _, s, person, chars) in enumerate(rows) if names[str(s["id"])]]
     logger.info(f"[guess] seiyuu: {len(cache['staff'])} on AniList, {len(staff)} with enough roles, {len(entries)} in the bank")
     bank.commit("seiyuu", entries)

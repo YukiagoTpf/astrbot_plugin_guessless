@@ -29,11 +29,12 @@ BILI_HOME = "https://www.bilibili.com/"
 BILI_SEARCH = "https://api.bilibili.com/x/web-interface/search/type"
 ANILIST = "https://graphql.anilist.co"
 ANILIST_FIELDS = "id title { romaji english native } synonyms bannerImage startDate { year } format"
-# 猜声优：按收藏数排的 staff，每人带收藏最多的 10 个角色和角色出自的作品（成人向、Ecchi 的在 seiyuu.py 里筛掉）
+# 猜声优：按收藏数排的 staff，每人带收藏最多的 10 个角色和她给这个角色配音的作品（成人向、Ecchi 的在 seiyuu.py 里筛掉，
+# 年份看是不是近些年还在配）
 ANILIST_STAFF = """query($page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } staff(sort: FAVOURITES_DESC) {
   id name { full native } gender languageV2 favourites dateOfBirth { year } dateOfDeath { year } yearsActive
   characters(perPage: 10, sort: FAVOURITES_DESC) { edges { node { id name { full native } image { large } favourites }
-    media { title { native romaji } isAdult genres popularity } } } } } }"""
+    media { title { native romaji } isAdult genres popularity startDate { year } } } } } } }"""
 # Bangumi 的放送类型 → AniList 的 format，只靠年份匹配时用来排除 OVA、特别篇
 ANILIST_FORMATS = {"TV": {"TV", "TV_SHORT"}, "WEB": {"ONA", "TV", "TV_SHORT"}, "剧场版": {"MOVIE"}}
 # 免 key，限速每分钟 90 次；按 AniList / MAL 的 ID 查，音频是几 MB 的 ogg

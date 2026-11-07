@@ -138,8 +138,10 @@ class Bank:
 
     def pick(self, cat: str, exclude) -> dict:
         """按 niche_ratio 的概率出小众题（默认大约五题一道），其余出大众题；没分档的题都算大众题。
+        有 {cat}_niche_ratio 的题型按它的来（猜声优热门冷门各一半）。
         exclude 是最近出过的（从旧到新），避开它们；这一档都出过了，就从最久没出的那些里挑。"""
-        tier = "niche" if random.random() < self.config.get("niche_ratio", 0.2) else "main"
+        ratio = self.config.get(f"{cat}_niche_ratio", self.config.get("niche_ratio", 0.2))
+        tier = "niche" if random.random() < ratio else "main"
         entries = kline.pick(self.entries[cat]) if cat == "kline" else self.entries[cat]
         pool = [e for e in entries if e.get("tier", "main") == tier] or entries
         last = {g: i for i, g in enumerate(exclude)}

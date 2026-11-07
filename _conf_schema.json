@@ -188,7 +188,13 @@
     "description": "声优题库大小",
     "type": "int",
     "default": 500,
-    "hint": "日本女声优按 Bangumi 收藏数取前这么多位，前六成算大众题；能出的一共六百位上下"
+    "hint": "近 20 年还在接新角色的日本女声优按 Bangumi 收藏数取前这么多位，前 100 位算热门（大众题）"
+  },
+  "seiyuu_niche_ratio": {
+    "description": "声优冷门题比例",
+    "type": "float",
+    "default": 0.5,
+    "hint": "猜声优每道题有这个概率出冷门的（收藏数 100 名往后），0.5 就是热门冷门各一半；不用 niche_ratio"
   },
   "refresh_days": {
     "description": "题库刷新间隔（天）",
