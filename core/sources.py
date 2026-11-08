@@ -35,6 +35,10 @@ ANILIST_STAFF = """query($page: Int) { Page(page: $page, perPage: 50) { pageInfo
   id name { full native } gender languageV2 favourites dateOfBirth { year } dateOfDeath { year } yearsActive
   characters(perPage: 10, sort: FAVOURITES_DESC) { edges { node { id name { full native } image { large } favourites }
     media { title { native romaji } isAdult genres popularity startDate { year } } } } } } }"""
+# 猜声优：角色在各部作品里的日语声优（staff 的 characters 里只列她自己，看不出有没有别人一起配）。
+# 不带 node 的话 voiceActorRoles 全是 null
+ANILIST_CASTS = """query($ids: [Int]) { Page(perPage: 50) { characters(id_in: $ids) {
+  id media(perPage: 25) { edges { node { id } voiceActorRoles(language: JAPANESE) { voiceActor { id } } } } } } }"""
 # Bangumi 的放送类型 → AniList 的 format，只靠年份匹配时用来排除 OVA、特别篇
 ANILIST_FORMATS = {"TV": {"TV", "TV_SHORT"}, "WEB": {"ONA", "TV", "TV_SHORT"}, "剧场版": {"MOVIE"}}
 # 免 key，限速每分钟 90 次；按 AniList / MAL 的 ID 查，音频是几 MB 的 ogg
@@ -380,6 +384,18 @@ class Anilist:
         """按收藏数排的 staff 第 page 页（一页 50 个），和后面还有没有。AniList 最多翻到第 5000 个，再往后报 400。"""
         data = (await self._post(ANILIST_STAFF, {"page": page})).get("Page") or {}
         return data.get("staff") or [], bool((data.get("pageInfo") or {}).get("hasNextPage"))
+
+    async def casts(self, ids: list[int]) -> dict[str, list[list[int]]]:
+        """最多 50 个角色，每部作品里给它配音的日语声优 ID：{角色 ID: [[声优 ID, ...], ...]}，每个角色最多看 25 部。
+        AniList 上没了的角色给空列表。"""
+        data = (await self._post(ANILIST_CASTS, {"ids": ids})).get("Page") or {}
+        out = {str(i): [] for i in ids}
+        for c in data.get("characters") or []:
+            out[str(c["id"])] = [
+                sorted({v["voiceActor"]["id"] for v in e.get("voiceActorRoles") or [] if v.get("voiceActor")})
+                for e in (c.get("media") or {}).get("edges") or []
+            ]
+        return out
 
     async def _post(self, query: str, variables: dict) -> dict:
         headers = {"User-Agent": UA, "Accept": "application/json"}

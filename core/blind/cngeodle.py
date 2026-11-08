@@ -1,7 +1,8 @@
 """盲猜中国地点：猜一个地级市（北上广深猜区），对比省份、方位、人口、面积、GDP、线级。
 
-Wikidata 里的地级行政区、直辖市、省辖县级市和北上广深的区都能猜。出题的是地级市（含副省级市）、直辖市、
-省辖县级市和北上广深的区，北上广深整个市不出题（cn_data.SPLIT），自治州、地区、盟也不出；不分大众小众，
+Wikidata 里的地级行政区、直辖市、省辖县级市、神农架林区和北上广深的区都能猜。出题的是地级市（含副省级市）、直辖市、
+省辖县级市、两个林区（神农架林区、大兴安岭地区）和北上广深的区，北上广深整个市不出题（cn_data.SPLIT），
+别的自治州、地区、盟也不出；不分大众小众，
 每道题一样容易抽到。GDP 和线级 Wikidata 上没有，手写在 core/cn_data.py，缺这两样的不出题。名胜从 5A 景区里挑，查不到就只少这一条提示，一小时后再查。
 三沙市不出、不认（geo.CN_EXCLUDE）。
 """
@@ -17,12 +18,13 @@ from .. import cn_data, geo
 from ..entries import assign_names, scrub, usable_names
 from .base import Blind, away, blank, entry, here, num, ratio, same, size, tiered
 
-VERSION = "split-v2"  # 选题、条目格式、提示规则（CN_SIGHT_BLOCK）、cn_data 改了就换个名字，题库重建
+VERSION = "forest-v1"  # 选题、条目格式、提示规则（CN_SIGHT_BLOCK）、cn_data 改了就换个名字，题库重建
 COLUMNS = ("省份", "方位", "人口", "面积", "GDP", "线级")
 CLUES = ("区号", "车牌", "附近", "名胜", "首字")
-LEVELS = ("地级市", "副省级市", "直辖市", "省辖县级市")  # 出题的级别，再加上北上广深的区
-# 不在线级榜上的：北上广深的区、省辖县级市，线级格直接写是哪一类
-UNRANKED = {"市辖区": "区县", "省辖县级市": "省辖县级市"}
+LEVELS = ("地级市", "副省级市", "直辖市", "省辖县级市", "林区")  # 出题的级别，再加上北上广深的区
+FOREST = ("大兴安岭地区",)  # 地区里只出它：和神农架一样是林区，群友要的
+# 不在线级榜上的：北上广深的区、省辖县级市、神农架林区，线级格直接写是哪一类
+UNRANKED = {"市辖区": "区县", "省辖县级市": "省辖县级市", "林区": "林区"}
 NEAR_KM = 100  # 相距这么近以内（东部挨着的两个市多在这个距离），方位格标黄
 # 自治州名里的民族，去掉才是平时的叫法（「大理白族自治州」→「大理」）；蒙古、柯尔克孜、哈萨克不带「族」
 CN_ETHNIC = "朝鲜|土家|苗|侗|布依|彝|哈尼|壮|傣|白|景颇|傈僳|藏|羌|回|蒙古|柯尔克孜|哈萨克"
@@ -36,12 +38,12 @@ CN_SIGHT_BLOCK = re.compile(
 
 def cn_names(m: dict) -> tuple[str, list[str]]:
     """地级行政区和区的 (表里写的名字, 能猜的叫法)。去掉「市」「地区」「盟」「区」也算（「苏州」「喀什」「海淀」，
-    「浦东新区」说「浦东」）；自治州写成「大理州」，说「大理州」「大理」都算，但只说「海南」不算海南州，那是省。"""
+    「浦东新区」说「浦东」，「神农架林区」说「神农架」）；自治州写成「大理州」，说「大理州」「大理」都算，但只说「海南」不算海南州，那是省。"""
     zh = m["zh"]
     if m["level"] == "自治州" and (found := re.match(f"^(.+?)(?:(?:{CN_ETHNIC})族?)+自治州$", zh)):
         title, bases = found[1] + "州", [found[1] + "州", found[1]]
     else:
-        title, bases = zh, [re.sub("(?:新区|地区|市|盟|区)$", "", zh)]
+        title, bases = zh, [re.sub("(?:新区|林区|地区|市|盟|区)$", "", zh)]
     provinces = {name for name, _ in geo.CN_PROVINCES.values()}
     if m["level"] in ("自治州", "地区", "盟"):
         bases = [b for b in bases if b not in provinces]
@@ -92,6 +94,10 @@ def attrs_of(key: str, m: dict, city: dict) -> dict:
     }
 
 
+def neighbors(a: str, b: str) -> bool:
+    return tuple(sorted((a, b))) in geo.CN_NEIGHBORS
+
+
 def money(yi: float) -> str:
     """GDP（亿元）写成表里放得下的，两位有效数字：5.7万亿、2800亿、110亿。"""
     n = float(f"{yi:.2g}")
@@ -99,7 +105,7 @@ def money(yi: float) -> str:
 
 
 def row(guess: dict, answer: dict) -> list[list[str]]:
-    """省份：同省绿、同大区黄。方位：两地相距多远，NEAR_KM 以内标黄，箭头是从猜的地方看答案在哪个方向
+    """省份：同省绿，同大区或接壤（geo.CN_NEIGHBORS）的黄。方位：两地相距多远，NEAR_KM 以内标黄，箭头是从猜的地方看答案在哪个方向
     （Wikidata 的接壤关系只有三成的市有，不写「接壤」）。人口、面积同盲猜地点，GDP 也一样按倍数比。
     线级：一线、新一线、二线……五线，一样绿、差一档黄、差得多红，箭头指答案的线级更高（↑）还是更低（↓）；
     区县、省辖县级市（UNRANKED）不分线级，和答案是一类的绿，不是的红，不带箭头。
@@ -118,7 +124,7 @@ def row(guess: dict, answer: dict) -> list[list[str]]:
     else:
         tier = same(mine, theirs)
     return [
-        tiered(guess["prov"], answer["prov"], guess["region"] == answer["region"]),
+        tiered(guess["prov"], answer["prov"], guess["region"] == answer["region"] or neighbors(guess["prov"], answer["prov"])),
         place,
         *size(guess, answer),
         ratio(guess.get("gdp", 0), answer.get("gdp", 0), money(guess.get("gdp", 0))),
@@ -157,13 +163,13 @@ async def build(bank) -> None:
     # 缺 GDP、线级的不出题（胡杨河市只查到第七师合在一起的 GDP），表里空一格太好猜
     pool = [
         k for k in order if k in places and attrs[k]["gdp"] and attrs[k]["tier"]
-        and (k in districts or (units[k]["level"] in LEVELS and k not in split))
+        and (k in districts or (units[k]["level"] in LEVELS and k not in split) or units[k]["zh"] in FOREST)
     ]
     entries = []
     for k in pool:
         m, a, c = units[k], attrs[k], city[k]
         # 附近：离得最近的三个里挑浏览量最高的两个，比只给最近的两个好认。地级市在地级行政区里挑；
-        # 区在区和别的市里挑（不算自己的市）；省辖县级市在地级行政区和别的省辖县级市里挑（仙桃、潜江、天门挨着）
+        # 区在区和别的市里挑（不算自己的市）；省辖县级市、林区在地级行政区和别的省辖县级市里挑（仙桃、潜江、天门挨着）
         group = units if k in districts else prefs if k in prefs else {**prefs, **counties}
         around = [n for n in group if n not in (k, m.get("city"))]
         near = sorted((geo.distance([[units[n]["lat"], units[n]["lng"]]], [m["lat"], m["lng"]]), n) for n in around)

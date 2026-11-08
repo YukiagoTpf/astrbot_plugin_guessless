@@ -107,9 +107,21 @@ CN_PROVINCES = {
     "50": ("重庆", "西南"), "51": ("四川", "西南"), "52": ("贵州", "西南"), "53": ("云南", "西南"), "54": ("西藏", "西南"),
     "61": ("陕西", "西北"), "62": ("甘肃", "西北"), "63": ("青海", "西北"), "64": ("宁夏", "西北"), "65": ("新疆", "西北"),
 }
+# 陆上接壤的省份（手写，Wikidata 的 P47 不全）：盲猜中国地点的省份格，接壤的和同大区的一样标黄。海南不和谁接壤
+_CN_BORDERS = """
+    北京-天津 北京-河北 天津-河北 河北-山西 河北-内蒙古 河北-辽宁 河北-山东 河北-河南 山西-内蒙古 山西-陕西 山西-河南
+    内蒙古-黑龙江 内蒙古-吉林 内蒙古-辽宁 内蒙古-陕西 内蒙古-宁夏 内蒙古-甘肃 辽宁-吉林 吉林-黑龙江
+    上海-江苏 上海-浙江 江苏-浙江 江苏-安徽 江苏-山东 浙江-安徽 浙江-江西 浙江-福建 安徽-江西 安徽-湖北 安徽-河南 安徽-山东
+    福建-江西 福建-广东 江西-湖北 江西-湖南 江西-广东 山东-河南
+    河南-陕西 河南-湖北 湖北-湖南 湖北-重庆 湖北-陕西 湖南-广东 湖南-广西 湖南-贵州 湖南-重庆 广东-广西
+    广西-贵州 广西-云南 重庆-四川 重庆-贵州 重庆-陕西 四川-贵州 四川-云南 四川-西藏 四川-青海 四川-甘肃 四川-陕西
+    贵州-云南 云南-西藏 西藏-青海 西藏-新疆 陕西-甘肃 陕西-宁夏 甘肃-青海 甘肃-宁夏 甘肃-新疆 青海-新疆
+"""
+CN_NEIGHBORS = {tuple(sorted(pair.split("-"))) for pair in _CN_BORDERS.split()}
 CN_EXCLUDE = {"4603"}  # 三沙市：南海诸岛，有争议，不出题也不能猜
-# 省直辖县级行政区里的县级市（济源、仙桃、海南和新疆的那些），两个类都挂的才算：不要神农架林区和海南的县
+# 省直辖县级行政区里的县级市（济源、仙桃、海南和新疆的那些）和林区（神农架），两个类都挂的才算：不要海南的县
 CN_COUNTY_TYPES = ("Q18657584", "Q1070990")
+CN_FOREST = "Q4259749"  # 林区，只有神农架林区
 CN_SCENIC = "Q6838244"  # 国家 5A 级旅游景区，名胜提示从这里挑
 # 三张图的请求尺寸：左边一张大图，右边上下两张小图（cards.load_panels 再缩放拼版）
 PANELS = ((640, 540), (356, 302), (356, 302))
@@ -395,18 +407,18 @@ async def fetch_cn_districts(session: aiohttp.ClientSession, cities: list[str]) 
 
 
 async def fetch_cn_counties(session: aiohttp.ClientSession) -> dict[str, dict]:
-    """省直辖的县级市（CN_COUNTY_TYPES）：{Wikidata ID: {level（省辖县级市）, code（六位）, prov, 以及 _cn_facts 的资料}}。
-    新设的（新星市、白杨市）Wikidata 上还没有人口，_cn_facts 不要。"""
+    """省直辖的县级市（CN_COUNTY_TYPES）和林区（CN_FOREST）：{Wikidata ID: {level（省辖县级市、林区）, code（六位）, prov,
+    以及 _cn_facts 的资料}}。新设的（新星市、白杨市）Wikidata 上还没有人口，_cn_facts 不要。"""
     qid = lambda r, k="x": r[k]["value"].rsplit("/", 1)[-1]  # noqa: E731
-    types = " ; ".join(f"wdt:P31 wd:{t}" for t in CN_COUNTY_TYPES)
-    found: dict[str, str] = {}
-    for r in await _sparql(session, f"""SELECT ?x ?code WHERE {{ ?x {types} ; wdt:P442 ?code .
-      FILTER NOT EXISTS {{ ?x wdt:P576 ?end }} }}"""):
+    province, city = CN_COUNTY_TYPES
+    found: dict[str, tuple[str, str]] = {}
+    for r in await _sparql(session, f"""SELECT ?x ?t ?code WHERE {{ VALUES ?t {{ wd:{city} wd:{CN_FOREST} }}
+      ?x wdt:P31 wd:{province} ; wdt:P31 ?t ; wdt:P442 ?code . FILTER NOT EXISTS {{ ?x wdt:P576 ?end }} }}"""):
         code = "".join(c for c in r["code"]["value"] if c.isdigit())
         if len(code) == 6 and code[:2] in CN_PROVINCES:
-            found[qid(r)] = code
+            found[qid(r)] = (code, "林区" if qid(r, "t") == CN_FOREST else "省辖县级市")
     facts = await _cn_facts(session, sorted(found))
-    return {k: {**facts[k], "level": "省辖县级市", "code": code, "prov": code[:2]} for k, code in found.items() if k in facts}
+    return {k: {**facts[k], "level": level, "code": code, "prov": code[:2]} for k, (code, level) in found.items() if k in facts}
 
 
 async def _cn_facts(session: aiohttp.ClientSession, keys: list[str]) -> dict[str, dict]:

@@ -5,17 +5,19 @@
 中文名、读音、罗马字、出身地、事务所和收藏数都从 Bangumi 拿；人气按 Bangumi 的收藏数排（群里认得的多是国内有名的）。
 角色：她在 AniList 上收藏最多的 10 个，作品名用 Bangumi 上她的角色表里那个角色最早的动画的中文名，对不上用 AniList 的日文名。
 成人向、Ecchi 作品里的角色不出（角色图常是擦边的），BLOCK_WORKS 里的作品不出，旁白、她本人演自己的角色不出，
-近 20 年没再配过的角色不出（群里认不得八九十年代的老番），能用的角色不到 3 个的人不出。已经去世的不出。
+近 20 年没再配过的角色不出（群里认不得八九十年代的老番），角色图画的是别人那一版的不出（同一部里小时候、长大后各一个人配，
+角色图却只有一张，见 shared），能用的角色不到 3 个的人不出。已经去世的不出。
 近 20 年要接过新角色（MIN_NEW 个是这些年才开始配的），只靠老角色的续作撑着的不出。
-出题时热门（收藏数前 HOT 位）和冷门的掺着出，各占多少看 seiyuu_niche_ratio。
+出题时热门（收藏数前 HOT 位）和冷门的掺着出，各占多少看 seiyuu_niche_ratio。露的角色偏新番（cast）。
 
-AniList 的名单和 Bangumi 的资料都缓存一个月（seiyuu_cache.json）。
+AniList 的名单、角色的声优和 Bangumi 的资料都缓存一个月（seiyuu_cache.json）。
 """
 
 import asyncio
 import random
 import re
 import time
+from collections import Counter
 
 import aiohttp
 
@@ -26,7 +28,7 @@ from .entries import assign_names, finish_entry, to_hans, usable_names
 from .sources import Anilist, HttpError, dedupe
 from .store import load_json, save_json
 
-VERSION = "anilist-bgm-v2"  # 选人、选角色、资料、提示、叫法的规则改了就换个名字，题库重建
+VERSION = "anilist-bgm-v3"  # 选人、选角色、资料、提示、叫法的规则改了就换个名字，题库重建
 BGM = "https://api.bgm.tv/v0"
 CACHE_DAYS = 30
 SCAN = 2  # AniList 名单存的字段改了就加一，缓存的名单作废重翻（Bangumi 的资料照用）
@@ -137,9 +139,20 @@ def _since() -> int:
     return time.localtime().tm_year - RECENT_YEARS
 
 
-def usable(s: dict, works: dict) -> list[dict]:
+def shared(me: int, roles: list[list[int]]) -> bool:
+    """角色图画的是不是别人配的那一版：她配过这个角色的那几部里，有一半以上还有别的日语声优也在配，而且那人配的部数
+    不比她少（《新世界より》的渡辺早季两个人各配一半；五条悟、卡卡西小时候是女声优配的，图是长大后的；
+    《ポプテピピック》每集换人）。柯南也挂着新一的声优，但她配的部数多，图是她那一版，照出；偶尔客串一部的（鸣人
+    婴儿时）不算。roles 是 Anilist.casts 给的每部作品的声优，查不到就当不是。"""
+    mine = [r for r in roles if me in r]
+    total = Counter(v for r in roles for v in r)
+    others = Counter(v for r in mine for v in r if v != me)
+    return any(n * 2 >= len(mine) and total[v] >= total[me] for v, n in others.items())
+
+
+def usable(s: dict, works: dict, casts: dict | None = None) -> list[dict]:
     """能出的角色，收藏多的在前：有图、近 RECENT_YEARS 年还配过、不是成人向 / Ecchi / BLOCK_WORKS 的、不是旁白、不是她本人、
-    作品名里没有她的名字。作品名换成 Bangumi 的中文名。"""
+    作品名里没有她的名字、图不是别人配的那一版（casts 是 Anilist.casts 的结果，不给就不查）。作品名换成 Bangumi 的中文名。"""
     me = {k for k in (norm(s["native"]), norm(s["full"])) if len(k) >= 2}
     since, out, seen = _since(), [], set()
     for c in s["chars"]:
@@ -147,10 +160,11 @@ def usable(s: dict, works: dict) -> list[dict]:
         key = norm(c["name"])
         if (not c["image"] or c["image"].endswith("/default.jpg") or c["image"] in seen or c["nsfw"] or c["last"] < since
                 or _blocked(work, *c["titles"]) or NARRATOR.search(f"{c['name']} {c['full']}")
-                or any(k in key or k in norm(c["full"]) or k in norm(work) for k in me)):
+                or any(k in key or k in norm(c["full"]) or k in norm(work) for k in me)
+                or shared(s["id"], (casts or {}).get(str(c["id"])) or [])):
             continue
         seen.add(c["image"])
-        out.append({"name": c["name"], "work": work, "image": c["image"], "fav": c["fav"], "first": c["first"]})
+        out.append({"id": c["id"], "name": c["name"], "work": work, "image": c["image"], "fav": c["fav"], "first": c["first"]})
     return out
 
 
@@ -223,10 +237,15 @@ def clues(hints: list, shown: int) -> list:
 
 def cast(chars: list[dict]) -> list[dict]:
     """这道题露哪三个角色，按露出的顺序：冷门的先露，最后一个从她最有名的三个里挑，不至于三个都认不出。
+    群友认得新番的多，所以偏新的：最有名的三个里越新的越容易挑中，前两个先从后来才配的那一半里挑。
     尽量出自三部不同的作品，底下的作品名才是三条线索。"""
     if len(chars) < 5:
         return sorted(random.sample(chars, MIN_CHARS), key=lambda c: c["fav"])
-    star, rest = random.choice(chars[:3]), random.sample(chars[3:], len(chars) - 3)
+    newest = lambda c: -c.get("first", 0)  # noqa: E731
+    star = random.choices(sorted(chars[:3], key=newest), weights=(3, 2, 1))[0]
+    rest = sorted(chars[3:], key=newest)
+    half = max(2, (len(rest) + 1) // 2)
+    rest = random.sample(rest[:half], half) + random.sample(rest[half:], len(rest) - half)
     picked = []
     for c in rest:
         if len(picked) < 2 and c["work"] not in {star["work"], *(p["work"] for p in picked)}:
@@ -237,18 +256,28 @@ def cast(chars: list[dict]) -> list[dict]:
 
 async def build(bank) -> None:
     session, now = bank.http(), time.time()
-    path = bank.dir / "seiyuu_cache.json"  # {"at": …, "scan": SCAN, "staff": [AniList 的名单], "people": {AniList ID: {"at", "person", "works"}}}
+    path = bank.dir / "seiyuu_cache.json"  # {"at": …, "scan": SCAN, "staff": [AniList 的名单], "people": {AniList ID: {"at", "person", "works"}}, "casts": {角色 ID: 各部的声优}}
     cache = load_json(path) or {}
 
     def status(text: str) -> None:
         bank.status["seiyuu"] = text
 
     if now - cache.get("at", 0) > CACHE_DAYS * 86400 or cache.get("scan") != SCAN:
+        # 角色的声优跟着名单一个月一换，Bangumi 的资料各人按自己的时间过期
         cache = {"at": now, "scan": SCAN, "staff": await _scan(session, status), "people": cache.get("people", {})}
         save_json(path, cache)
-    people = cache["people"]
+    people, casts = cache["people"], cache.setdefault("casts", {})
     # 只查角色够用的，省得在 VTuber、歌手身上白跑
     staff = [s for s in cache["staff"] if not s["dead"] and len(chars := usable(s, {})) >= MIN_CHARS and active(chars)]
+    todo = sorted({c["id"] for s in staff for c in usable(s, {})} - {int(k) for k in casts})
+    anilist = Anilist(session)
+    try:
+        for i in range(0, len(todo), 50):
+            status(f"正在查角色还有谁配过 {i}/{len(todo)}")
+            casts.update(await anilist.casts(todo[i : i + 50]))
+    finally:
+        save_json(path, cache)
+    staff = [s for s in staff if len(chars := usable(s, {}, casts)) >= MIN_CHARS and active(chars)]
     todo = [s for s in staff if now - people.get(str(s["id"]), {}).get("at", 0) > CACHE_DAYS * 86400]
     failures = 0
     try:
@@ -271,7 +300,7 @@ async def build(bank) -> None:
         rec = people.get(str(s["id"])) or {}
         if not (person := rec.get("person")):
             continue
-        if len(chars := usable(s, rec.get("works") or {})) >= MIN_CHARS and active(chars):
+        if len(chars := usable(s, rec.get("works") or {}, casts)) >= MIN_CHARS and active(chars):
             rows.append((person["collects"], s["fav"], s, person, chars))
     rows.sort(key=lambda r: (-r[0], -r[1]))
     rows = rows[: bank._size("seiyuu")]
