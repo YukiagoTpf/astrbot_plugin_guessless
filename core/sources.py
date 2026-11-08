@@ -35,10 +35,10 @@ ANILIST_STAFF = """query($page: Int) { Page(page: $page, perPage: 50) { pageInfo
   id name { full native } gender languageV2 favourites dateOfBirth { year } dateOfDeath { year } yearsActive
   characters(perPage: 10, sort: FAVOURITES_DESC) { edges { node { id name { full native } image { large } favourites }
     media { title { native romaji } isAdult genres popularity startDate { year } } } } } } }"""
-# 猜声优：角色在各部作品里的日语声优（staff 的 characters 里只列她自己，看不出有没有别人一起配）。
+# 猜声优：角色的性别、年龄和在各部作品里的日语声优（staff 的 characters 里只列她自己，看不出有没有别人一起配）。
 # 不带 node 的话 voiceActorRoles 全是 null
 ANILIST_CASTS = """query($ids: [Int]) { Page(perPage: 50) { characters(id_in: $ids) {
-  id media(perPage: 25) { edges { node { id } voiceActorRoles(language: JAPANESE) { voiceActor { id } } } } } } }"""
+  id gender age media(perPage: 25) { edges { node { id } voiceActorRoles(language: JAPANESE) { voiceActor { id } } } } } } }"""
 # Bangumi 的放送类型 → AniList 的 format，只靠年份匹配时用来排除 OVA、特别篇
 ANILIST_FORMATS = {"TV": {"TV", "TV_SHORT"}, "WEB": {"ONA", "TV", "TV_SHORT"}, "剧场版": {"MOVIE"}}
 # 免 key，限速每分钟 90 次；按 AniList / MAL 的 ID 查，音频是几 MB 的 ogg
@@ -385,16 +385,17 @@ class Anilist:
         data = (await self._post(ANILIST_STAFF, {"page": page})).get("Page") or {}
         return data.get("staff") or [], bool((data.get("pageInfo") or {}).get("hasNextPage"))
 
-    async def casts(self, ids: list[int]) -> dict[str, list[list[int]]]:
-        """最多 50 个角色，每部作品里给它配音的日语声优 ID：{角色 ID: [[声优 ID, ...], ...]}，每个角色最多看 25 部。
-        AniList 上没了的角色给空列表。"""
+    async def casts(self, ids: list[int]) -> dict[str, dict]:
+        """最多 50 个角色：{角色 ID: {"gender", "age", "cast": 每部作品里给它配音的日语声优 ID [[声优 ID, ...], ...]}}，
+        每个角色最多看 25 部。性别是 Female / Male 这样的英文，年龄是「16-17」「1000+」这样的字符串，都可能没有。
+        AniList 上没了的角色什么都是空的。"""
         data = (await self._post(ANILIST_CASTS, {"ids": ids})).get("Page") or {}
-        out = {str(i): [] for i in ids}
+        out = {str(i): {"gender": "", "age": "", "cast": []} for i in ids}
         for c in data.get("characters") or []:
-            out[str(c["id"])] = [
+            out[str(c["id"])] = {"gender": c.get("gender") or "", "age": c.get("age") or "", "cast": [
                 sorted({v["voiceActor"]["id"] for v in e.get("voiceActorRoles") or [] if v.get("voiceActor")})
                 for e in (c.get("media") or {}).get("edges") or []
-            ]
+            ]}
         return out
 
     async def _post(self, query: str, variables: dict) -> dict:
@@ -509,6 +510,18 @@ class Igdb:
             for g in await self.query(f"{fields} where id = ({chunk}); limit 500;"):
                 companies = g.get("involved_companies") or []
                 out[g["id"]] = [c["company"]["name"] for c in companies if c.get("developer") and c.get("company")]
+        return out
+
+    async def countries(self, ids: list[int]) -> dict[int, list[int]]:
+        """IGDB ID → 开发商所在的国家（ISO 3166 数字代码，日本是 392），猜声优挑日本游戏用。"""
+        out = {}
+        for i in range(0, len(ids), 500):
+            chunk = ",".join(str(x) for x in ids[i : i + 500])
+            fields = "fields involved_companies.developer,involved_companies.company.country;"
+            for g in await self.query(f"{fields} where id = ({chunk}); limit 500;"):
+                companies = g.get("involved_companies") or []
+                out[g["id"]] = [c["company"]["country"] for c in companies
+                                if c.get("developer") and (c.get("company") or {}).get("country")]
         return out
 
     async def search(self, title: str, year) -> dict | None:

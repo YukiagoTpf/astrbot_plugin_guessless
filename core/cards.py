@@ -132,7 +132,8 @@ def blur(img: Image.Image, radius: int | None = None) -> Image.Image:
 
 def trio(images: list[bytes], shown: int, labels: list[list[str]]) -> Image.Image:
     """猜声优：三个角色图并排，前 shown 个露出来，其余盖色块打问号。露出来的底下压一条字：
-    出题时是作品名，答案卡是角色名和作品名（labels 里每个是一两行）。"""
+    出题时是作品名，答案卡是角色名和作品名（labels 里每个是一两行）。Bangumi 的游戏角色图常是长长的全身立绘，
+    上下裁的时候多留上面，脸才在格子里。"""
     out = Image.new("RGB", (SIZE, PIC_H), BG)
     draw = ImageDraw.Draw(out, "RGBA")
     w = (SIZE - GAP * 2) // 3
@@ -143,7 +144,7 @@ def trio(images: list[bytes], shown: int, labels: list[list[str]]) -> Image.Imag
             draw.rectangle((x, 0, x + w - 1, PIC_H - 1), fill=COVER)
             draw.text((x + w / 2, PIC_H / 2), "?", fill=MARK, font=mark, anchor="mm")
             continue
-        out.paste(_cover_fit(Image.open(io.BytesIO(data)).convert("RGB"), w, PIC_H), (x, 0))
+        out.paste(_cover_fit(Image.open(io.BytesIO(data)).convert("RGB"), w, PIC_H, upper=0.1), (x, 0))
         if label := [t for t in label if t]:
             top = PIC_H - 14 - 36 * len(label)
             draw.rectangle((x, top, x + w - 1, PIC_H - 1), fill=(0, 0, 0, 176))
@@ -492,14 +493,14 @@ def _dashed(draw: ImageDraw.ImageDraw, x: float, y0: float, y1: float, color: tu
         yy += 16 * s
 
 
-def _cover_fit(img: Image.Image, width: int, height: int) -> Image.Image:
-    """按目标比例居中裁切再缩放，不拉伸。"""
+def _cover_fit(img: Image.Image, width: int, height: int, upper: float = 0.5) -> Image.Image:
+    """按目标比例裁切再缩放，不拉伸。左右居中；上下裁时 upper 是裁掉的部分有多少在上面，0.5 是居中。"""
     w, h = img.size
     if w * height > h * width:
         cw, ch = round(h * width / height), h
     else:
         cw, ch = w, round(w * height / width)
-    left, top = (w - cw) // 2, (h - ch) // 2
+    left, top = (w - cw) // 2, round((h - ch) * upper)
     return img.crop((left, top, left + cw, top + ch)).resize((width, height), Image.Resampling.LANCZOS)
 
 

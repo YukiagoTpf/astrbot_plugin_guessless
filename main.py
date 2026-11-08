@@ -689,7 +689,7 @@ class GuessPlugin(Star):
             rnd.reveal = cards.blur(rnd.avatar)
         elif cat == "seiyuu":
             # 三个角色整道题不变，一段多露一个（_question）；答案卡写上角色名
-            cast = seiyuu.cast(entry["chars"])
+            cast = seiyuu.cast(entry["chars"], entry.get("games") or [])
             pics = await asyncio.gather(*(self.bank.image(entry, c["image"]) for c in cast))
             rnd.cast = [(pic, c["work"]) for pic, c in zip(pics, cast)]
             rnd.reveal = cards.trio(pics, len(cast), [[c["name"], c["work"]] for c in cast])
