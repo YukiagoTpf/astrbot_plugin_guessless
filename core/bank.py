@@ -85,8 +85,8 @@ BGM_UA = "YukiagoTpf/astrbot_plugin_guessless"
 # Metacritic 评分榜是网页前端用的非官方接口，目前不用 key
 MC_FINDER = "https://backend.metacritic.com/finder/metacritic/web"
 MIN_POOL = 20
-# 不单独建题库的盲猜题型 -> 用哪个题库（只出带 attrs 的条目）
-DERIVED = {cat: b.base for cat, b in BLIND.items() if b.base}
+# 不单独建题库的题型 -> 用哪个题库：盲猜的只出带 attrs 的条目，猜地点匹配用猜地点的全部全景（见 geomatch.pick）
+DERIVED = {**{cat: b.base for cat, b in BLIND.items() if b.base}, "geomatch": "geo"}
 # 只认完整说出某个名字的题型，见 match。盲猜日本地点能猜的有一千七百多个市町村，按一大段算会把闲聊当成猜；
 # 盲猜中国地点同理，「我在苏州」不算猜苏州
 EXACT_ONLY = {"vtuber", "wow", "teacher", "seiyuu"} | {cat for cat, b in BLIND.items() if b.exact}
@@ -101,7 +101,7 @@ class Bank:
         self.entries: dict[str, list] = {
             cat: [] for cat in (
                 "anime", "anisong", "game", "pokemon", "mecha", "vtuber", "wow", "teacher", "seiyuu", "geo", "country", "jpgeo",
-                "kline",
+                "geomatch", "kline",
                 *BLIND,
             )
         }
@@ -186,6 +186,11 @@ class Bank:
         return list(await asyncio.gather(*(
             sv.image(entry["pano"]["id"], (heading + 120 * i) % 360, size) for i, size in enumerate(geo.PANELS)
         )))
+
+    async def shots(self, entries: list[dict], size: tuple[int, int]) -> list[bytes]:
+        """猜地点匹配的几张街景，每个全景一张（朝向用题目里的），现取不存盘，一张按一次计费。"""
+        sv = geo.StreetView(self.http(), str(self.config.get("google_maps_key") or ""))
+        return list(await asyncio.gather(*(sv.image(e["pano"]["id"], e["pano"]["heading"], size) for e in entries)))
 
     async def audio(self, url: str) -> bytes:
         """听歌猜番的整首音频（几 MB 的 ogg），出题时现下，不存盘。"""
@@ -285,10 +290,10 @@ class Bank:
         self._derive(cat)
 
     def _derive(self, base: str) -> None:
-        """盲猜题型用 base 题库里带对比属性（attrs）的条目；旧题库没有，重建完才有。"""
+        """盲猜题型用 base 题库里带对比属性（attrs）的条目（旧题库没有，重建完才有）；猜地点匹配全用。"""
         for cat, src in DERIVED.items():
             if src == base:
-                self.entries[cat] = [e for e in self.entries[base] if "attrs" in e]
+                self.entries[cat] = [e for e in self.entries[base] if cat not in BLIND or "attrs" in e]
                 if self.entries[cat]:
                     self.status[cat] = f"{len(self.entries[cat])} 题"
 

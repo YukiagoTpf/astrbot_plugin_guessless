@@ -20,6 +20,7 @@ core/
     __init__.py       BLIND：登记了哪些盲猜题型
   sources.py          外部数据源：Wikidata、中文维基浏览量、B 站、AniList（含猜声优的 staff 名单）、AnimeThemes、IGDB、Steam、PokeAPI、
                       Gundam Wiki、vtbs.moe；HttpError
+  geomatch.py         猜地点匹配：按地区挑四国（GROUPS）、出题、线索、认「BADC」这样的答案；街景用猜地点的题库
   geo.py              地理：GeoNames、Wikidata 国家资料、日本市町村和中国地级行政区（含北上广深的区）、街景取景、Natural Earth 轮廓、盲猜地点的地区划分和方位，以及各种版本常量
   cards.py            卡片渲染（Pillow）：九宫格、街景三联、猜声优的三宫格、国家轮廓（答案卡带邻国底图）、世界地图、对比表、听歌进度条、
                       猜群友的头像棋盘、猜K线的 K 线图、整点排行榜长图
@@ -134,6 +135,7 @@ AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blin
 - 猜Vtuber不出 `vtuber_data.py` 里的账号；名单要扩只能往里加，不要删掉成人向和有争议的那几项。
 - 猜群友的头像只在内存里出图，不存盘；答案只公布群名片 / 昵称，不发 QQ 号。
 - 猜声优不出成人向（AniList 的 `isAdult`）、Ecchi 作品里的角色；舰船、国家拟人的作品（`seiyuu.BLOCK_WORKS`）不出，只能加不能删。
+- 猜地点匹配不出以色列、巴勒斯坦（`geomatch.SKIP`，两个放一起对着认容易聊到政治上），只能加不能删。
 - 盲猜中国地点不出、不认三沙市（`geo.CN_EXCLUDE`），港澳台不在里面；名胜过滤（`blind/cngeodle.py` 的 `CN_SIGHT_BLOCK`：红色景点、陵墓、领导人、战争……）只能加不能删。
 - 盲猜日本地点不出、不认北方四岛上的村（`geo.disputed`），不出因核事故、核设施、美军基地出名的町村（`blind/jpgeodle.py` 的 `NO_ANSWER`，只能加不能删）；名胜过滤（`blind/jpgeodle.py` 的 `LANDMARK_BLOCK`：和平公园、原爆、靖国和护国神社、端岛、硫磺岛、领土争议的岛、皇室、陵墓、事件……）只能加不能删。
 - 盲猜日本酒不出名字带「皇国」「尊皇」「旭日」「戦勝」「軍」这些的銘柄（`blind/sakedle.py` 的 `NO_ANSWER`），只能加不能删；用さけのわ的数据要注明出处（卡片角注、答案卡的「数据」），不能去掉。

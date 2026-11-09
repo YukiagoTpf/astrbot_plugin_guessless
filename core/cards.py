@@ -1,6 +1,6 @@
 """出题卡片：正方形，中间 16:9 是图（九宫格，未揭开的格子盖色块），上下黑边写标题和提示。
 
-图区还有几种不分格的：街景三联、猜声优的三宫格、国家剪影、猜国家猜错时的世界地图、盲猜的对比表、听歌猜番的进度条、猜K线的 K 线图。
+图区还有几种不分格的：街景三联、猜地点匹配的四宫格、猜声优的三宫格、国家剪影、猜国家猜错时的世界地图、盲猜的对比表、听歌猜番的进度条、猜K线的 K 线图。
 """
 
 import base64
@@ -83,6 +83,24 @@ def load_panels(images: list[bytes]) -> Image.Image:
     ]
     for data, (x, y, w, h) in zip(images, boxes):
         out.paste(_cover_fit(Image.open(io.BytesIO(data)).convert("RGB"), w, h), (x, y))
+    out.info["grid"] = None
+    return out
+
+
+def quad(images: list[bytes], labels: list[str]) -> Image.Image:
+    """猜地点匹配：四张街景排成 2×2，左上角标图号；答案卡在底下压一条国家名（labels 是空串就不压）。"""
+    out = Image.new("RGB", (SIZE, PIC_H), BG)
+    draw = ImageDraw.Draw(out, "RGBA")
+    w, h = (SIZE - GAP) // 2, (PIC_H - GAP) // 2
+    num, line = font(40, bold=True), font(30)
+    for i, (data, label) in enumerate(zip(images, labels)):
+        x, y = (i % 2) * (w + GAP), (i // 2) * (h + GAP)
+        out.paste(_cover_fit(Image.open(io.BytesIO(data)).convert("RGB"), w, h), (x, y))
+        draw.rounded_rectangle((x + 12, y + 12, x + 68, y + 68), 10, fill=(0, 0, 0, 176))
+        draw.text((x + 40, y + 40), str(i + 1), fill=KEY, font=num, anchor="mm")
+        if label:
+            draw.rectangle((x, y + h - 50, x + w - 1, y + h - 1), fill=(0, 0, 0, 176))
+            draw.text((x + w / 2, y + h - 25), fit(label, line, w - 24), fill=TEXT, font=line, anchor="mm")
     out.info["grid"] = None
     return out
 
