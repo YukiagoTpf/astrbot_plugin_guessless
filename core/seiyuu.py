@@ -3,7 +3,8 @@
 名单：AniList 的 staff 按收藏数排，翻到它允许的最后一页（第 5000 个），挑性别女、语言日语、配过角色的。
 再按日文名去 Bangumi 搜人物（只搜职业有声优的），对上了才出题：初音未来、VTuber、歌手、漫画家这样就筛掉了。
 中文名、读音、罗马字、出身地、事务所和收藏数都从 Bangumi 拿；人气按 Bangumi 的收藏数排（群里认得的多是国内有名的）。
-角色：她在 AniList 上收藏最多的 10 个，作品名用 Bangumi 上她的角色表里那个角色最早的动画的中文名，对不上用 AniList 的日文名。
+角色：她在 AniList 上收藏最多的 10 个，作品名用 Bangumi 上她的角色表里那个角色最早的动画的中文名；角色名对不上的按作品的
+日文名对角色表里的条目，还对不上的拿日文名搜 Bangumi 的动画条目（_cn_titles），都没有中文名才用 AniList 的日文名。
 成人向、Ecchi 作品里的角色不出（角色图常是擦边的），BLOCK_WORKS 里的作品不出，旁白、她本人演自己的角色不出，
 近 20 年没再配过的角色不出（群里认不得八九十年代的老番），角色图画的是别人那一版的不出（同一部里小时候、长大后各一个人配，
 角色图却只有一张，见 shared），能用的角色不到 3 个的人不出。已经去世的不出。
@@ -12,7 +13,7 @@
 游戏主役：Bangumi 上她在游戏里配「主角」的角色，游戏要在猜游戏题库里、是日本厂商开发的（_game_pool），有的话一半的题换一个进来。
 提示里的声线按她配的角色推（voice）。
 
-AniList 的名单、角色资料（性别、年龄、各部的声优）、Bangumi 的资料、哪些游戏是日本的都缓存一个月（seiyuu_cache.json）。
+AniList 的名单、角色资料（性别、年龄、各部的声优）、Bangumi 的资料、作品的中文名、哪些游戏是日本的都缓存一个月（seiyuu_cache.json）。
 """
 
 import asyncio
@@ -30,10 +31,11 @@ from .entries import assign_names, finish_entry, to_hans, usable_names
 from .sources import Anilist, HttpError, Igdb, dedupe
 from .store import load_json, save_json
 
-VERSION = "anilist-bgm-v4"  # 选人、选角色、资料、提示、叫法的规则改了就换个名字，题库重建
+VERSION = "anilist-bgm-v5"  # 选人、选角色、资料、提示、叫法的规则改了就换个名字，题库重建
 BGM = "https://api.bgm.tv/v0"
 CACHE_DAYS = 30
 SCAN = 3  # AniList 名单、角色资料（casts）存的字段改了就加一，缓存的名单、角色资料作废重查（Bangumi 的资料照用）
+TABLE = 2  # Bangumi 角色表里取的东西（_bangumi 的 works、games）改了就加一，各人重拉角色表（人物资料照用）
 PAGES = 100  # AniList 一页 50 个，最多翻到第 5000 个
 STEPS = 4  # 一段露一个角色，第 4 段不加角色，把剩下的资料和首字给完
 MIN_CHARS = 3
@@ -121,9 +123,10 @@ def _text(value) -> list[str]:
 
 
 async def _bangumi(bank, s: dict, person: dict | None = None) -> dict:
-    """按日文名去 Bangumi 搜人物（职业有声优的）：{"person": 资料, "works": {角色名: 作品名}, "games": 游戏主役}，
-    搜不到 person 是 None。给了 person 就不再搜，只重拉角色表（加游戏主役之前查过的人）。
-    作品名取 Bangumi 上她的角色表里这个角色最早的动画（不算客串），没有动画的取最早的游戏等。
+    """按日文名去 Bangumi 搜人物（职业有声优的）：{"person": 资料, "works": {角色名: 作品名}, "games": 游戏主役,
+    "table": TABLE}，搜不到 person 是 None。给了 person 就不再搜，只重拉角色表（TABLE 改了）。
+    作品名取 Bangumi 上她的角色表里这个角色最早的动画（不算客串），没有动画的取最早的游戏等。角色名两边常对不上
+    （AniList「タツマキ」、Bangumi「战栗的龙卷」），对不上的拿 AniList 上这个角色出场的作品的日文名，对角色表里条目的原名。
     游戏主役是她在游戏里配「主角」的角色，动画里也有的不算（那是改编游戏）：
     [{"id"（角色 ID）, "name", "subject"（条目 ID）, "image"}]。"""
     if person is None:
@@ -132,7 +135,7 @@ async def _bangumi(bank, s: dict, person: dict | None = None) -> dict:
         await asyncio.sleep(0.3)
         hits = [p for p in data.get("data") or [] if norm(p.get("name") or "") == norm(s["native"]) and p.get("gender") != "male"]
         if not hits:
-            return {"person": None, "works": {}, "games": []}
+            return {"person": None, "works": {}, "games": [], "table": TABLE}
         p = max(hits, key=lambda p: (p.get("stat") or {}).get("collects") or 0)
         person = {"id": p["id"], "name": p.get("name") or "", "collects": (p.get("stat") or {}).get("collects") or 0,
                   "birth_year": p.get("birth_year"), "infobox": p.get("infobox") or []}
@@ -142,13 +145,47 @@ async def _bangumi(bank, s: dict, person: dict | None = None) -> dict:
     for r in sorted(rows, key=lambda r: (r.get("subject_type") != 2, r.get("staff") == "客串", r.get("subject_id") or 0)):
         if (k := norm(r.get("name") or "")) in want and k not in works:
             works[k] = r.get("subject_name_cn") or r.get("subject_name") or ""
+    titles = {}
+    for r in rows:
+        if k := norm(r.get("subject_name") or ""):
+            titles.setdefault(k, r.get("subject_name_cn") or r.get("subject_name"))
+    for c in s["chars"]:
+        if (k := norm(c["name"])) not in works and (hit := next((titles[t] for t in map(norm, c["titles"]) if t in titles), None)):
+            works[k] = hit
     anime = {norm(r.get("name") or "") for r in rows if r.get("subject_type") == 2}
     games = [
         {"id": r.get("id"), "name": r.get("name") or "", "subject": r.get("subject_id"),
          "image": (r.get("images") or {}).get("large") or ""}
         for r in rows if r.get("subject_type") == 4 and r.get("staff") == "主角" and norm(r.get("name") or "") not in anime
     ]
-    return {"person": person, "works": works, "games": games}
+    return {"person": person, "works": works, "games": games, "table": TABLE}
+
+
+async def _cn_titles(bank, cache: dict, titles: set[str]) -> bool:
+    """她的角色表里没挂的作品（角色名、作品名都对不上），拿 AniList 的日文名搜 Bangumi 的动画条目补中文名，
+    记在 cache["cn"]（{日文名: 中文名}，没有中文名的是 ""），跟名单一个月一换。名字一样的优先，没有再认一边是另一边
+    开头的（「シャングリラ・フロンティア」和后面带副标题的条目）。搜失败了返回 False，没查的下回接着查。"""
+    cn = cache.setdefault("cn", {})
+    todo = sorted(titles - set(cn))
+    for i, title in enumerate(todo):
+        bank.status["seiyuu"] = f"正在查作品的中文名 {i}/{len(todo)}"
+        try:
+            data = await bank._post(f"{BGM}/search/subjects", {"keyword": title, "filter": {"type": [2]}}, params={"limit": 10})
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+            logger.warning(f"[guess] seiyuu: bangumi subject search failed: {type(e).__name__}")
+            return False
+        await asyncio.sleep(0.3)
+        rows, key = data.get("data") or [], norm(title)
+        hit = (next((r for r in rows if norm(r.get("name") or "") == key), None)
+               or next((r for r in rows if _prefix(key, norm(r.get("name") or ""))), None))
+        cn[title] = (hit or {}).get("name_cn") or ""
+    return True
+
+
+def _prefix(a: str, b: str) -> bool:
+    """一边是另一边的开头；短的那边不到 4 个字不算（「CUE!」会认成别的）。"""
+    short, long = sorted((a, b), key=len)
+    return len(short) >= 4 and long.startswith(short)
 
 
 async def _game_pool(bank, cache: dict) -> dict[str, dict]:
@@ -398,7 +435,7 @@ async def build(bank) -> None:
         save_json(path, cache)
     staff = [s for s in staff if len(chars := usable(s, {}, casts)) >= MIN_CHARS and active(chars)]
     todo = [s for s in staff
-            if now - (rec := people.get(str(s["id"]), {})).get("at", 0) > CACHE_DAYS * 86400 or "games" not in rec]
+            if now - (rec := people.get(str(s["id"]), {})).get("at", 0) > CACHE_DAYS * 86400 or rec.get("table") != TABLE]
     failures = 0
     try:
         for i, s in enumerate(todo):
@@ -407,10 +444,10 @@ async def build(bank) -> None:
             try:
                 if now - rec.get("at", 0) > CACHE_DAYS * 86400:
                     people[str(s["id"])] = {"at": now, **await _bangumi(bank, s)}
-                elif rec.get("person"):  # 加游戏主役之前查的，只补角色表
+                elif rec.get("person"):  # 角色表取的东西改了，只重拉角色表
                     people[str(s["id"])] = {**rec, **await _bangumi(bank, s, rec["person"])}
                 else:
-                    people[str(s["id"])] = {**rec, "games": []}
+                    people[str(s["id"])] = {**rec, "games": [], "table": TABLE}
                 failures = 0
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
                 logger.warning(f"[guess] seiyuu: bangumi lookup of {s['id']} failed: {type(e).__name__}")
@@ -430,12 +467,20 @@ async def build(bank) -> None:
     finally:
         save_json(path, cache)
     known = {rec["person"]["id"] for rec in people.values() if rec.get("person")}
-    rows = []
+    status("正在查作品的中文名")
+    unnamed = {c["work"] for s in staff if (rec := people.get(str(s["id"])) or {}).get("person")
+               for c in usable(s, rec["works"], casts) if norm(c["name"]) not in rec["works"]}
+    try:
+        complete = await _cn_titles(bank, cache, unnamed)
+    finally:
+        save_json(path, cache)
+    cn, rows = cache["cn"], []
     for s in staff:
         rec = people.get(str(s["id"])) or {}
         if not (person := rec.get("person")):
             continue
-        if len(chars := usable(s, rec.get("works") or {}, casts)) >= MIN_CHARS and active(chars):
+        works = {**{norm(c["name"]): cn[c["work"]] for c in s["chars"] if cn.get(c["work"])}, **rec["works"]}
+        if len(chars := usable(s, works, casts)) >= MIN_CHARS and active(chars):
             games = game_roles(s, person, rec.get("games") or [], pool, cvs, known)
             rows.append((person["collects"], s["fav"], s, person, chars, games))
     rows.sort(key=lambda r: (-r[0], -r[1]))
@@ -445,4 +490,4 @@ async def build(bank) -> None:
                for i, (_, _, s, person, chars, games) in enumerate(rows) if names[str(s["id"])]]
     logger.info(f"[guess] seiyuu: {len(cache['staff'])} on AniList, {len(staff)} with enough roles, {len(entries)} in the bank, "
                 f"{sum(bool(e['games']) for e in entries)} with game roles from {len(pool)} Japanese games")
-    bank.commit("seiyuu", entries)
+    bank.commit("seiyuu", entries, complete=complete)
