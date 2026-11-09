@@ -27,6 +27,7 @@ from .blind import BLIND
 from .entries import (
     ANIME_KINDS,
     GAME_INFO,
+    GAME_VERSION,
     MECHA_VERSION,
     POKEMON_VERSION,
     VTUBER_VERSION,
@@ -255,7 +256,7 @@ class Bank:
             return [geo.PANOS_PER_PREF, geo.MIN_PANOS, geo.SAMPLING, geo.HINTS_VERSION]
         return [
             self._size("game"), c.get("game_niche_size", 300), c.get("game_min_score", 75),
-            c.get("game_min_reviews", 10), WORK_HINTS_VERSION,
+            c.get("game_min_reviews", 10), WORK_HINTS_VERSION, GAME_VERSION,
         ]
 
     def _stale(self, cat: str) -> bool:
@@ -745,12 +746,13 @@ class Bank:
             [b.get("tags") or [] for b in found], [people(b.get("info") or {}) + b.get("staff", []) for b in found]
         )
         igdb_ids = {it["slug"]: m["id"] for it, _ in picked if (m := media.get(it["slug"])) and m.get("id")}
-        devs = await self._igdb_developers(list(igdb_ids.values()))
+        details = await self._igdb_details(list(igdb_ids.values()))
         entries = []
         for (it, tier), b in zip(picked, found):
             slug = it["slug"]
-            dev, cast = devs.get(igdb_ids.get(slug)), chars.get(str(b.get("id")))
-            entry = game_entry(it, b or None, wd.get(slug), media.get(slug), stats, dev, cast)
+            info, cast = details.get(igdb_ids.get(slug)) or {}, chars.get(str(b.get("id")))
+            entry = game_entry(it, b or None, wd.get(slug), media.get(slug), stats, info.get("dev"), cast,
+                               info.get("platforms"))
             entries.append({**entry, "tier": tier})
         self.commit("game", entries, use_media)
 
@@ -992,15 +994,15 @@ class Bank:
             await asyncio.sleep(0.5)
         return cache[key]
 
-    async def _igdb_developers(self, ids: list[int]) -> dict[int, list[str]]:
-        """查不到不影响出题，退回 Bangumi 记的开发商。"""
+    async def _igdb_details(self, ids: list[int]) -> dict[int, dict]:
+        """查不到不影响出题，开发商退回 Bangumi 记的，平台退回 Metacritic 记的。"""
         if not ids or not self._media_on("game"):
             return {}
         igdb = Igdb(self.http(), self.config.get("igdb_client_id", ""), self.config.get("igdb_client_secret", ""))
         try:
-            return await igdb.developers(ids)
+            return await igdb.details(ids)
         except Exception as e:
-            logger.warning(f"[guess] igdb developers lookup failed: {e}")
+            logger.warning(f"[guess] igdb details lookup failed: {e}")
             return {}
 
     def http(self) -> aiohttp.ClientSession:

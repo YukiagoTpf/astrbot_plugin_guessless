@@ -501,15 +501,27 @@ class Igdb:
                 out[g["slug"]] = g
         return out
 
-    async def developers(self, ids: list[int]) -> dict[int, list[str]]:
-        """IGDB ID → 开发商。"""
+    async def details(self, ids: list[int]) -> dict[int, dict]:
+        """IGDB ID → 开发商（dev）和出过的平台（platforms，按各平台最早的发售日排，首发的在前）。"""
         out = {}
         for i in range(0, len(ids), 500):
             chunk = ",".join(str(x) for x in ids[i : i + 500])
-            fields = "fields involved_companies.developer,involved_companies.company.name;"
+            fields = (
+                "fields involved_companies.developer,involved_companies.company.name,platforms.name,"
+                "release_dates.platform,release_dates.date;"
+            )
             for g in await self.query(f"{fields} where id = ({chunk}); limit 500;"):
                 companies = g.get("involved_companies") or []
-                out[g["id"]] = [c["company"]["name"] for c in companies if c.get("developer") and c.get("company")]
+                first = {}
+                for r in g.get("release_dates") or []:
+                    if (p := r.get("platform")) and (d := r.get("date")):
+                        first[p] = min(first.get(p, d), d)
+                platforms = sorted((p for p in g.get("platforms") or [] if p.get("name")),
+                                   key=lambda p: first.get(p["id"], float("inf")))
+                out[g["id"]] = {
+                    "dev": [c["company"]["name"] for c in companies if c.get("developer") and c.get("company")],
+                    "platforms": [p["name"] for p in platforms],
+                }
         return out
 
     async def countries(self, ids: list[int]) -> dict[int, list[int]]:

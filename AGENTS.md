@@ -81,6 +81,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 题目条目格式、通用选题规则 | `bank.BANK_VERSION` |
   | `hint_data.py`、`entries.scrub`、地点和国家的提示规则、报距离用的位置（`geo.towns` / `centroid`、`places`） | `geo.HINTS_VERSION` |
   | 动画、游戏的提示规则（标签筛选、提示顺序） | `entries.WORK_HINTS_VERSION` |
+  | 只有游戏才有的提示（平台：`PLATFORMS`、`MINOR_PLATFORMS`） | `entries.GAME_VERSION` |
   | 宝可梦条目格式（盲猜宝可梦的 `attrs`） | `entries.POKEMON_VERSION` |
   | 萝卜的选题、条目格式、`mecha_data.py` | `entries.MECHA_VERSION` |
   | Vtuber 的选题、条目格式、`vtuber_data.py` | `entries.VTUBER_VERSION` |

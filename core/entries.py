@@ -49,12 +49,21 @@ NOT_PEOPLE = {
 # 整个题库里超过这个比例的作品都有的标签算大类标签（「日常」「开放世界」），其余算特色标签
 COMMON_TAG_RATIO = 0.04
 WORK_HINTS_VERSION = "tags-v1"  # 动画、游戏的提示规则改了就换个名字，这两个题库会重建
+GAME_VERSION = "platforms-v1"  # 游戏独有的提示规则（平台）改了就换个名字，只重建游戏题库
 GAME_INFO = ("游戏类型", "开发", "开发商", "导演", "游玩人数", "游戏引擎")
+# Metacritic 和 IGDB 的平台名 → 提示里的叫法
 PLATFORMS = {
     "PlayStation": "PS1", "PlayStation 2": "PS2", "PlayStation 3": "PS3", "PlayStation 4": "PS4",
-    "PlayStation 5": "PS5", "PlayStation Vita": "PSV", "Xbox One": "XB1", "Xbox Series X": "XSX",
-    "Nintendo Switch": "Switch", "Nintendo Switch 2": "Switch 2", "Nintendo 64": "N64",
-    "GameCube": "NGC", "Game Boy Advance": "GBA",
+    "PlayStation 5": "PS5", "PlayStation Vita": "PSV", "PlayStation Portable": "PSP", "Xbox One": "XB1",
+    "Xbox Series X": "XSX", "Xbox Series X|S": "XSX", "Nintendo Switch": "Switch", "Nintendo Switch 2": "Switch 2",
+    "Nintendo 64": "N64", "GameCube": "NGC", "Nintendo GameCube": "NGC", "Game Boy Advance": "GBA",
+    "Nintendo DS": "DS", "Nintendo DSi": "DS", "Nintendo 3DS": "3DS", "New Nintendo 3DS": "3DS",
+    "PC (Microsoft Windows)": "PC", "PlayStation VR": "PSVR", "PlayStation VR2": "PSVR2", "Arcade": "街机",
+}
+# 不写进提示的平台：和 PC 一起出的 Mac、Linux，云游戏、外设，占了前几个位置又没区分度
+MINOR_PLATFORMS = {
+    "Mac", "Linux", "Google Stadia", "OnLive Game System", "Web browser", "Windows Phone", "Windows Mobile",
+    "64DD", "SteamVR", "Oculus Rift", "Windows Mixed Reality",
 }
 POKEMON_VERSION = "attrs-v2"  # 宝可梦条目格式（attrs）改了就换个名字，宝可梦题库重建
 MECHA_VERSION = "srw-v2"  # 猜萝卜的选题和条目规则改了就换个名字，萝卜题库重建
@@ -248,10 +257,13 @@ def anime_entry(s: dict, media: dict | None = None, wd: dict | None = None, stat
 
 
 def game_entry(item: dict, bgm: dict | None, wd: dict | None = None, media: dict | None = None,
-               stats: TagStats | None = None, dev: list[str] | None = None, chars: dict | None = None) -> dict:
+               stats: TagStats | None = None, dev: list[str] | None = None, chars: dict | None = None,
+               platforms: list[str] | None = None) -> dict:
     """提示从宽到窄：发售年份和平台、类型、大类标签、游玩人数、引擎、开发、导演、特色标签。
 
-    stats、chars 同 anime_entry；dev 是 IGDB 记的开发商（Bangumi 的「开发」「发行」常是日本代理，不准）。
+    stats、chars 同 anime_entry；dev 是 IGDB 记的开发商（Bangumi 的「开发」「发行」常是日本代理，不准）；
+    platforms 是 IGDB 记的平台，首发的在前。Metacritic 一款游戏只记评分最高的那个平台，多平台的看着像独占，
+    IGDB 查不到才用它的。
     """
     en = clean_mc_title(item["title"])
     bgm, wd = bgm or {}, wd or {}
@@ -261,7 +273,9 @@ def game_entry(item: dict, bgm: dict | None, wd: dict | None = None, media: dict
     info = bgm.get("info") or {}
     names = dedupe([en, cn, bgm.get("name", ""), *bgm.get("aliases", []), *wd.get("names", []),
                     *(media or {}).get("names", [])])
-    platforms = [PLATFORMS.get(p["name"], p["name"]) for p in item.get("platforms") or [] if p.get("name")]
+    platforms = [p for p in platforms or [] if p not in MINOR_PLATFORMS]
+    platforms = platforms or [p["name"] for p in item.get("platforms") or [] if p.get("name")]
+    platforms = dedupe(PLATFORMS.get(p, p) for p in platforms)
     genres = [g["name"] for g in item.get("genres") or [] if g.get("name")]
     year = str(item.get("premiereYear") or (item.get("releaseDate") or "")[:4])
     plat = " / ".join(platforms[:3]) + (" 等" if len(platforms) > 3 else "")
