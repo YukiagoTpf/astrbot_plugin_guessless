@@ -27,7 +27,7 @@ MODES = {
     "kline": "猜K线", **{cat: b.command for cat, b in BLIND.items()},
 }
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
-OFFLINE = {"country"}  # 暂时下线的题型：开题和排行榜都只回一句，不出题、不播报
+OFFLINE = {"country", "isaacdle"}  # 暂时下线的题型：开题和排行榜都只回一句，不出题、不播报
 RECENT = 200  # 每个题型记最近出过的这么多道，出题时避开（Bank.pick）
 GRID = {"game", "anime", "pokemon", "mecha", "vtuber", "wow"}  # 九宫格逐格揭开的题型
 # 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对；

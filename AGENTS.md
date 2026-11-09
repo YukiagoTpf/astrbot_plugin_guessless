@@ -139,7 +139,7 @@ AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blin
 - 盲猜日本酒不出名字带「皇国」「尊皇」「旭日」「戦勝」「軍」这些的銘柄（`blind/sakedle.py` 的 `NO_ANSWER`），只能加不能删；用さけのわ的数据要注明出处（卡片角注、答案卡的「数据」），不能去掉。
 - 盲猜以撒道具不出涉黄、擦边、自残自杀、毒品、战争的道具（`blind/isaacdle.py` 的 `NO_ANSWER`），只能加不能删。
 - 猜K线不出军工、核相关的股票（`kline.BLOCK_INDUSTRIES`、`NUCLEAR`、`BLOCK_NAME`，日股的 `JP_BLOCK_SECTORS`、`JP_BLOCK_NAME`，美股的 `US_BLOCK_INDUSTRY`、`US_BLOCK_NAME`），只能加不能删。
-- 猜国家暂时下线（`main.OFFLINE`）：开题和排行榜都只回「好危险，不踩啦」，也不进整点播报。
+- 猜国家、盲猜以撒道具暂时下线（`main.OFFLINE`）：开题和排行榜都只回「好危险，不踩啦」，也不进整点播报。
 
 ## 外部接口
 
