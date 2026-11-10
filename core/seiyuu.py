@@ -9,6 +9,7 @@
 近 20 年没再配过的角色不出（群里认不得八九十年代的老番），角色图画的是别人那一版的不出（同一部里小时候、长大后各一个人配，
 角色图却只有一张，见 shared），能用的角色不到 3 个的人不出。已经去世的不出。
 近 20 年要接过新角色（MIN_NEW 个是这些年才开始配的），只靠老角色的续作撑着的不出。
+动画里配过的「主角」（Bangumi 角色表）不到 MIN_LEADS 个的不出。
 出题时热门（收藏数前 HOT 位）和冷门的掺着出，各占多少看 seiyuu_niche_ratio。露的角色偏新番（cast）。
 游戏主役：Bangumi 上她在游戏里配「主角」的角色，游戏要在猜游戏题库里、是日本厂商开发的（_game_pool），有的话一半的题换一个进来。
 提示里的声线按她配的角色推（voice）。
@@ -31,16 +32,19 @@ from .entries import assign_names, finish_entry, to_hans, usable_names
 from .sources import Anilist, HttpError, Igdb, dedupe
 from .store import load_json, save_json
 
-VERSION = "anilist-bgm-v5"  # 选人、选角色、资料、提示、叫法的规则改了就换个名字，题库重建
+VERSION = "anilist-bgm-v6"  # 选人、选角色、资料、提示、叫法的规则改了就换个名字，题库重建
 BGM = "https://api.bgm.tv/v0"
 CACHE_DAYS = 30
 SCAN = 3  # AniList 名单、角色资料（casts）存的字段改了就加一，缓存的名单、角色资料作废重查（Bangumi 的资料照用）
-TABLE = 2  # Bangumi 角色表里取的东西（_bangumi 的 works、games）改了就加一，各人重拉角色表（人物资料照用）
+TABLE = 3  # Bangumi 角色表里取的东西（_bangumi 的 works、games、leads）改了就加一，各人重拉角色表（人物资料照用）
 PAGES = 100  # AniList 一页 50 个，最多翻到第 5000 个
 STEPS = 4  # 一段露一个角色，第 4 段不加角色，把剩下的资料和首字给完
 MIN_CHARS = 3
 RECENT_YEARS = 20  # 角色在这么多年内的作品里还配过才出
 MIN_NEW = 3  # 能出的角色里至少这么多个是近 RECENT_YEARS 年才开始配的，人才出
+# 动画里配过这么多个「主角」（Bangumi 角色表，按角色算，同一角色几季算一个）人才出。群友嫌冷门的「主役都没混到过」，
+# 照字面卡一个几乎人人都有；管理员定的少于 4 个不出，筛掉五十几位，几乎都是冷门的
+MIN_LEADS = 4
 HOT = 100  # 收藏数前这么多位是热门（大众题），往后是冷门；只按收藏数均匀挑的话，大半是中不溜的，热门冷门都不显
 GAME_SHARE = 0.5  # 有游戏主役的人，这么多的题把第二个角色换成游戏角色（群友要的「适当加入」，每道题最多一个）
 JAPAN = 392  # IGDB 公司的国家代码
@@ -124,7 +128,7 @@ def _text(value) -> list[str]:
 
 async def _bangumi(bank, s: dict, person: dict | None = None) -> dict:
     """按日文名去 Bangumi 搜人物（职业有声优的）：{"person": 资料, "works": {角色名: 作品名}, "games": 游戏主役,
-    "table": TABLE}，搜不到 person 是 None。给了 person 就不再搜，只重拉角色表（TABLE 改了）。
+    "leads": 动画里配过几个「主角」, "table": TABLE}，搜不到 person 是 None。给了 person 就不再搜，只重拉角色表（TABLE 改了）。
     作品名取 Bangumi 上她的角色表里这个角色最早的动画（不算客串），没有动画的取最早的游戏等。角色名两边常对不上
     （AniList「タツマキ」、Bangumi「战栗的龙卷」），对不上的拿 AniList 上这个角色出场的作品的日文名，对角色表里条目的原名。
     游戏主役是她在游戏里配「主角」的角色，动画里也有的不算（那是改编游戏）：
@@ -135,7 +139,7 @@ async def _bangumi(bank, s: dict, person: dict | None = None) -> dict:
         await asyncio.sleep(0.3)
         hits = [p for p in data.get("data") or [] if norm(p.get("name") or "") == norm(s["native"]) and p.get("gender") != "male"]
         if not hits:
-            return {"person": None, "works": {}, "games": [], "table": TABLE}
+            return {"person": None, "works": {}, "games": [], "leads": 0, "table": TABLE}
         p = max(hits, key=lambda p: (p.get("stat") or {}).get("collects") or 0)
         person = {"id": p["id"], "name": p.get("name") or "", "collects": (p.get("stat") or {}).get("collects") or 0,
                   "birth_year": p.get("birth_year"), "infobox": p.get("infobox") or []}
@@ -158,7 +162,8 @@ async def _bangumi(bank, s: dict, person: dict | None = None) -> dict:
          "image": (r.get("images") or {}).get("large") or ""}
         for r in rows if r.get("subject_type") == 4 and r.get("staff") == "主角" and norm(r.get("name") or "") not in anime
     ]
-    return {"person": person, "works": works, "games": games, "table": TABLE}
+    leads = len({r.get("id") for r in rows if r.get("subject_type") == 2 and r.get("staff") == "主角"})
+    return {"person": person, "works": works, "games": games, "leads": leads, "table": TABLE}
 
 
 async def _cn_titles(bank, cache: dict, titles: set[str]) -> bool:
@@ -412,7 +417,7 @@ def cast(chars: list[dict], games: list[dict] = ()) -> list[dict]:
 
 async def build(bank) -> None:
     session, now = bank.http(), time.time()
-    path = bank.dir / "seiyuu_cache.json"  # {"at": …, "scan": SCAN, "staff": [AniList 的名单], "people": {AniList ID: {"at", "person", "works", "games"}}, "casts": {角色 ID: Anilist.casts}, "jp": {IGDB ID: 是不是日本游戏}, "game_cv": {游戏角色 ID: _game_casts}}
+    path = bank.dir / "seiyuu_cache.json"  # {"at": …, "scan": SCAN, "staff": [AniList 的名单], "people": {AniList ID: {"at", "person", "works", "games", "leads"}}, "casts": {角色 ID: Anilist.casts}, "jp": {IGDB ID: 是不是日本游戏}, "game_cv": {游戏角色 ID: _game_casts}}
     cache = load_json(path) or {}
 
     def status(text: str) -> None:
@@ -477,7 +482,7 @@ async def build(bank) -> None:
     cn, rows = cache["cn"], []
     for s in staff:
         rec = people.get(str(s["id"])) or {}
-        if not (person := rec.get("person")):
+        if not (person := rec.get("person")) or rec.get("leads", 0) < MIN_LEADS:
             continue
         works = {**{norm(c["name"]): cn[c["work"]] for c in s["chars"] if cn.get(c["work"])}, **rec["works"]}
         if len(chars := usable(s, works, casts)) >= MIN_CHARS and active(chars):
