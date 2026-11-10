@@ -188,10 +188,10 @@ class Bank:
             sv.image(entry["pano"]["id"], (heading + 120 * i) % 360, size) for i, size in enumerate(geo.PANELS)
         )))
 
-    async def shots(self, entries: list[dict], size: tuple[int, int]) -> list[bytes]:
-        """猜地点匹配、猜日本地点匹配的几张街景，每个全景一张（朝向用题目里的），现取不存盘，一张按一次计费。"""
+    async def shots(self, views: list[list], size: tuple[int, int]) -> list[bytes]:
+        """猜地点匹配、猜日本地点匹配的几张街景，views 是每张的 [全景 ID, 朝向]，现取不存盘，一张按一次计费。"""
         sv = geo.StreetView(self.http(), str(self.config.get("google_maps_key") or ""))
-        return list(await asyncio.gather(*(sv.image(e["pano"]["id"], e["pano"]["heading"], size) for e in entries)))
+        return list(await asyncio.gather(*(sv.image(pano, heading, size) for pano, heading in views)))
 
     async def audio(self, url: str) -> bytes:
         """听歌猜番的整首音频（几 MB 的 ogg），出题时现下，不存盘。"""

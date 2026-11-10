@@ -1,6 +1,9 @@
 """猜地点匹配：同一片地区四个国家的街景各一张（2×2，标图 1–4），下面列出这四个国家（A–D，打乱），
 按图号说出各是哪个，比如「BADC」。群友提的「四张背景相仿的图，顺序匹配」。猜日本地点匹配一样，换成同一地方的四个都道府县。
 
+猜地点匹配后来改成两国各两张（PAIRS，群友嫌四国太难、猜错报对了几个又成了逻辑题）：同一地区的两个国家，每国一个全景
+取前后两个方向，四张打乱，答「ABBA」；每人只答一次，到点一起公布，答对的都记分。四国的玩法留着，从 PAIRS 去掉就回去。
+
 街景用猜地点 / 猜日本地点的题库（每国、每县几个全景挑一个，朝向也用它的），不单独建题库。四个从同一组地区里挑
 （GROUPS，按 geo.REGIONS / 日本的八地方合并：凑不够四个的地区并到相邻的），背景才像。猜错回对了几个；「提示」给一张图的
 一条线索（国家是语言、货币、美食、名胜，日本是特产、名胜，挑另外三个没有的），最多 CLUES 条。纯函数，不联网。
@@ -26,11 +29,15 @@ GROUPS = {
 SKIP = {"IL", "PS"}
 COUNT = 4
 LETTERS = "ABCD"
+# 两国各两张、每人答一次、到点一起公布的题型；去掉就回到四国各一张、猜错报对了几个的玩法
+PAIRS = {"geomatch"}
+PAIR = 2
+VIEWS = (0, 180)  # 一国两张：同一个全景转半圈，是一个地方的前后两头
 CLUES = 3  # 「提示」最多给几条（几张图各一条），全给了等于把答案说了
 # 一张图的线索先挑哪种。日本不给「县厅所在地」：只说首字，青森、长崎这些和县名同一个字开头
 CLUE_KINDS = {"geomatch": ("主要语言", "货币", "美食", "名胜"), "jpgeomatch": ("特产", "名胜")}
 SHOT = (640, 360)  # 一张街景要的尺寸；按张计费，大小不影响价钱
-SEP = re.compile(r"[\s,，、.。/|\\\-—>→=:：;；]+")
+SEP = re.compile(r"[\s,，、.。/|\\\-—>→=:：;；!！?？~～]+")
 
 
 def region(cat: str, entry: dict) -> str:
@@ -40,18 +47,27 @@ def region(cat: str, entry: dict) -> str:
     return geo.REGION_OF.get(entry["group"], ("",))[0]
 
 
-def groups(cat: str, entries: list[dict]) -> dict[str, list[str]]:
-    """能出题的地区组：{组名: 有街景的国家 / 都道府县代码}，凑不够 COUNT 个的不要。entries 是猜地点 / 猜日本地点的题目。"""
+def groups(cat: str, entries: list[dict], pair: bool = False) -> dict[str, list[str]]:
+    """能出题的地区组：{组名: 有街景的国家 / 都道府县代码}，凑不够 COUNT 个的不要。entries 是猜地点 / 猜日本地点的题目。
+    两国的（pair）只要两个，地区不用合并，邻近的更像（澳新、北美、东欧）。"""
     have: dict[str, set] = {}
     for e in entries:
         if e["group"] not in SKIP:
             have.setdefault(region(cat, e), set()).add(e["group"])
+    need, merged = (PAIR, tuple((n,) for names in GROUPS[cat] for n in names)) if pair else (COUNT, GROUPS[cat])
     out = {}
-    for names in GROUPS[cat]:
+    for names in merged:
         codes = sorted({cc for n in names for cc in have.get(n, ())})
-        if len(codes) >= COUNT:
+        if len(codes) >= need:
             out["·".join(names)] = codes
     return out
+
+
+def _rotate(pool: dict, recent) -> str:
+    """从最近出得最少的地区组里随机挑一组（recent 是最近出过的组名，从旧到新）。"""
+    last = {g: i for i, g in enumerate(recent)}
+    oldest = min(last.get(g, -1) for g in pool)
+    return random.choice([g for g in pool if last.get(g, -1) == oldest])
 
 
 def pick(cat: str, entries: list[dict], recent) -> dict:
@@ -61,9 +77,7 @@ def pick(cat: str, entries: list[dict], recent) -> dict:
     pool = groups(cat, entries)
     if not pool:
         raise RuntimeError("题库里没有哪片地区凑得够四个")
-    last = {g: i for i, g in enumerate(recent)}
-    oldest = min(last.get(g, -1) for g in pool)
-    group = random.choice([g for g in pool if last.get(g, -1) == oldest])
+    group = _rotate(pool, recent)
     codes = random.sample(pool[group], COUNT)
     spots = [random.choice([e for e in entries if e["group"] == cc]) for cc in codes]
     order = random.sample(codes, COUNT)  # A–D 是哪四个
@@ -72,9 +86,32 @@ def pick(cat: str, entries: list[dict], recent) -> dict:
     return {
         "id": f"{cat}-" + "-".join(e["id"].split("-", 1)[1] for e in spots), "group": group, "title": key, "original": key,
         "answer": f"{key}（" + "、".join(f"{i} {e['title']}" for i, e in enumerate(spots, 1)) + "）",
-        "names": [], "key": key, "spots": spots,
+        "names": [], "key": key, "spots": spots, "views": [[e["pano"]["id"], e["pano"]["heading"]] for e in spots],
         "options": [[letter, title[cc]] for letter, cc in zip(LETTERS, order)],
         "clues": clues(spots, CLUE_KINDS[cat]),
+        "hints": [[f"图{i}", f"{k} {e['title']} · {e['original'].split(' · ')[-1]}"]
+                  for i, (k, e) in enumerate(zip(key, spots), 1)],
+    }
+
+
+def pick_pair(cat: str, entries: list[dict], recent) -> dict:
+    """出一道两国的：轮着挑地区，地区里随机两国，每国随机一个全景取 VIEWS 两个方向，四张打乱。
+    字段同 pick：spots 是图 1–4 各是哪个条目（每国两次），views 是图 1–4 的 [全景 ID, 朝向]，key 是「ABBA」；没有线索。"""
+    pool = groups(cat, entries, pair=True)
+    if not pool:
+        raise RuntimeError("题库里没有哪片地区凑得够两个")
+    group = _rotate(pool, recent)
+    pair = [random.choice([e for e in entries if e["group"] == cc]) for cc in random.sample(pool[group], PAIR)]
+    shots = random.sample([(e, turn) for e in pair for turn in VIEWS], PAIR * len(VIEWS))
+    spots = [e for e, _ in shots]
+    key = "".join(LETTERS[pair.index(e)] for e in spots)
+    return {
+        "id": f"{cat}-" + "-".join(e["id"].split("-", 1)[1] for e in pair), "group": group, "title": key, "original": key,
+        "answer": f"{key}（" + "、".join(f"{i} {e['title']}" for i, e in enumerate(spots, 1)) + "）",
+        "names": [], "key": key, "spots": spots,
+        "views": [[e["pano"]["id"], (e["pano"]["heading"] + turn) % 360] for e, turn in shots],
+        "options": [[letter, e["title"]] for letter, e in zip(LETTERS, pair)],
+        "clues": [],
         "hints": [[f"图{i}", f"{k} {e['title']} · {e['original'].split(' · ')[-1]}"]
                   for i, (k, e) in enumerate(zip(key, spots), 1)],
     }
@@ -110,6 +147,21 @@ def parse(text: str) -> str | None:
     else:
         return None
     return letters if len(set(letters)) == COUNT else None
+
+
+def parse_pair(text: str) -> str | None:
+    """两国的答案：四个 A、B「ABBA」（图 1–4 依次是哪国），或者「1A 2B 3B 4A」。每国正好两张，A、B 不是各两个的当闲聊。"""
+    s = SEP.sub("", unicodedata.normalize("NFKC", text)).upper()
+    if re.fullmatch(r"[AB]{4}", s):
+        letters = s
+    elif re.fullmatch(r"(?:[1-4][AB]){4}", s):
+        pairs = dict(re.findall(r"([1-4])([AB])", s))
+        if len(pairs) < COUNT:
+            return None
+        letters = "".join(pairs[str(i)] for i in range(1, COUNT + 1))
+    else:
+        return None
+    return letters if letters.count("A") == PAIR else None
 
 
 def right(guess: str, key: str) -> int:

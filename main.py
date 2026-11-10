@@ -37,7 +37,7 @@ GEO_ALIASES = {"猜街景"}
 JPGEO_ALIASES = {"猜日本街景"}
 GEOMATCH_ALIASES = {"地点匹配", "猜街景匹配", "街景匹配", "地点连连看", "街景连连看"}
 JPGEOMATCH_ALIASES = {"日本地点匹配", "猜日本街景匹配", "日本街景匹配", "日本地点连连看", "日本连连看", "猜都道府县匹配", "都道府县匹配"}
-MATCH = {"geomatch", "jpgeomatch"}  # 匹配题：四张街景按图号说字母，见 core/geomatch.py
+MATCH = {"geomatch", "jpgeomatch"}  # 匹配题：四张街景按图号说字母，见 core/geomatch.py；两国的（geomatch.PAIRS）每人答一次
 VTUBER_ALIASES = {"猜vtuber", "猜VTuber", "猜V", "猜v"}
 VTUBER_BOARD_ALIASES = {"vtuber排行榜", "VTuber排行榜", "V排行榜"}
 KLINE_ALIASES = {"猜k线"}
@@ -116,7 +116,7 @@ class Round:
     plan: list = field(default_factory=list)  # 猜群友：每段露哪几格，见 members.plan
     roster: object = None  # 猜群友：开题时的群成员，认人用，见 members.Roster
     cast: list = field(default_factory=list)  # 猜声优：这道题的三个角色 [(图, 作品名)]，按露出的顺序
-    votes: dict = field(default_factory=dict)  # 猜K线：用户 -> (名字, 猜的涨跌幅)，按说的先后，每人只认第一句
+    votes: dict = field(default_factory=dict)  # 猜K线、两国的猜地点匹配：用户 -> (名字, 猜的)，按说的先后，每人只认第一句
     nudged: set = field(default_factory=set)  # 猜K线：提醒过「要带数字」的人，每人只提醒一次
 
     def left(self) -> int:
@@ -521,6 +521,11 @@ class GuessPlugin(Star):
                 yield event.chain_result(chain)
                 event.stop_event()
             return
+        if rnd.category in geomatch.PAIRS:  # 没有提示，每人答一次
+            if chain := self._geomatch_vote(rnd, event, text):
+                yield event.chain_result(chain)
+                event.stop_event()
+            return
 
         if commands.HINT.fullmatch(squash(text)):
             now = time.monotonic()
@@ -650,7 +655,8 @@ class GuessPlugin(Star):
         cat = rnd.category
         for _ in range(3):
             if cat in MATCH:
-                entry = geomatch.pick(cat, self.bank.entries[cat], self.recent[cat])
+                pick = geomatch.pick_pair if cat in geomatch.PAIRS else geomatch.pick
+                entry = pick(cat, self.bank.entries[cat], self.recent[cat])
             else:
                 entry = self.bank.pick(cat, self.recent[cat])
             try:
@@ -729,8 +735,8 @@ class GuessPlugin(Star):
             rnd.cast = [(pic, c["work"]) for pic, c in zip(pics, cast)]
             rnd.reveal = cards.trio(pics, len(cast), [[c["name"], c["work"]] for c in cast])
         elif cat in MATCH:
-            # 四国（县）各一张街景，图号就是答案的顺序；选项和线索都画在卡片的提示里，答案卡在图上写国名
-            pics = await self.bank.shots(entry["spots"], geomatch.SHOT)
+            # 四张街景（四国 / 四县各一张，两国的每国两张），图号就是答案的顺序；选项和线索画在卡片的提示里，答案卡在图上写国名
+            pics = await self.bank.shots(entry["views"], geomatch.SHOT)
             rnd.image = cards.quad(pics, [""] * len(pics))
             rnd.reveal = cards.quad(pics, [f"{k} {e['title']}" for k, e in zip(entry["key"], entry["spots"])])
             rnd.hints = entry["options"] + entry["clues"]
@@ -893,6 +899,8 @@ class GuessPlugin(Star):
         limit = self._limit(rnd.category)
         tries = say("tries", limit=limit) if limit else say("tries_free")
         note = f"card_note_{rnd.category}" if f"card_note_{rnd.category}" in LINES else "card_note"
+        if rnd.category in geomatch.PAIRS:
+            note = "card_note_pairs"
         revealed = set(rnd.order[: rnd.shown]) if rnd.category in GRID else None
         card = cards.render(image, revealed, MODES[rnd.category], status, hints, say(note, tries=tries))
         return [Comp.Image.fromBase64(card)]
@@ -904,6 +912,8 @@ class GuessPlugin(Star):
             status = f"已猜 {len(rnd.history)} 次 · 剩 {rnd.left()} 秒"
         if rnd.category == "kline":
             status = f"满 {self._kline_players()} 人揭晓 · 剩 {rnd.left()} 秒"
+        if rnd.category in geomatch.PAIRS:
+            status = f"到点公布 · 剩 {rnd.left()} 秒"
         if rnd.category == "member":
             image = cards.mosaic(rnd.avatar, *rnd.plan[rnd.shown - 1])
             status = f"露出 {members.LABELS[rnd.shown - 1]} · 剩 {rnd.left()} 秒"
@@ -1045,6 +1055,8 @@ class GuessPlugin(Star):
         answer = entry["answer"]
         if rnd.category == "kline":
             text = self._kline_result(gid, rnd)
+        elif rnd.category in geomatch.PAIRS:
+            text = self._geomatch_result(gid, rnd)
         elif uid:
             rnd.timer.cancel()
             name = name or uid
@@ -1086,6 +1098,27 @@ class GuessPlugin(Star):
             left = limit - len(wrong)
             reply += "。" + (say("guess_left", name=name, left=left) if left else say("guess_used_up", name=name, limit=limit))
         return [Comp.Plain(reply)]
+
+    def _geomatch_vote(self, rnd: Round, event: AstrMessageEvent, text: str) -> list | None:
+        """两国的猜地点匹配收一句：每人只认第一组「ABBA」（geomatch.parse_pair），别的当闲聊。不回对没对，到点一起公布。"""
+        uid = event.get_sender_id()
+        if uid in rnd.votes or (guess := geomatch.parse_pair(text)) is None:
+            return None
+        name = event.get_sender_name() or uid
+        rnd.votes[uid] = (name, guess)
+        return [Comp.Plain(say("pairs_vote", name=name, n=len(rnd.votes)))]
+
+    def _geomatch_result(self, gid: str, rnd: Round) -> str:
+        """两国的猜地点匹配到点公布：答对的都记一次。"""
+        answer = say("answer", answer=rnd.entry["answer"])
+        if not rnd.votes:
+            return say("pairs_nobody") + "\n" + answer
+        hit = [(uid, name) for uid, (name, guess) in rnd.votes.items() if guess == rnd.entry["key"]]
+        for uid, name in hit:
+            self._add_score(gid, rnd.category, uid, name)
+        if not hit:
+            return say("pairs_none", n=len(rnd.votes)) + "\n" + answer
+        return say("pairs_right", n=len(rnd.votes), names="、".join(name for _, name in hit)) + "\n" + answer
 
     def _kline_players(self) -> int:
         return max(1, int(self.config.get("kline_players", 5)))

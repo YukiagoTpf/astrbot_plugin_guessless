@@ -16,6 +16,7 @@ LINES = {
     "card_note_jpgeo": ["说都道府县，{tries}·「提示」加线索"],
     "card_note_geomatch": ["按图号说字母如 BADC，{tries}"],
     "card_note_jpgeomatch": ["按图号说字母如 BADC，{tries}"],
+    "card_note_pairs": ["按图号说如 ABBA，每国两张，每人一次"],
     "card_note_pokedle": ["说宝可梦名，{tries} · 「提示」加线索"],
     "card_note_anisong": ["说番名，{tries} · 「提示」听长一点"],
     "card_note_mecha": ["说机体名，{tries} · 「提示」开一格"],
@@ -38,6 +39,11 @@ LINES = {
     # 猜地点匹配：{guess} 是「BADC」，{right} 是对了几个
     "geomatch_wrong": ["{guess} 对了 {right} 个", "{guess}？对了 {right} 个，再换换", "{guess} 不对，对了 {right} 个"],
     "geomatch_repeat": ["{guess} 猜过了，对了 {right} 个，不扣次数"],
+    # 两国的猜地点匹配：每人答一次，到点一起公布
+    "pairs_vote": ["记下了，{name}（{n} 人答了）", "{name} 答了，第 {n} 个"],
+    "pairs_nobody": ["时间到，一个人都没答，连蒙都懒得蒙", "三分钟，零人作答。两个国家而已，蒙一个也行"],
+    "pairs_none": ["时间到，{n} 个人答，全错。两个国家都分不清", "时间到，{n} 个人答，没一个对"],
+    "pairs_right": ["时间到，{n} 个人答，{names} 答对，战斗力各 +1", "公布！{names} 答对（{n} 人里），战斗力各 +1"],
     "blind_wrong": ["{place} 不对，看表", "不是 {place}，对照一下表", "{place}？差点意思，看表"],
     "pokedle_empty": ["随便说一只宝可梦，看看它和答案差在哪"],
     "mechadle_empty": ["随便说一台高达机体，看看它和答案差在哪"],

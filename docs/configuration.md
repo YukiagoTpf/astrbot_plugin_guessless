@@ -21,10 +21,10 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `sakedle_max_guesses` | 10 | 盲猜日本酒每人每题最多猜几次；0 为不限 |
 | `bossdle_max_guesses` | 10 | 盲猜魔兽Boss每人每题最多猜几次；0 为不限 |
 | `isaacdle_max_guesses` | 10 | 盲猜以撒道具每人每题最多猜几次；0 为不限 |
-| `geomatch_round_seconds` | 180 | 猜地点匹配限时（秒），四张图要一张张对，比猜地点多一分钟 |
-| `geomatch_max_guesses` | 3 | 猜地点匹配每人每题最多猜几次；一共只有 24 种排法，猜错还报对了几个，给多了能硬试出来。0 为不限 |
-| `jpgeomatch_round_seconds` | 180 | 猜日本地点匹配限时（秒），同猜地点匹配 |
-| `jpgeomatch_max_guesses` | 3 | 猜日本地点匹配每人每题最多猜几次，同猜地点匹配。0 为不限 |
+| `geomatch_round_seconds` | 180 | 猜地点匹配限时（秒），到点一起公布 |
+| `geomatch_max_guesses` | 3 | 现在不用：猜地点匹配每人只答一次。只有改回四国各一张的玩法（`geomatch.PAIRS` 去掉 geomatch）时才看它 |
+| `jpgeomatch_round_seconds` | 180 | 猜日本地点匹配限时（秒），四张图要一张张对，比猜日本地点多一分钟 |
+| `jpgeomatch_max_guesses` | 3 | 猜日本地点匹配每人每题最多猜几次；一共只有 24 种排法，猜错还报对了几个，给多了能硬试出来。0 为不限 |
 | `kline_round_seconds` | 180 | 猜K线限时（秒）；凑满人数提前揭晓，到点没凑满按已经猜了的排名 |
 | `kline_players` | 5 | 猜K线凑满几个人揭晓；每人只认第一句，按离实际涨跌幅的远近排名次，第一名记一次 |
 | `hourly_limit` | 10 | 每个群每小时最多开几道题，所有题型共用，每个整点清零；0 为不限 |
