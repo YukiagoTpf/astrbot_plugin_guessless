@@ -15,6 +15,7 @@ LINES = {
     "card_note_country": ["说国家名，{tries} · 「提示」加线索"],
     "card_note_jpgeo": ["说都道府县，{tries}·「提示」加线索"],
     "card_note_geomatch": ["按图号说字母如 BADC，{tries}"],
+    "card_note_jpgeomatch": ["按图号说字母如 BADC，{tries}"],
     "card_note_pokedle": ["说宝可梦名，{tries} · 「提示」加线索"],
     "card_note_anisong": ["说番名，{tries} · 「提示」听长一点"],
     "card_note_mecha": ["说机体名，{tries} · 「提示」开一格"],
@@ -69,6 +70,7 @@ LINES = {
     "hint_exhausted_blind": ["线索全给完了，剩下的看表推理。剩 {left} 秒"],
     "hint_exhausted_teacher": ["已经是最清楚的一档了，再清楚就违规了。剩 {left} 秒"],
     "hint_exhausted_geomatch": ["线索给够了，再给就是直接念答案。剩 {left} 秒"],
+    "hint_exhausted_jpgeomatch": ["线索给够了，再给就是直接念答案。剩 {left} 秒"],
     "hint_exhausted_seiyuu": ["三个角色、首字都给了，再认不出就是看番不看 staff 表。剩 {left} 秒"],
     "hint_exhausted_member": [
         "头像都露出一大块了还认不出？平时水群光看字不看人。剩 {left} 秒",
@@ -193,6 +195,10 @@ LINES = {
         "时间到，四张图都对不上。各国街景在你们眼里长得一样吧",
         "时间到，零人配对成功。建议把 GeoGuessr 的教程从头刷一遍",
     ],
+    "timeout_jpgeomatch": [
+        "时间到，四个县都对不上。在你们眼里日本只有东京和大阪吧",
+        "时间到，零人配对成功。四十七都道府县先背熟再来",
+    ],
     "answer": ["答案：{answer}"],
     # 猜K线：{guess} 是「涨3%」「跌1.5%」「平」，{change} 是「+3.22%」，{diff} 是差几个点
     "kline_vote": ["{name} 猜{guess}，{n}/{total}", "记下了，{name} {guess}（{n}/{total}）"],
@@ -272,6 +278,7 @@ LINES = {
     "board_empty_country": ["还没人猜对过国家，地理老师哭晕在厕所"],
     "board_empty_jpgeo": ["还没人猜对过日本地点，全员只认识东京"],
     "board_empty_geomatch": ["还没人把地点配对成功过，全员脸盲（对街景）"],
+    "board_empty_jpgeomatch": ["还没人把日本的县配对成功过，全员只认识东京"],
     "board_empty_kline": ["还没人在猜K线里拿过第一，全员韭菜"],
     "group_only": ["私聊玩什么，去群里"],
     "member_none": ["没挑到能猜的头像，大家都是默认头像？换个时候再来"],

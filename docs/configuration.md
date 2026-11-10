@@ -23,6 +23,8 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `isaacdle_max_guesses` | 10 | 盲猜以撒道具每人每题最多猜几次；0 为不限 |
 | `geomatch_round_seconds` | 180 | 猜地点匹配限时（秒），四张图要一张张对，比猜地点多一分钟 |
 | `geomatch_max_guesses` | 3 | 猜地点匹配每人每题最多猜几次；一共只有 24 种排法，猜错还报对了几个，给多了能硬试出来。0 为不限 |
+| `jpgeomatch_round_seconds` | 180 | 猜日本地点匹配限时（秒），同猜地点匹配 |
+| `jpgeomatch_max_guesses` | 3 | 猜日本地点匹配每人每题最多猜几次，同猜地点匹配。0 为不限 |
 | `kline_round_seconds` | 180 | 猜K线限时（秒）；凑满人数提前揭晓，到点没凑满按已经猜了的排名 |
 | `kline_players` | 5 | 猜K线凑满几个人揭晓；每人只认第一句，按离实际涨跌幅的远近排名次，第一名记一次 |
 | `hourly_limit` | 10 | 每个群每小时最多开几道题，所有题型共用，每个整点清零；0 为不限 |
@@ -62,7 +64,7 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 1. Google Cloud 建项目、绑结算账号，启用 Street View Static API。
 2. 在「凭据」里建 API 密钥，填进 `google_maps_key`。
 
-**街景图片按张计费**，每道题取 3 张（猜地点匹配 4 张），有每月免费额度。找全景用的是免费的元数据接口，建题库不花钱；只有出题时取图收费，图片不落盘（Google 条款也不允许长期缓存）。建议：
+**街景图片按张计费**，每道题取 3 张（猜地点匹配、猜日本地点匹配 4 张），有每月免费额度。找全景用的是免费的元数据接口，建题库不花钱；只有出题时取图收费，图片不落盘（Google 条款也不允许长期缓存）。建议：
 
 - 把 key 限制为只能调 Street View Static API；
 - 在 Cloud 控制台的配额页给 Street View Static API 的每天请求数设上限，比如 300（约 100 道题）。

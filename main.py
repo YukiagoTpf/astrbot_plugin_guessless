@@ -23,7 +23,7 @@ from .core.store import load_json, save_json
 MODES = {
     "game": "猜游戏", "anime": "猜动画", "anisong": "听歌猜番", "pokemon": "猜宝可梦", "mecha": "猜萝卜",
     "vtuber": "猜Vtuber", "wow": "猜魔兽地图", "member": "猜群友", "teacher": "猜老师", "seiyuu": "猜声优", "geo": "猜地点", "country": "猜国家",
-    "jpgeo": "猜日本地点", "geomatch": "猜地点匹配",
+    "jpgeo": "猜日本地点", "geomatch": "猜地点匹配", "jpgeomatch": "猜日本地点匹配",
     "kline": "猜K线", **{cat: b.command for cat, b in BLIND.items()},
 }
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
@@ -36,6 +36,8 @@ BY_KEY = {"mecha", "mechadle", "vtuber", "wow", "member", "teacher", "seiyuu"}
 GEO_ALIASES = {"猜街景"}
 JPGEO_ALIASES = {"猜日本街景"}
 GEOMATCH_ALIASES = {"地点匹配", "猜街景匹配", "街景匹配", "地点连连看", "街景连连看"}
+JPGEOMATCH_ALIASES = {"日本地点匹配", "猜日本街景匹配", "日本街景匹配", "日本地点连连看", "日本连连看", "猜都道府县匹配", "都道府县匹配"}
+MATCH = {"geomatch", "jpgeomatch"}  # 匹配题：四张街景按图号说字母，见 core/geomatch.py
 VTUBER_ALIASES = {"猜vtuber", "猜VTuber", "猜V", "猜v"}
 VTUBER_BOARD_ALIASES = {"vtuber排行榜", "VTuber排行榜", "V排行榜"}
 KLINE_ALIASES = {"猜k线"}
@@ -48,7 +50,7 @@ ALL_BOARDS_ALIASES = {"战斗力榜", "总排行榜"}  # 管理员提前发整�
 COMMANDS = (
     set(MODES.values()) | set(BOARDS.values()) | {"暂停", "重新开始", "排行榜", "宵禁", "取消宵禁", "恢复宵禁"} | GEO_ALIASES | JPGEO_ALIASES
     | VTUBER_ALIASES | VTUBER_BOARD_ALIASES | KLINE_ALIASES | KLINE_BOARD_ALIASES | WOW_ALIASES | WOW_BOARD_ALIASES | TEACHER_ALIASES
-    | SEIYUU_ALIASES | GEOMATCH_ALIASES
+    | SEIYUU_ALIASES | GEOMATCH_ALIASES | JPGEOMATCH_ALIASES
     | ALL_BOARDS_ALIASES
     | {a for b in BLIND.values() for a in b.aliases}
 )
@@ -61,8 +63,8 @@ LOOSE = {
     ) for a in names},
     **{squash(m): ("start", cat) for cat, m in MODES.items()},
     **{squash(a): ("start", cat) for cat, names in (
-        ("geo", GEO_ALIASES), ("jpgeo", JPGEO_ALIASES), ("geomatch", GEOMATCH_ALIASES), ("vtuber", VTUBER_ALIASES),
-        ("kline", KLINE_ALIASES),
+        ("geo", GEO_ALIASES), ("jpgeo", JPGEO_ALIASES), ("geomatch", GEOMATCH_ALIASES), ("jpgeomatch", JPGEOMATCH_ALIASES),
+        ("vtuber", VTUBER_ALIASES), ("kline", KLINE_ALIASES),
         ("wow", WOW_ALIASES), ("teacher", TEACHER_ALIASES), ("seiyuu", SEIYUU_ALIASES),
         *((cat, b.aliases) for cat, b in BLIND.items()),
     ) for a in names},
@@ -256,6 +258,12 @@ class GuessPlugin(Star):
         async for r in self._start(event, "geomatch"):
             yield r
 
+    @filter.command("猜日本地点匹配", alias=JPGEOMATCH_ALIASES)
+    async def guess_jpgeomatch(self, event: AstrMessageEvent):
+        """开一道猜日本地点匹配（同一地方四个都道府县的街景，按图号说出各是哪个县）"""
+        async for r in self._start(event, "jpgeomatch"):
+            yield r
+
     @filter.command("猜K线", alias=KLINE_ALIASES)
     async def guess_kline(self, event: AstrMessageEvent):
         """开一道猜K线（A 股、日股、美股的一段日 K，猜之后 20 个交易日涨跌几个点）"""
@@ -331,6 +339,11 @@ class GuessPlugin(Star):
     async def geomatch_board(self, event: AstrMessageEvent):
         """猜地点匹配答对次数排行"""
         yield self._board(event, "geomatch")
+
+    @filter.command("日本地点匹配排行榜")
+    async def jpgeomatch_board(self, event: AstrMessageEvent):
+        """猜日本地点匹配答对次数排行"""
+        yield self._board(event, "jpgeomatch")
 
     @filter.command("K线排行榜", alias=KLINE_BOARD_ALIASES)
     async def kline_board(self, event: AstrMessageEvent):
@@ -530,7 +543,7 @@ class GuessPlugin(Star):
             event.stop_event()
             return
 
-        if rnd.category == "geomatch":
+        if rnd.category in MATCH:
             if chain := self._geomatch_guess(gid, rnd, event, text):
                 yield event.chain_result(chain)
                 event.stop_event()
@@ -636,8 +649,8 @@ class GuessPlugin(Star):
         """抽题，备好题图、答案卡的图、提示（听歌猜番还有音频）。素材下载失败换一道，最多 3 次。"""
         cat = rnd.category
         for _ in range(3):
-            if cat == "geomatch":
-                entry = geomatch.pick(self.bank.entries[cat], self.recent[cat])
+            if cat in MATCH:
+                entry = geomatch.pick(cat, self.bank.entries[cat], self.recent[cat])
             else:
                 entry = self.bank.pick(cat, self.recent[cat])
             try:
@@ -715,8 +728,8 @@ class GuessPlugin(Star):
             pics = await asyncio.gather(*(self.bank.image(entry, c["image"]) for c in cast))
             rnd.cast = [(pic, c["work"]) for pic, c in zip(pics, cast)]
             rnd.reveal = cards.trio(pics, len(cast), [[c["name"], c["work"]] for c in cast])
-        elif cat == "geomatch":
-            # 四国各一张街景，图号就是答案的顺序；选项和线索都画在卡片的提示里，答案卡在图上写国名
+        elif cat in MATCH:
+            # 四国（县）各一张街景，图号就是答案的顺序；选项和线索都画在卡片的提示里，答案卡在图上写国名
             pics = await self.bank.shots(entry["spots"], geomatch.SHOT)
             rnd.image = cards.quad(pics, [""] * len(pics))
             rnd.reveal = cards.quad(pics, [f"{k} {e['title']}" for k, e in zip(entry["key"], entry["spots"])])
@@ -864,7 +877,7 @@ class GuessPlugin(Star):
             return seiyuu.STEPS
         if rnd.category == "anisong":
             return len(audio.CLIPS)
-        if rnd.category == "geomatch":
+        if rnd.category in MATCH:
             return 1 + len(rnd.entry["clues"])
         return len(rnd.hints)
 
@@ -898,7 +911,7 @@ class GuessPlugin(Star):
             image = cards.blur(rnd.avatar, teacher.STAGES[rnd.shown - 1])
             if rnd.shown == len(teacher.STAGES):
                 return [self._card(rnd, image, status, rnd.hints)]
-        if rnd.category == "geomatch":  # 选项一直在，线索一段多一条
+        if rnd.category in MATCH:  # 选项一直在，线索一段多一条
             return [self._card(rnd, image, status, rnd.hints[: geomatch.COUNT + rnd.shown - 1])]
         if rnd.category == "seiyuu":
             image = cards.trio([pic for pic, _ in rnd.cast], rnd.shown, [[work] for _, work in rnd.cast])
@@ -964,7 +977,7 @@ class GuessPlugin(Star):
         text = say(
             "help",
             grid=" ".join(MODES[c] for c in live if c in GRID or c in ("member", "teacher", "seiyuu")),
-            street=" ".join(MODES[c] for c in live if c in ("geo", "jpgeo", "geomatch")),
+            street=" ".join(MODES[c] for c in live if c in ("geo", "jpgeo", "geomatch", "jpgeomatch")),
             other=" ".join(MODES[c] for c in live if c in ("anisong", "kline")),
             blind=" ".join(MODES[c] for c in live if c in BLIND),
         )
@@ -1013,7 +1026,7 @@ class GuessPlugin(Star):
         if rnd.category in BLIND:
             n = len(rnd.history) + 1
             return ("correct_fast" if n <= 3 else "correct_slow" if n >= 10 else "correct"), f"{n} 次"
-        if rnd.category == "geomatch":  # 按要了几条线索
+        if rnd.category in MATCH:  # 按要了几条线索
             n, most = rnd.shown - 1, self._steps(rnd) - 1
             return ("correct_fast" if n == 0 else "correct_slow" if n >= most else "correct"), f"{n} 条线索"
         n, steps = rnd.shown, self._steps(rnd)
@@ -1052,13 +1065,13 @@ class GuessPlugin(Star):
         return [Comp.Plain(text), Comp.Image.fromBase64(card)]
 
     def _geomatch_guess(self, gid: str, rnd: Round, event: AstrMessageEvent, text: str) -> list | None:
-        """猜地点匹配收一句：不是一组字母（geomatch.parse）的当闲聊。全对就结算；不对回对了几个，每人最多 _limit 次，
+        """猜地点匹配、猜日本地点匹配收一句：不是一组字母（geomatch.parse）的当闲聊。全对就结算；不对回对了几个，每人最多 _limit 次，
         全群猜过的同一组再说不扣次数。"""
         if (guess := geomatch.parse(text)) is None:
             return None
         uid = event.get_sender_id()
         name = event.get_sender_name() or uid
-        wrong, limit = rnd.wrong.setdefault(uid, set()), self._limit("geomatch")
+        wrong, limit = rnd.wrong.setdefault(uid, set()), self._limit(rnd.category)
         if limit and len(wrong) >= limit:
             return None  # 次数用完了，说对了也不算
         if guess == rnd.entry["key"]:

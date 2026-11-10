@@ -20,7 +20,8 @@ core/
     __init__.py       BLIND：登记了哪些盲猜题型
   sources.py          外部数据源：Wikidata、中文维基浏览量、B 站、AniList（含猜声优的 staff 名单）、AnimeThemes、IGDB、Steam、PokeAPI、
                       Gundam Wiki、vtbs.moe；HttpError
-  geomatch.py         猜地点匹配：按地区挑四国（GROUPS）、出题、线索、认「BADC」这样的答案；街景用猜地点的题库
+  geomatch.py         猜地点匹配、猜日本地点匹配：按地区挑四国 / 四县（GROUPS）、出题、线索、认「BADC」这样的答案；
+                      街景用猜地点、猜日本地点的题库
   geo.py              地理：GeoNames、Wikidata 国家资料、日本市町村和中国地级行政区（含北上广深的区）、街景取景、Natural Earth 轮廓、盲猜地点的地区划分和方位，以及各种版本常量
   cards.py            卡片渲染（Pillow）：九宫格、街景三联、猜声优的三宫格、国家轮廓（答案卡带邻国底图）、世界地图、对比表、听歌进度条、
                       猜群友的头像棋盘、猜K线的 K 线图、整点排行榜长图

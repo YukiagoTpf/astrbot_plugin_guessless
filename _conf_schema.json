@@ -100,6 +100,18 @@
     "default": 3,
     "hint": "一共只有 24 种排法，猜错还会说对了几个，给多了能硬试出来。0 不限"
   },
+  "jpgeomatch_round_seconds": {
+    "description": "猜日本地点匹配限时（秒）",
+    "type": "int",
+    "default": 180,
+    "hint": "同猜地点匹配"
+  },
+  "jpgeomatch_max_guesses": {
+    "description": "猜日本地点匹配每人每题最多猜几次",
+    "type": "int",
+    "default": 3,
+    "hint": "同猜地点匹配。0 不限"
+  },
   "kline_round_seconds": {
     "description": "猜K线限时（秒）",
     "type": "int",
