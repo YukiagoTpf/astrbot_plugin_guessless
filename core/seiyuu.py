@@ -1,4 +1,4 @@
-"""猜声优：日本女声优配过的三个角色（AniList 的角色图），三宫格一格格露出来，猜是谁配的。
+"""猜声优：日本女声优配过的四个角色（AniList 的角色图），并排一格格露出来，猜是谁配的。
 
 名单：AniList 的 staff 按收藏数排，翻到它允许的最后一页（第 5000 个），挑性别女、语言日语、配过角色的。
 再按日文名去 Bangumi 搜人物（只搜职业有声优的），对上了才出题：初音未来、VTuber、歌手、漫画家这样就筛掉了。
@@ -7,10 +7,11 @@
 日文名对角色表里的条目，还对不上的拿日文名搜 Bangumi 的动画条目（_cn_titles），都没有中文名才用 AniList 的日文名。
 成人向、Ecchi 作品里的角色不出（角色图常是擦边的），BLOCK_WORKS 里的作品不出，旁白、她本人演自己的角色不出，
 近 20 年没再配过的角色不出（群里认不得八九十年代的老番），角色图画的是别人那一版的不出（同一部里小时候、长大后各一个人配，
-角色图却只有一张，见 shared），能用的角色不到 3 个的人不出。已经去世的不出。
+角色图却只有一张，见 shared），能用的角色不到 MIN_CHARS 个的人不出。已经去世的不出。
 近 20 年要接过新角色（MIN_NEW 个是这些年才开始配的），只靠老角色的续作撑着的不出。
 动画里配过的「主角」（Bangumi 角色表）不到 MIN_LEADS 个的不出。
-出题时热门（收藏数前 HOT 位）和冷门的掺着出，各占多少看 seiyuu_niche_ratio。露的角色偏新番（cast）。
+出题时热门（收藏数前 HOT 位）和冷门的掺着出，各占多少看 seiyuu_niche_ratio。前三个角色按作品人气从冷到热露，
+第 5 段露她最热门作品里的主役（cast）。
 游戏主役：Bangumi 上她在游戏里配「主角」的角色，游戏要在猜游戏题库里、是日本厂商开发的（_game_pool），有的话一半的题换一个进来。
 提示里的声线按她配的角色推（voice）。
 
@@ -32,14 +33,17 @@ from .entries import assign_names, finish_entry, to_hans, usable_names
 from .sources import Anilist, HttpError, Igdb, dedupe
 from .store import load_json, save_json
 
-VERSION = "anilist-bgm-v6"  # 选人、选角色、资料、提示、叫法的规则改了就换个名字，题库重建
+VERSION = "anilist-bgm-v7"  # 选人、选角色、资料、提示、叫法的规则改了就换个名字，题库重建
 BGM = "https://api.bgm.tv/v0"
 CACHE_DAYS = 30
-SCAN = 3  # AniList 名单、角色资料（casts）存的字段改了就加一，缓存的名单、角色资料作废重查（Bangumi 的资料照用）
+SCAN = 4  # AniList 名单、角色资料（casts）存的字段改了就加一，缓存的名单、角色资料作废重查（Bangumi 的资料照用）
 TABLE = 3  # Bangumi 角色表里取的东西（_bangumi 的 works、games、leads）改了就加一，各人重拉角色表（人物资料照用）
 PAGES = 100  # AniList 一页 50 个，最多翻到第 5000 个
-STEPS = 4  # 一段露一个角色，第 4 段不加角色，把剩下的资料和首字给完
-MIN_CHARS = 3
+# 前三段一段露一个角色，第 4 段不加角色、把剩下的资料和首字给完（INFO），第 5 段露她最热门作品里的主役（群友要的第五次提示）
+STEPS = 5
+INFO = 4
+MIN_CHARS = 4  # 四个角色才凑得够一道题
+LEAD_FLOOR = 0.5  # 第 5 段的主役，作品人气不到她最热门那部的这么多就不用主役，用最热门作品里的角色
 RECENT_YEARS = 20  # 角色在这么多年内的作品里还配过才出
 MIN_NEW = 3  # 能出的角色里至少这么多个是近 RECENT_YEARS 年才开始配的，人才出
 # 动画里配过这么多个「主角」（Bangumi 角色表，按角色算，同一角色几季算一个）人才出。群友嫌冷门的「主役都没混到过」，
@@ -80,6 +84,8 @@ def _trim(s: dict) -> dict | None:
         if not c or not media:
             continue
         cname = c.get("name") or {}
+        # 作品人气：她配这个角色的那几部里最热门的一部，AniList 上多少人加了片单
+        pop = max((m.get("popularity") or 0 for m in media), default=0)
         years = [y for m in media if (y := (m.get("startDate") or {}).get("year"))]
         chars.append({
             "id": c["id"], "name": cname.get("native") or cname.get("full") or "", "full": cname.get("full") or "",
@@ -89,6 +95,7 @@ def _trim(s: dict) -> dict | None:
             "nsfw": any(m.get("isAdult") or "Ecchi" in (m.get("genres") or []) for m in media),
             # 她头一回和最近一次配这个角色的作品是哪年开播的
             "first": min(years, default=0), "last": max(years, default=0),
+            "pop": pop, "lead": e.get("role") == "MAIN",
         })
     if not chars:
         return None
@@ -273,7 +280,8 @@ def usable(s: dict, works: dict, casts: dict | None = None) -> list[dict]:
                 or shared(s["id"], ((casts or {}).get(str(c["id"])) or {}).get("cast") or [])):
             continue
         seen.add(c["image"])
-        out.append({"id": c["id"], "name": c["name"], "work": work, "image": c["image"], "fav": c["fav"], "first": c["first"]})
+        out.append({"id": c["id"], "name": c["name"], "work": work, "image": c["image"], "fav": c["fav"], "first": c["first"],
+                    "pop": c["pop"], "lead": c["lead"]})
     return out
 
 
@@ -388,29 +396,46 @@ def entry(s: dict, person: dict | None, chars: list[dict], names: list[str], mai
 
 
 def clues(hints: list, shown: int) -> list:
-    """第 shown 段给哪些提示：一段多一条资料；首字（finish_entry 补在最后）留到最后一段，最后一段全给。"""
-    return hints if shown >= STEPS else hints[:-1][:shown]
+    """第 shown 段给哪些提示：一段多一条资料；首字（finish_entry 补在最后）留到第 INFO 段，那段起全给。"""
+    return hints if shown >= INFO else hints[:-1][:shown]
+
+
+def revealed(shown: int, total: int) -> int:
+    """第 shown 段露几个角色（一共 total 个）：前几段一段一个，留最后一个，第 STEPS 段才露。"""
+    return total if shown >= STEPS else min(shown, total - 1)
+
+
+def _heat(c: dict) -> tuple:
+    """多热门：先看作品人气（pop），一样再看角色的收藏数。游戏主役和旧题库的条目没有 pop，只看收藏数。"""
+    return c.get("pop", 0), c.get("fav", 0)
 
 
 def cast(chars: list[dict], games: list[dict] = ()) -> list[dict]:
-    """这道题露哪三个角色，按露出的顺序：冷门的先露，最后一个从她最有名的三个里挑，不至于三个都认不出。
-    群友认得新番的多，所以偏新的：最有名的三个里越新的越容易挑中，前两个先从后来才配的那一半里挑。
-    尽量出自三部不同的作品，底下的作品名才是三条线索。有游戏主役（games）的，GAME_SHARE 的题把第二个换成游戏角色。"""
-    if len(chars) < 5:
-        out = sorted(random.sample(chars, MIN_CHARS), key=lambda c: c["fav"])
+    """这道题露哪四个角色，按露出的顺序。第 4 个是她最热门作品里的主役（AniList 的 MAIN），第 STEPS 段才露；主役都在冷门番里
+    （作品人气不到她最热门那部的 LEAD_FLOOR），就取作品最热门的角色，最后一段总得是最好认的。前三个从剩下的里挑，按作品人气从冷到热露（群友嫌三个都是路边番）：第 3 个从剩下作品最热门的三个里挑，
+    越热门越容易挑中；前两个从再往后的里挑，偏新番（群友认得新番的多，先从后来才配的那一半里挑）。
+    尽量出自不同的作品，底下的作品名才是几条线索。有游戏主役（games）的，GAME_SHARE 的题把第二个换成游戏角色。"""
+    hottest = max(chars, key=_heat)
+    lead = max([c for c in chars if c.get("lead")] or [hottest], key=_heat)
+    finale = lead if lead.get("pop", 0) >= hottest.get("pop", 0) * LEAD_FLOOR else hottest
+    rest = sorted((c for c in chars if c is not finale), key=_heat, reverse=True)
+    if len(rest) < 5:
+        three = random.sample(rest, min(3, len(rest)))
     else:
-        newest = lambda c: -c.get("first", 0)  # noqa: E731
-        star = random.choices(sorted(chars[:3], key=newest), weights=(3, 2, 1))[0]
-        rest = sorted(chars[3:], key=newest)
-        half = max(2, (len(rest) + 1) // 2)
-        rest = random.sample(rest[:half], half) + random.sample(rest[half:], len(rest) - half)
-        picked = []
-        for c in rest:
-            if len(picked) < 2 and c["work"] not in {star["work"], *(p["work"] for p in picked)}:
+        top = [c for c in rest if c["work"] != finale["work"]][:3] or rest[:3]
+        star = random.choices(top, weights=(3, 2, 1)[: len(top)])[0]
+        tail = sorted((c for c in rest if c not in top), key=lambda c: -c.get("first", 0))
+        half = max(2, (len(tail) + 1) // 2)
+        tail = random.sample(tail[:half], half) + random.sample(tail[half:], len(tail) - half)
+        picked, works = [], {finale["work"], star["work"]}
+        for c in tail:
+            if len(picked) < 2 and c["work"] not in works:
                 picked.append(c)
-        picked += [c for c in rest if c not in picked][: 2 - len(picked)]
-        out = [*sorted(picked, key=lambda c: c["fav"]), star]
-    if games and random.random() < GAME_SHARE:
+                works.add(c["work"])
+        picked += [c for c in tail if c not in picked][: 2 - len(picked)]
+        three = [*picked, star]
+    out = [*sorted(three, key=_heat), finale]
+    if games and len(out) > 2 and random.random() < GAME_SHARE:
         out[1] = random.choice(games)
     return out
 

@@ -23,7 +23,7 @@ core/
   geomatch.py         猜地点匹配、猜日本地点匹配：按地区挑四国 / 四县（GROUPS）、出题、线索、认「BADC」这样的答案；
                       猜地点匹配是两国各两张（PAIRS、pick_pair、parse_pair，每人答一次）；街景用猜地点、猜日本地点的题库
   geo.py              地理：GeoNames、Wikidata 国家资料、日本市町村和中国地级行政区（含北上广深的区）、街景取景、Natural Earth 轮廓、盲猜地点的地区划分和方位，以及各种版本常量
-  cards.py            卡片渲染（Pillow）：九宫格、街景三联、猜声优的三宫格、国家轮廓（答案卡带邻国底图）、世界地图、对比表、听歌进度条、
+  cards.py            卡片渲染（Pillow）：九宫格、街景三联、猜声优的一排角色、国家轮廓（答案卡带邻国底图）、世界地图、对比表、听歌进度条、
                       猜群友的头像棋盘、猜K线的 K 线图、整点排行榜长图
   members.py          猜群友：挑人、拉 QQ 头像、每段露哪几格、认群友说的是谁（Roster）
   audio.py            听歌猜番的音频：ffmpeg 解码、切片段
@@ -36,7 +36,7 @@ core/
   mecha_data.py       手写的 Gundam Wiki 资料中译（世界观、阵营、机型、机械设计）和机体外号
   vtuber_data.py      手写的猜Vtuber不出题名单（品牌号、搬运号、成人向、有争议的）
   teacher.py          猜老师：名单（Wikidata、日文维基的信息框）、FANZA 头像的地址、条目
-  seiyuu.py           猜声优：名单（AniList 的 staff，按日文名对上 Bangumi 的人物）、能出的角色、条目、每道题挑哪三个角色
+  seiyuu.py           猜声优：名单（AniList 的 staff，按日文名对上 Bangumi 的人物）、能出的角色、条目、每道题挑哪四个角色、按什么先后露
   wow.py              魔兽世界：猜魔兽地图的地图资料（wago.tools 的 DB2 CSV）、截图（warcraft.wiki.gg）、条目；盲猜魔兽Boss的首领资料
   kline.py            猜K线：股票池（沪深300、日经225、标普500、纳指100）、出题时拉一段日 K 并复权（A 股按新浪的因子，日股美股用
                       Yahoo 的 adjclose）、揭晓的统计、认群友说的涨跌幅

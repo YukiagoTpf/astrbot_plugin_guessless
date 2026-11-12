@@ -1,6 +1,6 @@
 """出题卡片：正方形，中间 16:9 是图（九宫格，未揭开的格子盖色块），上下黑边写标题和提示。
 
-图区还有几种不分格的：街景三联、猜地点匹配的四宫格、猜声优的三宫格、国家剪影、猜国家猜错时的世界地图、盲猜的对比表、听歌猜番的进度条、猜K线的 K 线图。
+图区还有几种不分格的：街景三联、猜地点匹配的四宫格、猜声优的一排角色、国家剪影、猜国家猜错时的世界地图、盲猜的对比表、听歌猜番的进度条、猜K线的 K 线图。
 """
 
 import base64
@@ -148,14 +148,15 @@ def blur(img: Image.Image, radius: int | None = None) -> Image.Image:
     return out
 
 
-def trio(images: list[bytes], shown: int, labels: list[list[str]]) -> Image.Image:
-    """猜声优：三个角色图并排，前 shown 个露出来，其余盖色块打问号。露出来的底下压一条字：
+def roles(images: list[bytes], shown: int, labels: list[list[str]]) -> Image.Image:
+    """猜声优：几个角色图（一般四个）并排，前 shown 个露出来，其余盖色块打问号。露出来的底下压一条字：
     出题时是作品名，答案卡是角色名和作品名（labels 里每个是一两行）。Bangumi 的游戏角色图常是长长的全身立绘，
     上下裁的时候多留上面，脸才在格子里。"""
     out = Image.new("RGB", (SIZE, PIC_H), BG)
     draw = ImageDraw.Draw(out, "RGBA")
-    w = (SIZE - GAP * 2) // 3
-    mark, line = font(PIC_H // 6, bold=True), font(26)
+    n = max(1, len(images))
+    w = (SIZE - GAP * (n - 1)) // n
+    mark, line = font(PIC_H // 6, bold=True), font(26 if n <= 3 else 24)
     for i, (data, label) in enumerate(zip(images, labels)):
         x = i * (w + GAP)
         if i >= shown:

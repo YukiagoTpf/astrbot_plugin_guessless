@@ -40,7 +40,8 @@ TITLES = {"NL": "荷兰", "KR": "韩国", "ML": "马里", "KP": "朝鲜"}
 HINTS_VERSION = "zh-labels-v1"
 CONTINENTS = {"AF": "非洲", "AS": "亚洲", "EU": "欧洲", "NA": "北美洲", "OC": "大洋洲", "SA": "南美洲", "AN": "南极洲"}
 DRIVING = {"Q14565199": "靠右行驶", "Q11920728": "靠左行驶"}
-PANOS_PER_COUNTRY = 6
+# 每国最多找这么多个全景。群友嫌同一国老出同一张图，从 6 个加到 20 个（元数据接口免费，只是建题库慢些）
+PANOS_PER_COUNTRY = 20
 SAMPLING = "town-1km"  # 取景规则的版本，改了规则就换个名字，旧的全景缓存作废重新找
 BIG_TOWN = 50000  # 优先在这么多人口以上的城镇取景，这个国家不够 3 个才退回小城镇
 PANOS_PER_PREF = 4
@@ -650,8 +651,9 @@ class StreetView:
             return await r.read()
 
 
-async def sample(sv: StreetView, cities: list, nearest: Nearest, accept, count: int = PANOS_PER_COUNTRY) -> list[dict]:
-    """在这些城镇的中心附近（按人口开方加权，偏移 1 公里内）找最多 count 个全景。
+async def sample(sv: StreetView, cities: list, nearest: Nearest, accept, count: int = PANOS_PER_COUNTRY,
+                 have: set = frozenset()) -> list[dict]:
+    """在这些城镇的中心附近（按人口开方加权，偏移 1 公里内）找最多 count 个新全景（have 是已经有的全景 ID，补找时不算）。
 
     accept(最近城市) 判断全景是否还在要的国家 / 都道府县里。
 
@@ -670,7 +672,7 @@ async def sample(sv: StreetView, cities: list, nearest: Nearest, accept, count: 
         pano = await sv.find(lat, lng)
         await asyncio.sleep(0.05)
         near = pano and nearest(pano["lat"], pano["lng"])
-        if not pano or not near or not accept(near) or pano["id"] in panos:
+        if not pano or not near or not accept(near) or pano["id"] in panos or pano["id"] in have:
             misses += 1
             continue
         misses = 0

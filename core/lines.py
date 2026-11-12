@@ -77,7 +77,7 @@ LINES = {
     "hint_exhausted_teacher": ["已经是最清楚的一档了，再清楚就违规了。剩 {left} 秒"],
     "hint_exhausted_geomatch": ["线索给够了，再给就是直接念答案。剩 {left} 秒"],
     "hint_exhausted_jpgeomatch": ["线索给够了，再给就是直接念答案。剩 {left} 秒"],
-    "hint_exhausted_seiyuu": ["三个角色、首字都给了，再认不出就是看番不看 staff 表。剩 {left} 秒"],
+    "hint_exhausted_seiyuu": ["四个角色、首字都给了，再认不出就是看番不看 staff 表。剩 {left} 秒"],
     "hint_exhausted_member": [
         "头像都露出一大块了还认不出？平时水群光看字不看人。剩 {left} 秒",
         "没有更大的格子了，剩下的靠你们对群友的了解——如果有的话。剩 {left} 秒",

@@ -30,10 +30,10 @@ BILI_SEARCH = "https://api.bilibili.com/x/web-interface/search/type"
 ANILIST = "https://graphql.anilist.co"
 ANILIST_FIELDS = "id title { romaji english native } synonyms bannerImage startDate { year } format"
 # 猜声优：按收藏数排的 staff，每人带收藏最多的 10 个角色和她给这个角色配音的作品（成人向、Ecchi 的在 seiyuu.py 里筛掉，
-# 年份看是不是近些年还在配）
+# 年份看是不是近些年还在配，人气排露角色的先后），role 是主役（MAIN）还是配角
 ANILIST_STAFF = """query($page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } staff(sort: FAVOURITES_DESC) {
   id name { full native } gender languageV2 favourites dateOfBirth { year } dateOfDeath { year } yearsActive
-  characters(perPage: 10, sort: FAVOURITES_DESC) { edges { node { id name { full native } image { large } favourites }
+  characters(perPage: 10, sort: FAVOURITES_DESC) { edges { role node { id name { full native } image { large } favourites }
     media { title { native romaji } isAdult genres popularity startDate { year } } } } } } }"""
 # 猜声优：角色的性别、年龄和在各部作品里的日语声优（staff 的 characters 里只列她自己，看不出有没有别人一起配）。
 # 不带 node 的话 voiceActorRoles 全是 null

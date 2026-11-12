@@ -138,17 +138,24 @@ class Bank:
     def ready(self, cat: str) -> bool:
         return len(self.entries[cat]) >= MIN_POOL
 
-    def pick(self, cat: str, exclude) -> dict:
+    def pick(self, cat: str, exclude, used=()) -> dict:
         """按 niche_ratio 的概率出小众题（默认大约五题一道），其余出大众题；没分档的题都算大众题。
         有 {cat}_niche_ratio 的题型按它的来（猜声优热门冷门各一半）。
-        exclude 是最近出过的（从旧到新），避开它们；这一档都出过了，就从最久没出的那些里挑。"""
+        exclude 是最近出过的组（从旧到新），避开它们；这一档都出过了，就从最久没出的那些组里挑。
+        一组有几道题的（猜地点一国几个全景），used 是最近出过的题 ID（从旧到新），组里挑最久没出的那道。"""
         ratio = self.config.get(f"{cat}_niche_ratio", self.config.get("niche_ratio", 0.2))
         tier = "niche" if random.random() < ratio else "main"
         entries = kline.pick(self.entries[cat]) if cat == "kline" else self.entries[cat]
         pool = [e for e in entries if e.get("tier", "main") == tier] or entries
         last = {g: i for i, g in enumerate(exclude)}
         seen = [last.get(e.get("group", e["id"]), -1) for e in pool]
-        return random.choice([e for e, i in zip(pool, seen) if i == min(seen)])
+        hit = random.choice([e for e, i in zip(pool, seen) if i == min(seen)])
+        if "group" not in hit:
+            return hit
+        mine = [e for e in pool if e.get("group") == hit["group"]]
+        last = {x: i for i, x in enumerate(used)}
+        age = [last.get(e["id"], -1) for e in mine]
+        return random.choice([e for e, i in zip(mine, age) if i == min(age)])
 
     def match(self, cat: str, text: str, prefer: str = "") -> tuple[str | None, dict | None]:
         """群友这句话猜的是哪个答案，返回 (键, 资料)：地点类是国家 / 都道府县代码和 places 里那一项，
@@ -181,9 +188,10 @@ class Bank:
         return data
 
     async def panels(self, entry: dict) -> list[bytes]:
-        """猜地点的三张街景（同一位置相差 120° 的三个方向），现取不存盘，一张按一次计费。"""
+        """猜地点的三张街景（同一位置相差 120° 的三个方向），现取不存盘，一张按一次计费。
+        朝向每次随机，同一个全景再出到也不是同样的三张图。"""
         sv = geo.StreetView(self.http(), str(self.config.get("google_maps_key") or ""))
-        heading = entry["pano"]["heading"]
+        heading = random.randrange(360)
         return list(await asyncio.gather(*(
             sv.image(entry["pano"]["id"], (heading + 120 * i) % 360, size) for i, size in enumerate(geo.PANELS)
         )))
@@ -802,12 +810,14 @@ class Bank:
 
     async def _sample_all(self, cat: str, cache_name: str, targets: list, make_entries, places: dict) -> None:
         """猜地点、猜日本地点共用：targets 是 [(键, 候选城镇, accept, 个数)]，全景缓存在 cache_name，
-        找到不足 MIN_PANOS 个的每次重建再补找；make_entries(键, 全景列表) 生成题目，places 见 Bank.places。"""
+        找到不足 MIN_PANOS 个的每次重建再补找；够数了但不到要的个数的（个数改大了），按新个数补找一次，
+        找过的个数记在缓存的 "_tried"。make_entries(键, 全景列表) 生成题目，places 见 Bank.places。"""
         key = str(self.config.get("google_maps_key") or "").strip()
         cache_path = self.dir / cache_name
         cache = load_json(cache_path) or {}
         if cache.get("_sampling") != geo.SAMPLING:  # 取景规则变了，旧全景作废
             cache = {"_sampling": geo.SAMPLING}
+        tried = cache.setdefault("_tried", {})
         sv, nearest = geo.StreetView(self.http(), key), geo.Nearest(await self.cities(cat))
         entries, failures = [], 0
         # 首次构建没有旧题库，边找边开放
@@ -815,17 +825,19 @@ class Bank:
             self.entries[cat], self.places[cat] = entries, places
         try:
             for i, (k, towns, accept, count) in enumerate(targets):
-                if len(cache.get(k, [])) < geo.MIN_PANOS:
+                have = cache.get(k, [])
+                if len(have) < geo.MIN_PANOS or (len(have) < count and tried.get(k, 0) < count):
                     self.status[cat] = f"正在找街景 {i}/{len(targets)}（已可出题 {len(entries)} 道）"
                     try:
-                        found = await geo.sample(sv, towns, nearest, accept, count)
-                        cache[k] = list({p["id"]: p for p in cache.get(k, []) + found}.values())
+                        found = await geo.sample(sv, towns, nearest, accept, count - len(have), {p["id"] for p in have})
+                        cache[k] = list({p["id"]: p for p in have + found}.values())
+                        tried[k] = count
                     except (aiohttp.ClientError, asyncio.TimeoutError, HttpError) as e:
                         failures = self._media_failed("Google 街景", k, e, failures)
                         continue
                     if i % 10 == 0:
                         save_json(cache_path, cache)
-                if len(cache[k]) >= geo.MIN_PANOS:
+                if len(cache.get(k, [])) >= geo.MIN_PANOS:
                     entries.extend(make_entries(k, cache[k]))
         finally:
             save_json(cache_path, cache)

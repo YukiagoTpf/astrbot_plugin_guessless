@@ -29,6 +29,7 @@ MODES = {
 BOARDS = {cat: name.removeprefix("猜") + "排行榜" for cat, name in MODES.items()}
 OFFLINE = {"country", "isaacdle", "member"}  # 暂时下线的题型：开题和排行榜都只回一句，不出题、不播报
 RECENT = 200  # 每个题型记最近出过的这么多道，出题时避开（Bank.pick）
+USED = 1000  # 一组有几道题的（猜地点一国几个全景），记最近出过的这么多道题，组里挑最久没出的（Bank.pick）
 GRID = {"game", "anime", "pokemon", "mecha", "vtuber", "wow"}  # 九宫格逐格揭开的题型
 # 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对；
 # Vtuber 的名字也常互相包含；魔兽地图也是（东、西瘟疫之地）；群友按 @、QQ 号、名片认人；老师、声优的名字也常互相包含
@@ -115,7 +116,7 @@ class Round:
     avatar: object = None  # 猜群友：头像（只在内存里）
     plan: list = field(default_factory=list)  # 猜群友：每段露哪几格，见 members.plan
     roster: object = None  # 猜群友：开题时的群成员，认人用，见 members.Roster
-    cast: list = field(default_factory=list)  # 猜声优：这道题的三个角色 [(图, 作品名)]，按露出的顺序
+    cast: list = field(default_factory=list)  # 猜声优：这道题的四个角色 [(图, 作品名)]，按露出的顺序
     votes: dict = field(default_factory=dict)  # 猜K线、两国的猜地点匹配：用户 -> (名字, 猜的)，按说的先后，每人只认第一句
     nudged: set = field(default_factory=set)  # 猜K线：提醒过「要带数字」的人，每人只提醒一次
 
@@ -138,6 +139,8 @@ class GuessPlugin(Star):
         # 题型 -> 最近出过的题（组），出题时避开；存盘是为了重启后不从头随机、刚出过的又出
         recent = load_json(self.data_dir / "recent.json") or {}
         self.recent = {cat: deque(recent.get(cat, []), maxlen=RECENT) for cat in MODES}
+        used = load_json(self.data_dir / "recent_ids.json") or {}
+        self.used = {cat: deque(used.get(cat, []), maxlen=USED) for cat in MODES}
         self.scores = load_json(self.data_dir / "scores.json") or {}
         self.paused: set[str] = set(load_json(self.data_dir / "paused.json") or [])
         # 群号 -> 最近一小时内开题的时间戳，所有猜题共用一个额度；存盘是为了重启不清零
@@ -230,7 +233,7 @@ class GuessPlugin(Star):
 
     @filter.command("猜声优", alias=SEIYUU_ALIASES)
     async def guess_seiyuu(self, event: AstrMessageEvent):
-        """开一道猜声优（日本女声优配过的三个角色，猜是谁配的）"""
+        """开一道猜声优（日本女声优配过的四个角色，猜是谁配的）"""
         async for r in self._start(event, "seiyuu"):
             yield r
 
@@ -658,7 +661,7 @@ class GuessPlugin(Star):
                 pick = geomatch.pick_pair if cat in geomatch.PAIRS else geomatch.pick
                 entry = pick(cat, self.bank.entries[cat], self.recent[cat])
             else:
-                entry = self.bank.pick(cat, self.recent[cat])
+                entry = self.bank.pick(cat, self.recent[cat], self.used[cat])
             try:
                 await self._load(rnd, entry)
             except Exception as e:
@@ -666,6 +669,9 @@ class GuessPlugin(Star):
                 continue
             self.recent[cat].append(entry.get("group", entry["id"]))
             save_json(self.data_dir / "recent.json", {c: list(q) for c, q in self.recent.items() if q})
+            if entry.get("group", entry["id"]) != entry["id"] and cat not in MATCH:
+                self.used[cat].append(entry["id"])
+                save_json(self.data_dir / "recent_ids.json", {c: list(q) for c, q in self.used.items() if q})
             return True
         raise RuntimeError("连续 3 道题的素材都没下载下来")
 
@@ -729,11 +735,11 @@ class GuessPlugin(Star):
             rnd.avatar = cards.square(await self.bank.image(entry))
             rnd.reveal = cards.blur(rnd.avatar)
         elif cat == "seiyuu":
-            # 三个角色整道题不变，一段多露一个（_question）；答案卡写上角色名
+            # 四个角色整道题不变，前三段一段多露一个、第 5 段露最后一个（_question）；答案卡写上角色名
             cast = seiyuu.cast(entry["chars"], entry.get("games") or [])
             pics = await asyncio.gather(*(self.bank.image(entry, c["image"]) for c in cast))
             rnd.cast = [(pic, c["work"]) for pic, c in zip(pics, cast)]
-            rnd.reveal = cards.trio(pics, len(cast), [[c["name"], c["work"]] for c in cast])
+            rnd.reveal = cards.roles(pics, len(cast), [[c["name"], c["work"]] for c in cast])
         elif cat in MATCH:
             # 四张街景（四国 / 四县各一张，两国的每国两张），图号就是答案的顺序；选项和线索画在卡片的提示里，答案卡在图上写国名
             pics = await self.bank.shots(entry["views"], geomatch.SHOT)
@@ -872,7 +878,7 @@ class GuessPlugin(Star):
         save_json(self.data_dir / "bonus.json", self.bonus)
 
     def _steps(self, rnd: Round) -> int:
-        """九宫格 9 格；听歌猜番按片段数；猜群友、猜老师、猜声优 4 段；街景、轮廓、盲猜宝可梦是整图直接给，「提示」只加文字线索。"""
+        """九宫格 9 格；听歌猜番按片段数；猜群友、猜老师 4 段，猜声优 5 段；街景、轮廓、盲猜宝可梦是整图直接给，「提示」只加文字线索。"""
         if rnd.category in GRID:
             return 9
         if rnd.category == "member":
@@ -924,7 +930,8 @@ class GuessPlugin(Star):
         if rnd.category in MATCH:  # 选项一直在，线索一段多一条
             return [self._card(rnd, image, status, rnd.hints[: geomatch.COUNT + rnd.shown - 1])]
         if rnd.category == "seiyuu":
-            image = cards.trio([pic for pic, _ in rnd.cast], rnd.shown, [[work] for _, work in rnd.cast])
+            shown = seiyuu.revealed(rnd.shown, len(rnd.cast))
+            image = cards.roles([pic for pic, _ in rnd.cast], shown, [[work] for _, work in rnd.cast])
             return [self._card(rnd, image, status, seiyuu.clues(rnd.hints, rnd.shown))]
         if rnd.category == "anisong":
             sec = audio.CLIPS[rnd.shown - 1]
