@@ -38,6 +38,7 @@ core/
   hint_data.py        手写的特产、名胜、美食提示
   cn_data.py          手写的盲猜中国地点资料：城市线级、2025 年 GDP、拆成区出题的市（北上广深）
   jpword_data.py      手写的猜日语题库：题面、答案说法、线索和解析
+  jpword_native.py    原创的猜日语母语者档：难读词、惯用句、文语、敬语、语感和四字熟语，解析注明辞典依据
   jpword_gen.json     JLPT / JMdict 派生的猜日语题库：来源、许可、读音、变形和中译日
   wordle_gen.json     ECDICT 派生的英文Wordle答案池和可猜词表（MIT，含来源和完整许可）
   chengyu_gen.json    chinese-xinhua / THUOCL 派生的成语答案池和可猜表（MIT，含来源、筛选统计和完整许可）
@@ -56,6 +57,7 @@ docs/                 用户文档
 tools/generate_enword.py  离线生成猜英文题库，读取本地 ECDICT CSV（不进插件包）
 tools/generate_wordle.py  离线生成英文Wordle词表，读取本地 ECDICT CSV（不进插件包）
 tools/generate_chengyu.py 离线生成猜成语题库，读取本地 chinese-xinhua JSON / THUOCL 词频（不进插件包）
+tools/generate_jpword.py  离线生成猜日语题库，读取本地 JLPT CSV / JMdict，按等级配额选词（不进插件包）
 ```
 
 `main.py`、`metadata.yaml`、`_conf_schema.json`、`requirements.txt` 必须在根目录，AstrBot 只在那里找；其余代码放 `core/`。
@@ -111,7 +113,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 盲猜日本酒的选题（`AREA_TOP`、`NO_ANSWER`）、条目格式、提示规则、`sake_data.py` | `blind/sakedle.py` 的 `VERSION` |
   | 盲猜魔兽Boss的选题（`NOT_ONE`、`MAIN_UNTIL`）、条目格式、提示、叫法规则 | `blind/bossdle.py` 的 `VERSION` |
   | 盲猜以撒道具的选题（`NO_ANSWER`、`MAIN_QUALITY`）、条目格式、提示、叫法规则 | `blind/isaacdle.py` 的 `VERSION` |
-  | 猜日语的手写题库、答案说法、提示或选题规则（`jpword_data.py`） | `blind/jpword.py` 的 `VERSION` |
+  | 猜日语的手写题库（`jpword_data.py`、`jpword_native.py`）、答案说法、难度映射、提示或选题规则 | `blind/jpword.py` 的 `VERSION` |
   | 猜英文的手写题库、答案说法、提示或选题规则（`enword_data.py`） | `blind/enword.py` 的 `VERSION` |
   | 英文Wordle的选题、词表、条目格式、提示规则 | `blind/wordle.py` 的 `VERSION` |
   | 猜成语的选题、词表、字形检查、条目格式、提示规则 | `blind/chengyu.py` 的 `VERSION` |

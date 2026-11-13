@@ -138,15 +138,28 @@ class Bank:
     def ready(self, cat: str) -> bool:
         return len(self.entries[cat]) >= MIN_POOL
 
-    def pick(self, cat: str, exclude, used=()) -> dict:
+    def pick(self, cat: str, exclude, used=(), *, level: int | None = None, skip=()) -> dict:
         """按 niche_ratio 的概率出小众题（默认大约五题一道），其余出大众题；没分档的题都算大众题。
         有 {cat}_niche_ratio 的题型按它的来（猜声优热门冷门各一半）。
         exclude 是最近出过的组（从旧到新），避开它们；这一档都出过了，就从最久没出的那些组里挑。
-        一组有几道题的（猜地点一国几个全景），used 是最近出过的题 ID（从旧到新），组里挑最久没出的那道。"""
-        ratio = self.config.get(f"{cat}_niche_ratio", self.config.get("niche_ratio", 0.2))
-        tier = "niche" if random.random() < ratio else "main"
+        一组有几道题的（猜地点一国几个全景），used 是最近出过的题 ID（从旧到新），组里挑最久没出的那道。
+        level 指定难度时在整档内挑，缺档就近找，距离相同选较低档；skip 是不能选的题 ID。"""
+        if level is None:
+            ratio = self.config.get(f"{cat}_niche_ratio", self.config.get("niche_ratio", 0.2))
+            tier = "niche" if random.random() < ratio else "main"
         entries = kline.pick(self.entries[cat]) if cat == "kline" else self.entries[cat]
-        pool = [e for e in entries if e.get("tier", "main") == tier] or entries
+        if level is not None:
+            # 指定难度时整档参与避重，不再混用大众、小众比例；缺档时优先较低的邻档。
+            levels = {e["level"] for e in entries if "level" in e}
+            if not levels:
+                raise ValueError("题库尚无难度档位")
+            nearest = min(levels, key=lambda n: (abs(n - level), n))
+            pool = [e for e in entries if e.get("level") == nearest and e["id"] not in skip]
+        else:
+            available = [e for e in entries if e["id"] not in skip]
+            pool = [e for e in available if e.get("tier", "main") == tier] or available
+        if not pool:
+            raise ValueError("指定范围内没有可用题目")
         last = {g: i for i, g in enumerate(exclude)}
         seen = [last.get(e.get("group", e["id"]), -1) for e in pool]
         hit = random.choice([e for e, i in zip(pool, seen) if i == min(seen)])
