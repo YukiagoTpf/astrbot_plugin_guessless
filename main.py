@@ -685,13 +685,14 @@ class GuessPlugin(Star):
             yield event.chain_result(chain)
 
     def _jpword_swap(self, event: AstrMessageEvent, cat: str) -> bool:
-        """仅名单内的人开指定题型时替换，直接开猜日语仍是普通限时局。"""
+        """名单内的人按配置范围替换，默认覆盖所有可开题型；直接猜日语仍是普通限时局。"""
+        modes = self.config.get("jpword_trigger_modes") or ["any"]
         return (
             cat != "jpword"
             and str(event.get_sender_id()) in {str(uid) for uid in self.config.get("jpword_trigger_uids", [])}
-            and cat in self.config.get("jpword_trigger_modes", ["jpgeodle", "jpgeo"])
+            and ("any" in modes or cat in modes)
             and self.bank.ready("jpword")
-            and random.random() < self.config.get("jpword_trigger_rate", 0.75)
+            and random.random() < self.config.get("jpword_trigger_rate", 0.5)
         )
 
     async def _prepare(self, rnd: Round) -> bool:
