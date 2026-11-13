@@ -33,7 +33,8 @@ USED = 1000  # 一组有几道题的（猜地点一国几个全景），记最�
 GRID = {"game", "anime", "pokemon", "mecha", "vtuber", "wow"}  # 九宫格逐格揭开的题型
 # 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对；
 # Vtuber 的名字也常互相包含；魔兽地图也是（东、西瘟疫之地）；群友按 @、QQ 号、名片认人；老师、声优的名字也常互相包含
-BY_KEY = {"mecha", "mechadle", "vtuber", "wow", "member", "teacher", "seiyuu"}
+# 英文拼词必须说全，不能用 is_correct 的子串规则（unhappy 不能算 happy）。
+BY_KEY = {"mecha", "mechadle", "vtuber", "wow", "member", "teacher", "seiyuu", "enword"}
 GEO_ALIASES = {"猜街景"}
 JPGEO_ALIASES = {"猜日本街景"}
 GEOMATCH_ALIASES = {"地点匹配", "猜街景匹配", "街景匹配", "地点连连看", "街景连连看"}

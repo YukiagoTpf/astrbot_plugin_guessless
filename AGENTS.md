@@ -19,6 +19,7 @@ core/
     base.py           盲猜的底层：题型规格 Blind、对比表各格的算法（num、ratio、tiered、away……）、条目 entry
     __init__.py       BLIND：登记了哪些盲猜题型
     jpword.py         猜日语：quiz 文字题分支，不画对比表
+    enword.py         猜英文：quiz 分支，完整拼词判定及词形防泄露检查
   sources.py          外部数据源：Wikidata、中文维基浏览量、B 站、AniList（含猜声优的 staff 名单）、AnimeThemes、IGDB、Steam、PokeAPI、
                       Gundam Wiki、vtbs.moe；HttpError
   geomatch.py         猜地点匹配、猜日本地点匹配：按地区挑四国 / 四县（GROUPS）、出题、线索、认「BADC」这样的答案；
@@ -34,6 +35,7 @@ core/
   hint_data.py        手写的特产、名胜、美食提示
   cn_data.py          手写的盲猜中国地点资料：城市线级、2025 年 GDP、拆成区出题的市（北上广深）
   jpword_data.py      手写的猜日语题库：题面、答案说法、线索和解析
+  enword_data.py      手写的猜英文题库：中文猜词、英文填空、反义近义词
   sake_data.py        手写的盲猜日本酒资料：銘柄的简称、さけのわ风味标签的中文
   mecha_data.py       手写的 Gundam Wiki 资料中译（世界观、阵营、机型、机械设计）和机体外号
   vtuber_data.py      手写的猜Vtuber不出题名单（品牌号、搬运号、成人向、有争议的）
@@ -100,6 +102,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 盲猜魔兽Boss的选题（`NOT_ONE`、`MAIN_UNTIL`）、条目格式、提示、叫法规则 | `blind/bossdle.py` 的 `VERSION` |
   | 盲猜以撒道具的选题（`NO_ANSWER`、`MAIN_QUALITY`）、条目格式、提示、叫法规则 | `blind/isaacdle.py` 的 `VERSION` |
   | 猜日语的手写题库、答案说法、提示或选题规则（`jpword_data.py`） | `blind/jpword.py` 的 `VERSION` |
+  | 猜英文的手写题库、答案说法、提示或选题规则（`enword_data.py`） | `blind/enword.py` 的 `VERSION` |
   | 听歌猜番的选曲规则（`sources.anime_themes`） | `bank.ANISONG_VERSION` |
   | 街景取景规则（全景缓存作废重找） | `geo.SAMPLING` |
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |
@@ -124,9 +127,10 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
    没有就用 `blind_round_seconds`、`max_guesses`。
 5. 文档：README 的题型列表，`docs/usage.md`（指令、对比规则）、`docs/question-banks.md`（题库怎么来的）各加一节。
 
-`Blind.quiz` 是不做对比的文字题分支（猜日语）：传入 `(entry, reveal=False)` 画题面，`reveal=True` 画答案和解析。
+`Blind.quiz` 是不做对比的文字题分支（猜日语、猜英文）：传入 `(entry, reveal=False)` 画题面，`reveal=True` 画答案和解析。
 条目用 `base.entry(..., attrs=None, ...)` 拼，不放 `attrs`，题面另存 `question`；`_load` 保存两张图并从零条提示开始，
 猜错只计次、不回表，进度按已给的线索数算。仍按 BLIND 自动接指令、榜单和题库刷新；帮助里放「还有」。
+猜英文在 `BY_KEY` 中按完整单词判对（`exact=True`），提示防泄露按英文词边界检查常见词形变化，不能按子串比较。
 单字答案不能给首字提示，手写线索要检查所有 `names`（包括单假名）归一化后不出现在任何提示里。
 
 AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blind_commands` 生成的 `guess_{cat}`、`{cat}_board`，

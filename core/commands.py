@@ -25,6 +25,7 @@ KEYWORDS = (
     # 要在日本、地点前面：「猜地点匹配」里有「地点」
     ("geomatch", ("地点匹配", "街景匹配", "国家匹配", "地点连连看", "街景连连看", "地点配对", "街景配对", "连连看", "匹配", "配对")),
     ("jpword", ("日语语法", "日语单词", "日本语", "日语", "日文")),  # 「日本语」要先于「日本」认
+    ("enword", ("英文单词", "英语单词", "英文", "英语", "单词")),  # 必须在日语后面，避免抢走「猜日语单词」
     ("jpgeo", ("日本", "都道府县")),
     ("cngeodle", ("中国", "城市", "地级市")),
     ("member", ("群友", "头像")),
@@ -38,8 +39,8 @@ KEYWORDS = (
 )
 BLIND_OF = {"pokemon": "pokedle", "mecha": "mechadle", "geo": "geodle", "jpgeo": "jpgeodle", "jpgeodle": "jpgeodle",
             "cngeodle": "cngeodle", "sakedle": "sakedle", "bossdle": "bossdle", "wow": "bossdle",
-            "isaacdle": "isaacdle", "jpword": "jpword"}
-ONLY_BLIND = {"jpgeodle", "cngeodle", "sakedle", "bossdle", "isaacdle", "jpword"}  # 只有这一种玩法的，没说「盲」也是它
+            "isaacdle": "isaacdle", "jpword": "jpword", "enword": "enword"}
+ONLY_BLIND = {"jpgeodle", "cngeodle", "sakedle", "bossdle", "isaacdle", "jpword", "enword"}  # 只有这一种玩法的，没说「盲」也是它
 GEO_WORDS = ("地点", "地方", "地区", "地名", "街景")  # 认成地点类以后这些不算多余（「盲猜日本的地点」「日本街景」）
 BOARD = re.compile(r"排行榜|排行|排名|榜单|战斗力|战力|榜")
 # 不认 help，AstrBot 自带。长的放前面，免得「有什么玩法」只认掉「有什么玩」

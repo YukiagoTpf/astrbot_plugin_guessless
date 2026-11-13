@@ -21,6 +21,17 @@
     "default": 3,
     "hint": "只说出题库里的完整答案才算一次，闲聊和重复答案不算。0 不限"
   },
+  "enword_round_seconds": {
+    "description": "猜英文限时（秒）",
+    "type": "int",
+    "default": 120
+  },
+  "enword_max_guesses": {
+    "description": "猜英文每人每题最多猜几次",
+    "type": "int",
+    "default": 3,
+    "hint": "只认完整拼对的单词；说出题库内其他题的答案才计错一次，闲聊和重复答案不算。0 不限"
+  },
   "jpword_trigger_uids": {
     "description": "猜日语替换触发用户",
     "type": "list",

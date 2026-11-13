@@ -7,6 +7,7 @@ import base64
 import io
 import math
 import random
+import re
 from functools import cache
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageStat
@@ -346,11 +347,12 @@ def quiz(question: str, answer: str = "", explanation: str = "") -> Image.Image:
         lines = []
         for paragraph in text.split("\n"):
             line = ""
-            for ch in paragraph:
-                if line and face.getlength(line + ch) > width:
+            # 英文单词整体移到下一行，中日文仍逐字换行。
+            for token in re.findall(r"[A-Za-z]+|.", paragraph):
+                if line and face.getlength(line + token) > width:
                     lines.append(line)
                     line = ""
-                line += ch
+                line += token
             lines.append(line)
         return lines
 
@@ -362,7 +364,7 @@ def quiz(question: str, answer: str = "", explanation: str = "") -> Image.Image:
             sections += [(wrap(say("quiz_answer", answer=answer), face), KEY),
                          (wrap(say("quiz_explanation", text=explanation), face), DIM)]
         height = sum(len(lines) * (size + 18) for lines, _ in sections) + 24 * (len(sections) - 1)
-        if height <= PIC_H - PAD * 2:
+        if height <= PIC_H - PAD * 2 and all(face.getlength(line) <= width for lines, _ in sections for line in lines):
             break
     out = Image.new("RGB", (SIZE, PIC_H), MAP_BG)
     draw = ImageDraw.Draw(out)
