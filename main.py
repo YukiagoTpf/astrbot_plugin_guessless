@@ -5,6 +5,7 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from functools import wraps
 
 import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, logger
@@ -92,6 +93,17 @@ WOW_MIN_LIGHT = 45  # 猜魔兽地图的题图平均亮度（0–255）低于这
 BOARD_TOP = 5  # 整点排行榜每个题型列前几名
 
 
+def active_user(fn):
+    """所有消息入口共用：冷却中静默退出，不阻止其他插件处理。"""
+    @wraps(fn)
+    async def guarded(self, event, *args, **kwargs):
+        if self._jpword_cooling(event):
+            return
+        async for result in fn(self, event, *args, **kwargs):
+            yield result
+    return guarded
+
+
 @dataclass
 class Round:
     category: str
@@ -104,7 +116,9 @@ class Round:
     order: list = field(default_factory=list)  # 九宫格揭开顺序，开题时按图片排（cards.reveal_order）
     shown: int = 1
     deadline: float = 0.0
-    endless: bool = False  # 特殊文字题不限时、不限每人次数，重启仍按作废收尾
+    endless: bool = False  # 特殊文字题不限时，重启仍按作废收尾
+    level: int = 0  # 猜日语的实际出题档位
+    opener: str = ""  # 等级按开题人选，答对时按实际答题人升档
     solo: str = ""  # 替换局只认开题人的局内消息
     solo_name: str = ""
     swapping: bool = False  # 求助换题期间忽略局内消息，指令照常处理
@@ -148,6 +162,9 @@ class GuessPlugin(Star):
         used = load_json(self.data_dir / "recent_ids.json") or {}
         self.used = {cat: deque(used.get(cat, []), maxlen=USED) for cat in MODES}
         self.scores = load_json(self.data_dir / "scores.json") or {}
+        progress = load_json(self.data_dir / "jpword_levels.json") or {}
+        self.jpword_levels: dict[str, int] = progress.get("levels", {})
+        self.jpword_cooldowns: dict[str, float] = progress.get("cooldowns", {})
         self.paused: set[str] = set(load_json(self.data_dir / "paused.json") or [])
         # 群号 -> 最近一小时内开题的时间戳，所有猜题共用一个额度；存盘是为了重启不清零
         self.quota: dict[str, list[float]] = load_json(self.data_dir / "quota.json") or {}
@@ -166,6 +183,9 @@ class GuessPlugin(Star):
 
     async def initialize(self):
         self.bank.start()
+        # 本地题库先升级，避免旧缓存无档位、被前面的联网建库拖住。
+        if self.bank._stale("jpword"):
+            await BLIND["jpword"].build(self.bank)
         # 上次退出时还没结束的题（重启、停机时恰好有人在猜）：退额度，连上平台后公布答案
         if voided := load_json(self.data_dir / "rounds.json"):
             for gid, rec in voided.items():
@@ -184,182 +204,215 @@ class GuessPlugin(Star):
         await self.bank.close()
 
     @filter.command("猜游戏")
+    @active_user
     async def guess_game(self, event: AstrMessageEvent):
         """开一道猜游戏（Metacritic 评分榜）"""
         async for r in self._start(event, "game"):
             yield r
 
     @filter.command("猜动画")
+    @active_user
     async def guess_anime(self, event: AstrMessageEvent):
         """开一道猜动画（Bangumi 热门）"""
         async for r in self._start(event, "anime"):
             yield r
 
     @filter.command("听歌猜番")
+    @active_user
     async def guess_anisong(self, event: AstrMessageEvent):
         """开一道听歌猜番（动画 OP / ED 片段）"""
         async for r in self._start(event, "anisong"):
             yield r
 
     @filter.command("猜宝可梦")
+    @active_user
     async def guess_pokemon(self, event: AstrMessageEvent):
         """开一道猜宝可梦（全国图鉴）"""
         async for r in self._start(event, "pokemon"):
             yield r
 
     @filter.command("猜萝卜")
+    @active_user
     async def guess_mecha(self, event: AstrMessageEvent):
         """开一道猜萝卜（高达和超级机器人大战的机体）"""
         async for r in self._start(event, "mecha"):
             yield r
 
     @filter.command("猜Vtuber", alias=VTUBER_ALIASES)
+    @active_user
     async def guess_vtuber(self, event: AstrMessageEvent):
         """开一道猜Vtuber（B 站上国内外的虚拟主播）"""
         async for r in self._start(event, "vtuber"):
             yield r
 
     @filter.command("猜魔兽地图", alias=WOW_ALIASES)
+    @active_user
     async def guess_wow(self, event: AstrMessageEvent):
         """开一道猜魔兽地图（魔兽世界的游戏截图，猜是哪张地图）"""
         async for r in self._start(event, "wow"):
             yield r
 
     @filter.command("猜群友")
+    @active_user
     async def guess_member(self, event: AstrMessageEvent):
         """开一道猜群友（看头像的一小块）"""
         async for r in self._start(event, "member"):
             yield r
 
     @filter.command("猜老师", alias=TEACHER_ALIASES)
+    @active_user
     async def guess_teacher(self, event: AstrMessageEvent):
         """开一道猜老师（日本 AV 女优的官方头像模糊处理）"""
         async for r in self._start(event, "teacher"):
             yield r
 
     @filter.command("猜声优", alias=SEIYUU_ALIASES)
+    @active_user
     async def guess_seiyuu(self, event: AstrMessageEvent):
         """开一道猜声优（日本女声优配过的四个角色，猜是谁配的）"""
         async for r in self._start(event, "seiyuu"):
             yield r
 
     @filter.command("猜地点", alias=GEO_ALIASES)
+    @active_user
     async def guess_geo(self, event: AstrMessageEvent):
         """开一道猜地点（Google 街景，猜国家）"""
         async for r in self._start(event, "geo"):
             yield r
 
     @filter.command("猜国家")
+    @active_user
     async def guess_country(self, event: AstrMessageEvent):
         """猜国家（暂时下线）"""
         async for r in self._start(event, "country"):
             yield r
 
     @filter.command("猜日本地点", alias=JPGEO_ALIASES)
+    @active_user
     async def guess_jpgeo(self, event: AstrMessageEvent):
         """开一道猜日本地点（日本街景，猜都道府县）"""
         async for r in self._start(event, "jpgeo"):
             yield r
 
     @filter.command("猜地点匹配", alias=GEOMATCH_ALIASES)
+    @active_user
     async def guess_geomatch(self, event: AstrMessageEvent):
         """开一道猜地点匹配（同一片地区四国的街景，按图号说出各是哪国）"""
         async for r in self._start(event, "geomatch"):
             yield r
 
     @filter.command("猜日本地点匹配", alias=JPGEOMATCH_ALIASES)
+    @active_user
     async def guess_jpgeomatch(self, event: AstrMessageEvent):
         """开一道猜日本地点匹配（同一地方四个都道府县的街景，按图号说出各是哪个县）"""
         async for r in self._start(event, "jpgeomatch"):
             yield r
 
     @filter.command("猜K线", alias=KLINE_ALIASES)
+    @active_user
     async def guess_kline(self, event: AstrMessageEvent):
         """开一道猜K线（A 股、日股、美股的一段日 K，猜之后 20 个交易日涨跌几个点）"""
         async for r in self._start(event, "kline"):
             yield r
 
     @filter.command("游戏排行榜")
+    @active_user
     async def game_board(self, event: AstrMessageEvent):
         """猜游戏答对次数排行"""
         yield self._board(event, "game")
 
     @filter.command("动画排行榜")
+    @active_user
     async def anime_board(self, event: AstrMessageEvent):
         """猜动画答对次数排行"""
         yield self._board(event, "anime")
 
     @filter.command("听歌猜番排行榜")
+    @active_user
     async def anisong_board(self, event: AstrMessageEvent):
         """听歌猜番答对次数排行"""
         yield self._board(event, "anisong")
 
     @filter.command("宝可梦排行榜")
+    @active_user
     async def pokemon_board(self, event: AstrMessageEvent):
         """猜宝可梦答对次数排行"""
         yield self._board(event, "pokemon")
 
     @filter.command("萝卜排行榜")
+    @active_user
     async def mecha_board(self, event: AstrMessageEvent):
         """猜萝卜答对次数排行"""
         yield self._board(event, "mecha")
 
     @filter.command("Vtuber排行榜", alias=VTUBER_BOARD_ALIASES)
+    @active_user
     async def vtuber_board(self, event: AstrMessageEvent):
         """猜Vtuber答对次数排行"""
         yield self._board(event, "vtuber")
 
     @filter.command("魔兽地图排行榜", alias=WOW_BOARD_ALIASES)
+    @active_user
     async def wow_board(self, event: AstrMessageEvent):
         """猜魔兽地图答对次数排行"""
         yield self._board(event, "wow")
 
     @filter.command("群友排行榜")
+    @active_user
     async def member_board(self, event: AstrMessageEvent):
         """猜群友答对次数排行"""
         yield self._board(event, "member")
 
     @filter.command("老师排行榜")
+    @active_user
     async def teacher_board(self, event: AstrMessageEvent):
         """猜老师答对次数排行"""
         yield self._board(event, "teacher")
 
     @filter.command("声优排行榜")
+    @active_user
     async def seiyuu_board(self, event: AstrMessageEvent):
         """猜声优答对次数排行"""
         yield self._board(event, "seiyuu")
 
     @filter.command("地点排行榜")
+    @active_user
     async def geo_board(self, event: AstrMessageEvent):
         """猜地点答对次数排行"""
         yield self._board(event, "geo")
 
     @filter.command("国家排行榜")
+    @active_user
     async def country_board(self, event: AstrMessageEvent):
         """猜国家答对次数排行（暂时下线）"""
         yield self._board(event, "country")
 
     @filter.command("日本地点排行榜")
+    @active_user
     async def jpgeo_board(self, event: AstrMessageEvent):
         """猜日本地点答对次数排行"""
         yield self._board(event, "jpgeo")
 
     @filter.command("地点匹配排行榜")
+    @active_user
     async def geomatch_board(self, event: AstrMessageEvent):
         """猜地点匹配答对次数排行"""
         yield self._board(event, "geomatch")
 
     @filter.command("日本地点匹配排行榜")
+    @active_user
     async def jpgeomatch_board(self, event: AstrMessageEvent):
         """猜日本地点匹配答对次数排行"""
         yield self._board(event, "jpgeomatch")
 
     @filter.command("K线排行榜", alias=KLINE_BOARD_ALIASES)
+    @active_user
     async def kline_board(self, event: AstrMessageEvent):
         """猜K线拿第一的次数排行"""
         yield self._board(event, "kline")
 
     @filter.command("排行榜", alias=ALL_BOARDS_ALIASES)
+    @active_user
     async def all_boards(self, event: AstrMessageEvent):
         """管理员：马上发一张各题型的排行榜图，和整点播报的一样，下次整点从这次算新增"""
         async for r in self._all_boards_now(event):
@@ -382,6 +435,7 @@ class GuessPlugin(Star):
         yield event.chain_result([Comp.Image.fromBase64(card)])
 
     @filter.regex(ADD_QUOTA)
+    @active_user
     async def add_quota(self, event: AstrMessageEvent):
         """管理员 @bot 发「增加 N 题」（「加题」「再加三道题」「多开 5 题」也行，不说几道是 1 道）：
         本群额外放开 N 道题，每小时额度用完后再用"""
@@ -402,6 +456,7 @@ class GuessPlugin(Star):
         yield event.plain_result(say("bonus_added", n=n, left=self._quota_left(gid)))
 
     @filter.regex(r"宵禁|解禁")
+    @active_user
     async def curfew_admin(self, event: AstrMessageEvent):
         """@bot 说带「宵禁」的话：看本群的宵禁时间（「宵禁」「宵禁几点」）；管理员还可以改时间（「宵禁 00:00-07:00」
         「宵禁改成零点到七点」）、取消（「取消宵禁」「关闭宵禁」）、临时放开 N 小时（「宵禁解禁 2 小时」「解禁两个钟」，
@@ -463,6 +518,7 @@ class GuessPlugin(Star):
 
     # 权限自己判断而不用 permission_type，好回自定义文案
     @filter.command("暂停")
+    @active_user
     async def pause(self, event: AstrMessageEvent):
         """管理员：暂停本群猜题，直到「重新开始」"""
         async for r in self._pause(event):
@@ -486,6 +542,7 @@ class GuessPlugin(Star):
         yield event.plain_result(text)
 
     @filter.command("重新开始")
+    @active_user
     async def resume(self, event: AstrMessageEvent):
         """管理员：恢复本群猜题"""
         async for r in self._resume(event):
@@ -506,6 +563,7 @@ class GuessPlugin(Star):
         yield event.plain_result(say("resume"))
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    @active_user
     async def on_group_message(self, event: AstrMessageEvent):
         """题目进行中处理「提示」和答案，不需要 @。另外记下群的 unified_msg_origin（整点播报用），
         @bot 说了不存在的「猜xx」回一句。"""
@@ -605,6 +663,11 @@ class GuessPlugin(Star):
         if key in wrong:
             return
         wrong.add(key)
+        if cat == "jpword" and rnd.solo:
+            if chain := self._finish(gid, rnd, reason="jpword_solo_wrong"):
+                yield event.chain_result(chain)
+            event.stop_event()
+            return
         if (b := BLIND.get(cat)) and b.quiz:
             return  # 文字题猜错只计次，连次数用完也不打断群聊
         name = event.get_sender_name() or uid
@@ -624,6 +687,7 @@ class GuessPlugin(Star):
             yield event.chain_result([*([Comp.Plain(reply)] if reply else []), *card])
             event.stop_event()
 
+    @active_user
     async def _start(self, event: AstrMessageEvent, cat: str):
         """开题。听歌猜番除了卡片还要另发一条语音，所以这里是生成器，可能产出两条消息。
         bot 管理员（AstrBot 的 admins_id，不是群主、群管理员）不受宵禁和每小时额度限制，开的题也不占额度；
@@ -671,6 +735,8 @@ class GuessPlugin(Star):
             cat, event.unified_msg_origin, paid=paid, endless=endless,
             solo=event.get_sender_id() if endless else "",
             solo_name=(event.get_sender_name() or say("solo_opener")) if endless else "",
+            opener=str(event.get_sender_id()),
+            level=self._jpword_level(str(event.get_sender_id())) if cat == "jpword" else 0,
         )
         try:
             found = await (self._prepare_member(rnd, event) if cat == "member" else self._prepare(rnd))
@@ -704,7 +770,7 @@ class GuessPlugin(Star):
         """名单内的人按配置范围替换，默认覆盖所有可开题型；直接猜日语仍是普通限时局。"""
         modes = self.config.get("jpword_trigger_modes") or ["any"]
         return (
-            cat != "jpword"
+            not self._jpword_cooling(event) and cat != "jpword"
             and str(event.get_sender_id()) in {str(uid) for uid in self.config.get("jpword_trigger_uids", [])}
             and ("any" in modes or cat in modes)
             and self.bank.ready("jpword")
@@ -718,7 +784,7 @@ class GuessPlugin(Star):
         rnd.swapping = True
         try:
             fresh = Round(rnd.category, rnd.umo, endless=rnd.endless, solo=rnd.solo,
-                          solo_name=rnd.solo_name, paid=rnd.paid)
+                          solo_name=rnd.solo_name, paid=rnd.paid, level=rnd.level, opener=rnd.opener)
             if not await self._prepare(fresh, previous=rnd):
                 raise RuntimeError("未能准备新题")
             fresh.cands = candidates(fresh.entry["names"])
@@ -749,11 +815,19 @@ class GuessPlugin(Star):
                 pick = geomatch.pick_pair if cat in geomatch.PAIRS else geomatch.pick
                 entry = pick(cat, self.bank.entries[cat], self.recent[cat])
             else:
-                entry = self.bank.pick(cat, self.recent[cat], self.used[cat])
+                options = {}
+                if cat == "jpword":
+                    options["level"] = rnd.level
+                    if previous:
+                        options["skip"] = {e["id"] for e in self.bank.entries[cat]
+                                           if candidates(e["names"]) & previous.cands}
+                entry = self.bank.pick(cat, self.recent[cat], self.used[cat], **options)
             if previous and (entry["id"] == previous.entry["id"] or candidates(entry["names"]) & previous.cands):
                 continue  # 求助不能换回同一道题或同一个答案
             try:
                 await self._load(rnd, entry)
+                if cat == "jpword":
+                    rnd.level = entry["level"]
             except Exception as e:
                 logger.warning(f"[guess] media of {entry['id']} failed: {e}")
                 continue
@@ -950,6 +1024,7 @@ class GuessPlugin(Star):
         """进行中的题只在内存里，另存一份答案和扣的额度，进程被重启打断时下次启动能收尾。"""
         save_json(self.data_dir / "rounds.json", {
             gid: {"umo": rnd.umo, "category": rnd.category, "answer": rnd.entry["answer"], "paid": rnd.paid,
+                  **({"level": rnd.level, "opener": rnd.opener} if rnd.category == "jpword" else {}),
                   **({"endless": True} if rnd.endless else {}),
                   **({"solo": rnd.solo, "solo_name": rnd.solo_name} if rnd.solo else {})}
             for gid, rnd in self.rounds.items() if rnd.entry
@@ -992,6 +1067,8 @@ class GuessPlugin(Star):
 
     def _limit(self, rnd: Round) -> int:
         """每人每题最多猜几次，0 不限。盲猜萝卜、盲猜日本 / 中国地点要多猜几个才推得出来，单独设了。"""
+        if rnd.category == "jpword" and rnd.solo:
+            return 1
         if not rnd.endless and (b := BLIND.get(rnd.category)) and b.default_guesses is not None:
             return self.config.get(f"{rnd.category}_max_guesses", b.default_guesses)
         return 0 if rnd.endless else self._setting(rnd.category, "max_guesses", "max_guesses", 5)
@@ -1073,6 +1150,7 @@ class GuessPlugin(Star):
         hit, names = commands.closest(text, {n: a for n, a in SUGGEST.items() if (a[0] in ("board", "boards")) == board})
         return hit or ("suggest", names)
 
+    @active_user
     async def _run(self, event: AstrMessageEvent, action: str, arg):
         if action == "start":
             async for r in self._start(event, arg):
@@ -1181,6 +1259,16 @@ class GuessPlugin(Star):
             count = self._add_score(gid, rnd.category, uid, name)
             tier, progress = self._progress(rnd)
             text = say(tier, name=name, progress=progress) + "\n" + say("score", answer=answer, count=count)
+            if rnd.category == "jpword":
+                old = self._jpword_level(uid)
+                level = self._jpword_change(uid, 1)
+                text += "\n" + say("jpword_level_up" if level > old else "jpword_level_cap", level=level)
+        elif rnd.category == "jpword" and rnd.solo and reason == "jpword_solo_wrong":
+            seconds = max(0, int(self.config.get("jpword_cooldown_seconds", 1800)))
+            level = self._jpword_change(rnd.solo, -1, cooldown=seconds)
+            wait = f"{seconds // 60} 分钟" if seconds >= 60 and seconds % 60 == 0 else f"{seconds} 秒"
+            text = say("jpword_solo_wrong", answer=answer, level=level) + "\n" + (
+                say("jpword_cooldown", wait=wait) if seconds else say("jpword_no_cooldown"))
         else:
             text = say(reason or f"timeout_{rnd.category}") + "\n" + say("answer", answer=answer)
         # 答案卡：整图公开，标题写答案，右上角写原名；猜国家这时才画邻国，听歌猜番写上歌名；
@@ -1199,6 +1287,34 @@ class GuessPlugin(Star):
             image = b.table([(entry["title"], b.row(entry["attrs"], entry["attrs"])), *rows])
         card = cards.render(image, None, entry["title"], original if original != entry["title"] else "答案", hints)
         return [Comp.Plain(text), Comp.Image.fromBase64(card)]
+
+    def _jpword_level(self, uid: str) -> int:
+        cap = max(1, min(5, int(self.config.get("jpword_max_level", 5))))
+        return max(1, min(cap, int(self.jpword_levels.get(uid, self.config.get("jpword_start_level", 1)))))
+
+    def _jpword_change(self, uid: str, delta: int, *, cooldown: int = 0) -> int:
+        cap = max(1, min(5, int(self.config.get("jpword_max_level", 5))))
+        level = max(1, min(cap, self._jpword_level(uid) + delta))
+        self.jpword_levels[uid] = level
+        if cooldown:
+            self.jpword_cooldowns[uid] = time.time() + cooldown
+        self._jpword_save()
+        return level
+
+    def _jpword_save(self) -> None:
+        save_json(self.data_dir / "jpword_levels.json", {
+            "levels": self.jpword_levels, "cooldowns": self.jpword_cooldowns,
+        })
+
+    def _jpword_cooling(self, event: AstrMessageEvent) -> bool:
+        uid = str(event.get_sender_id())
+        until = self.jpword_cooldowns.get(uid, 0)
+        if until > time.time():
+            return True
+        if uid in self.jpword_cooldowns:
+            del self.jpword_cooldowns[uid]
+            self._jpword_save()
+        return False
 
     def _geomatch_guess(self, gid: str, rnd: Round, event: AstrMessageEvent, text: str) -> list | None:
         """猜地点匹配、猜日本地点匹配收一句：不是一组字母（geomatch.parse）的当闲聊。全对就结算；不对回对了几个，每人最多 _limit 次，
@@ -1382,6 +1498,7 @@ def _blind_commands(cat: str) -> None:
         async for r in self._start(event, cat):
             yield r
 
+    @active_user
     async def board(self, event: AstrMessageEvent):
         yield self._board(event, cat)
 
