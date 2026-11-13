@@ -102,5 +102,5 @@ async def build(bank) -> None:
 MODE = Blind(
     cat="wordle", command="英文Wordle", aliases=("猜Wordle", "Wordle", "wordle"),
     desc="固定五字母，全群共用棋盘，绿对位、黄错位、灰没有", header="英文", columns=(), clues=CLUES,
-    row=row, build=build, settings=(VERSION,), exact=True, board=board, fits=fits, rows=6, default_guesses=3,
+    row=row, build=build, settings=(VERSION,), exact=True, board=board, fits=fits, rows=6, default_guesses=10,
 )
