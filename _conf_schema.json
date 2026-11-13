@@ -297,7 +297,7 @@
     "description": "英文Wordle每人每题最多猜几次",
     "type": "int",
     "default": 3,
-    "hint": "只认词表内长度相同的完整单词，闲聊和全群重复猜测不计次。0 不限"
+    "hint": "只认词表内的五字母完整单词，闲聊和全群重复猜测不计次。0 不限"
   },
   "wordle_rows": {
     "description": "英文Wordle全群共用的棋盘行数",

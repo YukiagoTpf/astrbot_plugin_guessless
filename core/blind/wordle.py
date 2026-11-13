@@ -9,7 +9,7 @@ from .. import cards
 from .base import Blind, entry
 from .enword import leaks
 
-VERSION = "wordle-v1"  # 选题、词表、条目格式或提示规则改了就换
+VERSION = "wordle-v2"  # 选题、词表、条目格式或提示规则改了就换
 CLUES = ("词性", "释义")  # 容器字体缺少常用 IPA 字形，不给音标
 # 只放本义明确踩红线的词，只能加不能删；中性多义词按中文释义过滤，王室头衔不在红线内。
 NO_ANSWER = {
@@ -28,6 +28,7 @@ NO_ANSWER = {
     "vagina", "warfare", "warrior", "weapon", "whore",
     "colonel", "commander", "corps", "empire", "lieutenant", "murderer", "navy", "negro", "obscene",
     "senator", "sexual", "siege", "slaughter", "submarine", "traitor", "treason", "tyranny", "tyrant",
+    "idiot",
 }
 # 逐个中文义项过滤；中性词可以使用合规义项，不因未展示的另一义永久禁用。
 ANSWER_BLOCK = (
@@ -45,7 +46,8 @@ ANSWER_BLOCK = (
     r"内战|会战|交战|战士|战利品|战壕|舰队|要塞|好战|元帅|老兵|"
     r"议院|宪法|罂粟|暴力|杀戮|杀人|凶杀|凶手|杀手|嗜杀|血腥|虐待|死刑|毒杀|杀戳|"
     r"元首|专制|暴政|暴君|资产阶级|自由主义者|自由主义的|封建制度|当政|"
-    r"竞选|执政官|大臣|公使|市长|联邦|谋反|猥亵|情妇|反应堆"
+    r"竞选|执政官|大臣|公使|市长|联邦|谋反|猥亵|情妇|反应堆|法院|法庭|好色|畜生|"
+    r"领袖|酋长|长官|统治者|叛徒|反叛|造反|爆炸|咒骂|骂街|白痴"
 )
 
 
@@ -64,7 +66,7 @@ def row(guess: dict, answer: dict) -> list[list[str]]:
 
 
 def fits(guess: dict, answer: dict) -> bool:
-    return len(guess["word"]) == len(answer["word"])
+    return len(guess["word"]) == len(answer["word"]) == 5
 
 
 def board(item: dict, rows: list, total: int, reveal: bool = False):
@@ -76,8 +78,10 @@ async def build(bank) -> None:
     if not data.get("source") or not data.get("license"):
         raise ValueError("Wordle 词表缺少来源或许可")
     words = data["guesses"]
-    if not isinstance(words, list) or any(not isinstance(w, str) or not re.fullmatch("[a-z]{4,10}", w) for w in words):
-        raise ValueError("Wordle 可猜词必须是 4–10 位小写字母")
+    if not isinstance(words, list) or any(not isinstance(w, str) or not re.fullmatch("[a-z]{5}", w) for w in words):
+        raise ValueError("Wordle 可猜词必须是 5 位小写字母")
+    if len(words) < 5000:
+        raise ValueError("Wordle 可猜词不能少于 5000 个")
     if words != sorted(set(words)):
         raise ValueError("Wordle 可猜词表必须排序且不重复")
     places = {w: {"title": w, "names": [w], "attrs": {"word": w}} for w in words}
@@ -97,6 +101,6 @@ async def build(bank) -> None:
 
 MODE = Blind(
     cat="wordle", command="英文Wordle", aliases=("猜Wordle", "Wordle", "wordle"),
-    desc="全群共用字母棋盘，绿对位、黄错位、灰没有", header="英文", columns=(), clues=CLUES,
+    desc="固定五字母，全群共用棋盘，绿对位、黄错位、灰没有", header="英文", columns=(), clues=CLUES,
     row=row, build=build, settings=(VERSION,), exact=True, board=board, fits=fits, rows=6, default_guesses=3,
 )

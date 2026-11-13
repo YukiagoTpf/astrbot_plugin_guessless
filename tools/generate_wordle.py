@@ -10,11 +10,18 @@ from pathlib import Path
 
 SOURCE = "https://github.com/skywind3000/ECDICT"
 EXAMS = {"cet4", "cet6", "ky"}
-WORD = re.compile(r"[a-z]{4,10}\Z")
+WORD = re.compile(r"[a-z]{5}\Z")
 PROPER = re.compile(r"人名|地名|男子名|女子名|姓氏|\[人名\]|\[地名\]|缩写|缩略|简写|简称|商标|(?:英国|美国|法国|德国|日本|中国|印度|意大利|希腊|罗马|苏联|俄国).*(?:人|语|市|省|国)|音译")
+GUESS_PROPER = re.compile(r"品牌|公司名|乐队名|首都|港市|abbr\.|牌照相机|（[^）]*(?:城市|港口|公司|诗人|作家|名医)[^）]*）", re.I)
 DEFINITION_BLOCK = re.compile(r"trade\s*mark|abbreviation|acronym|initialism|short(?:ened)? (?:form|for)", re.I)
+DEFINITION_PROPER = re.compile(r"\b(?:capital|city|town|port|river|island|province|county|village|lake) (?:of|in|on|near)\b|"
+                               r"\bsurname\b|\bgiven name\b|\b(?:poet|physician|writer|composer|painter)\b.*\b\d{3,4}", re.I)
+# 这些源条目没有一致的专名标记，不能把品牌、作品和人名当作普通词。
+PROPER_WORDS = {"akira", "asher", "bambi", "boyle", "conti", "cymru", "dolby", "galen", "golan", "hegel",
+                "honda", "iliad", "lhasa", "lorca", "merck", "mobil", "nixon", "pusey", "roche", "sanyo",
+                "sarum", "seiko", "sions"}
 ABBREVIATIONS = {"auto", "biotech", "memo", "phone", "maths", "kilo", "xerox"}
-QUALITY_BLOCK = {"equipe", "reservior", "turkey", "uptodate", "vitamine"}
+QUALITY_BLOCK = {"equipe", "jodie", "reservior", "turkey", "uptodate", "vitamine"}
 BAD_SPELLINGS = {"reservior", "uptodate"}
 WORD_FIXES = {"CORE": "core"}  # 源词条是普通词及其变形，大小写误标；不批量小写化专名或缩写。
 POS = {"n": "名词", "v": "动词", "a": "形容词", "j": "形容词", "r": "副词", "d": "副词",
@@ -32,7 +39,9 @@ MEANINGS = {"stale": ("形容词", "不新鲜的；陈旧的"), "hasty": ("形�
             "fleet": ("名词", "车队；船队"), "marine": ("形容词", "海的；海产的；海底的"),
             "maiden": ("名词 / 形容词", "少女；未婚的；初次的"), "poll": ("名词 / 动词", "民意测验；轮询"),
             "queer": ("形容词", "奇怪的；不舒服的；可疑的"), "veteran": ("名词 / 形容词", "老手；经验丰富的"),
-            "virgin": ("形容词", "初始的；纯的"), "tactic": ("名词", "策略")}
+            "virgin": ("形容词", "初始的；纯的"), "tactic": ("名词", "策略"),
+            "chief": ("形容词", "主要的；首位的"), "loose": ("形容词", "宽松的；松的；不牢固的"),
+            "shoot": ("名词 / 动词", "芽；拍摄；射门")}
 
 
 def hints(record, blocked):
@@ -61,6 +70,34 @@ def rank(record):
     return min((int(record[k]) for k in ("bnc", "frq") if record[k].isdigit() and int(record[k]) > 0), default=999999)
 
 
+def inflections(record):
+    """只读取词典明确列出的屈折形式，不自行拼接词尾。"""
+    for part in record["exchange"].split("/"):
+        kind, _, value = part.partition(":")
+        if kind in {"p", "d", "i", "3", "r", "t", "s"}:
+            yield from value.split(",")
+
+
+def is_inflected(record):
+    """原形指向自身时保留，不能把 dress、glass 之类按结尾误当复数。"""
+    for part in record["exchange"].split("/"):
+        kind, _, value = part.partition(":")
+        if kind == "0" and value and any(w != record["word"] for w in value.split(",")):
+            return True
+    return False
+
+
+def ordinary(record):
+    """专名、缩写和已知错拼不进入可猜词，普通词的屈折形式仍可猜。"""
+    # 普通词可能和人名同形，英文定义全是专名时才剔除。
+    definitions = [s for s in record["definition"].replace("\\n", "\n").splitlines() if s.strip()]
+    return (record["word"] not in ABBREVIATIONS | QUALITY_BLOCK | BAD_SPELLINGS | PROPER_WORDS
+            and not PROPER.search(record["translation"])
+            and not GUESS_PROPER.search(record["translation"])
+            and not DEFINITION_BLOCK.search(record["definition"])
+            and not (definitions and all(DEFINITION_PROPER.search(s) for s in definitions)))
+
+
 def generate(csv_path: Path, license_path: Path, output: Path):
     root = Path(__file__).resolve().parents[1]
     tree = ast.parse((root / "core/blind/wordle.py").read_text(encoding="utf-8"))
@@ -72,31 +109,28 @@ def generate(csv_path: Path, license_path: Path, output: Path):
     with csv_path.open(encoding="utf-8-sig", newline="") as stream:
         for record in csv.DictReader(stream):
             word = record["word"] = WORD_FIXES.get(record["word"], record["word"])
-            if re.fullmatch(r"[a-z]{1,10}", word) and (record["tag"] or rank(record) < 999999):
+            if re.fullmatch(r"[a-z]{1,10}", word):
                 records.setdefault(word, record)
-    seeds = sorted(records, key=lambda w: (rank(records[w]), w))[:27000]
-    guesses = {w for w in seeds if WORD.fullmatch(w)}
+    seeds = sorted((w for w, r in records.items() if ordinary(r) and (r["tag"] or rank(r) < 999999)),
+                   key=lambda w: (rank(records[w]), w))
+    guesses = set()
     for word in seeds:
-        for part in records[word]["exchange"].split("/"):
-            kind, _, value = part.partition(":")
-            if kind in {"p", "d", "i", "3", "r", "t", "s"}:
-                guesses.update(w for w in value.split(",") if WORD.fullmatch(w))
-    # 不出题名单只管答案，不让猜测校验把这些词也挡掉。
-    guesses.update(w for w in rules["NO_ANSWER"] if w in records and WORD.fullmatch(w))
+        if WORD.fullmatch(word):
+            guesses.add(word)
+        guesses.update(w for w in inflections(records[word]) if WORD.fullmatch(w)
+                       and (w not in records or ordinary(records[w])))
     answers = []
     for word, record in sorted(records.items()):
         tags = set(record["tag"].split())
         translation = record["translation"].replace("\\n", "；")
-        if (not WORD.fullmatch(word) or not tags & EXAMS or re.search(r"(?:^|/)0:", record["exchange"]) or word in rules["NO_ANSWER"]
-                or PROPER.search(translation) or word in ABBREVIATIONS
-                or word in QUALITY_BLOCK
-                or DEFINITION_BLOCK.search(record["definition"])
+        if (not WORD.fullmatch(word) or not tags & EXAMS or is_inflected(record) or word in rules["NO_ANSWER"]
+                or not ordinary(record)
                 or not re.search(r"[\u4e00-\u9fff]", translation)):
             continue
         pos, meaning = hints(record, blocked)
         if not pos or not meaning:
             continue
-        main = 5 <= len(word) <= 7 and bool(tags & {"cet4", "cet6"}) and rank(record) <= 10000
+        main = bool(tags & {"cet4", "cet6"}) and rank(record) <= 10000
         answers.append([word, main, pos, meaning])
         guesses.add(word)
     # 源词典的已知错拼也不能当作合法猜测。
@@ -105,7 +139,7 @@ def generate(csv_path: Path, license_path: Path, output: Path):
                "source_sha256": hashlib.sha256(csv_path.read_bytes()).hexdigest(),
                "answers": answers, "guesses": sorted(guesses)}
     encoded = (json.dumps(payload, ensure_ascii=False, indent=1) + "\n").encode("utf-8")
-    if len(encoded) > 1500000 or not 30000 <= len(guesses) <= 50000:
+    if len(encoded) > 1500000 or len(guesses) < 5000:
         raise ValueError(f"词表大小不合要求：{len(encoded)} bytes / {len(guesses)} words")
     output.write_bytes(encoded)
     print(f"answers={len(answers)} main={sum(a[1] for a in answers)} guesses={len(guesses)} bytes={len(encoded)}")
