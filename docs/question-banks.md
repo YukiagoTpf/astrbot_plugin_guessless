@@ -196,6 +196,17 @@
 - 可猜词与答案池分开：按 BNC / 当代词频最靠前者排序，取有词频或考试标签的普通词，再加入它们在 ECDICT `exchange` 中明确列出的复数、过去式、分词、比较级等和全部答案，最终只保留五字母小写单词，共 5341 个。取消原先前 27000 个原词的截断，以补足至少 5000 个可猜词；不自行拼词尾，按中英文词典标记与人工复核表排除专名、缩写和已知错拼，不因普通词兼有人名等其他义项就一概删除。取变形时也查短原形（如 try → tried）；原形不在答案池不影响猜测，`NO_ANSWER` 只限制出题。线上按归一化完整名字的字典索引查找。
 - 重新生成：在可信代码目录运行 `python3 -I tools/generate_wordle.py <ecdict.csv> --license <ECDICT-LICENSE>`；CSV 当不可信数据解析，不导入数据源代码。生成结果排序、无时间戳，限制 1.5 MB，猜词不足 5000 个时拒绝生成。构建也校验五字母、猜词数量、答案包含关系和合规释义；提示先词性、释义最后。规则版本为 `wordle-v2`，改了选题、词表或格式时更新 `wordle.VERSION`。
 
+## 猜成语（`blind/chengyu.py`）
+
+- 本地 `core/chengyu_gen.json`，运行时不联网。成语、拼音、释义来自 [pwxcoo/chinese-xinhua](https://github.com/pwxcoo/chinese-xinhua/tree/fe6d6c2e8baa82187f4c96bbe042e43f96c05666) 的 `data/idiom.json`；常用度来自 [thunlp/THUOCL](https://github.com/thunlp/THUOCL/tree/a30ce79d895d01ab5132a5c74c29703ff7efb4cc) 的 `data/THUOCL_chengyu.txt`。两者均为 MIT；JSON 带每个来源的固定版本 URL、SHA-256、`license`、`license_text` 和完整版权许可，允许按许可再分发及商用。
+- 当前答案 1930 条，可猜 25827 条；未通过答案内容筛选的成语仍可作为猜测，异写和错字例外。
+- `tools/generate_chengyu.py` 将词头、释义用项目已有依赖 zhconv 转简体，去重并只收四个基本区汉字。已知错字、自报异写、只指向别的成语的条目不进可猜表；没有把错字映射成正确答案。可猜表保留不适合当答案的合法成语，供逐字试探。
+- 答案要求 GB2312 汉字（避免罕用字）、四个可靠声调、完整且清楚的释义、同字不超过两次；AABB、ABAB 不会因重复而被排除。按 THUOCL 词频降序、同频按字序，最多取 2000 条。首轮审读候选的词频下沿为 858，正式池要求至少 859，不因后续排除而补入未审读的低频词；全部大众题，不额外抽冷门。GB2312 只是字形难度的保守筛选，词频也不等同教材词汇等级。已知错释（如「处心积虑」的上游释义误写「老虎」）按 `BAD_MEANINGS` 舍弃。
+- `NO_ANSWER` 只能增加不能删，保留明确不适合出题的成语；`ANSWER_BLOCK` 按色情、政治、军事、暴力、迷信、歧视辱骂分组，同时检查词头及完整释义。即使现在有中性比喻义，释义仍写敏感历史本义也不出题；因此会少出部分常见成语。生成器统计按首个命中原因互斥计数，异写在答案筛选前先从可猜表排除；详见 JSON 的 `stats`。
+- 提示只给声调数字与遮字释义；不取出处和例句，避免历史人物和敏感叙述。每个答案字均换成「○」，名目含答案字时跳过，绕过通用自动首字提示。建库全量检查原文及归一化后任何提示都不含答案字。字体检查 Regular / Bold 的缺字掩码，缺字条目从本机可猜表和答案池排除；字体缺失时拒绝空答案池。
+- 在可信代码目录运行 `python3 -I tools/generate_chengyu.py --idiom <idiom.json> --frequency <THUOCL_chengyu.txt> --xinhua-license <XINHUA-LICENSE> --thuocl-license <THUOCL-LICENSE>`，需要插件已有依赖 `zhconv`；只把下载的数据当 JSON / 文本读取，不运行数据源代码。不含时间戳、随机数或下载操作，相同输入输出逐字节一致。源文件和 LICENSE 应从上面固定版本取得。
+- `VERSION = "chengyu-v1"` 放进 `MODE.settings`；改选题、词表、字形规则、条目或提示时更新该版本以重建缓存。题型键固定为 `chengyu`。
+
 ## 猜K线（`core/kline.py`）
 
 - 题库只是股票池，三个市场：A 股、日股、美股，出题先随机挑市场（三个一样多，美股的池子大，混在一起挑会占一半），再挑股票。

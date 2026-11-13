@@ -414,6 +414,32 @@ def wordle(length: int, rows: list, total: int = 6, answer: str = "") -> Image.I
     return out
 
 
+def chengyu(rows: list, total: int = 10, answer: str = "") -> Image.Image:
+    """四字成语棋盘单独布局，十行仍有足够的汉字字号，不占英文字母键盘。"""
+    out = Image.new("RGB", (SIZE, PIC_H), MAP_BG)
+    draw = ImageDraw.Draw(out)
+    total = max(1, min(10, total))
+    colors = {"hit": CELL["hit"], "near": CELL["near"], "miss": (72, 76, 84), "unused": COVER}
+    gap = 5
+    side = min(76, (PIC_H - 130 - gap * (total - 1)) // total)
+    left = (SIZE - 4 * side - 3 * gap) / 2
+    draw.text((SIZE / 2, 24), say("chengyu_length", n=total), fill=TEXT, font=font(26), anchor="mm")
+    face = font(side * 3 // 4, bold=True)
+    for i in range(total):
+        cells = rows[i][1] if i < len(rows) else []
+        for j in range(4):
+            char, state, _ = cells[j] if j < len(cells) else ("", "unused", "")
+            x, y = left + j * (side + gap), 50 + i * (side + gap)
+            draw.rounded_rectangle((x, y, x + side, y + side), 5, fill=colors[state], outline=MARK if not char else None)
+            if char:
+                draw.text((x + side / 2, y + side / 2), char, fill=TEXT, font=face, anchor="mm")
+    label = say("chengyu_reveal", answer=answer) if answer else say("chengyu_legend")
+    draw.text((SIZE / 2, PIC_H - 53), label, fill=KEY if answer else DIM, font=font(26), anchor="mm")
+    draw.text((SIZE / 2, PIC_H - 22), say("chengyu_tones"), fill=DIM, font=font(22), anchor="mm")
+    out.info["grid"] = None
+    return out
+
+
 def compare_table(name: str, columns: tuple, rows: list, empty: str = "", inset: Image.Image | None = None) -> Image.Image:
     """盲猜的对比表：name 是第一列的表头，columns 是其余各列；rows 是 [(猜的名字, Blind.row 的结果), ...]，
     新猜的在上面，最多 9 行。还没人猜时表下写 empty。inset 是放在表右边的一小块图（peek 切出来的一格设定图）。"""

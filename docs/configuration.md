@@ -18,6 +18,9 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `wordle_round_seconds` | 300 | 英文Wordle限时（秒） |
 | `wordle_max_guesses` | 10 | 每人每题最多猜几次；0 不限，只认词表内的五字母完整单词，全群重复猜测不计次；仍受全群棋盘行数限制 |
 | `wordle_rows` | 6 | 全群共用棋盘行数，1–10；超出范围按边界值处理，填满仍未猜中就公布答案 |
+| `chengyu_round_seconds` | 300 | 猜成语限时（秒），独立于英文Wordle |
+| `chengyu_max_guesses` | 10 | 猜成语每人每题最多猜错几次，0 不限；表外闲聊和全群重复猜测不扣次 |
+| `chengyu_rows` | 10 | 猜成语全群共用棋盘行数，1–10；超出范围按边界值处理，填满仍未猜中按超时结算 |
 | `enword_round_seconds` | 120 | 猜英文限时（秒） |
 | `enword_max_guesses` | 3 | 猜英文每人最多猜几次；0 不限，完整说出题库内其他题的答案才计错一次 |
 | `jpword_trigger_uids` | 空 | 每行一个用户 ID；名单内用户开指定题型时，有概率替换为不限时、不限次数的猜日语。空列表关闭 |
@@ -82,6 +85,8 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 ## 字体
 
 卡片文字用 Noto Sans CJK（`/usr/share/fonts/opentype/noto`，AstrBot 官方 Docker 镜像自带）。找不到时退回 Pillow 默认字体，中文会显示成方块。
+
+猜成语建库会检查 Regular、Bold 实际字形，缺字的成语不进本机题库，全部缺字会报错而不开放。它只读取本地词表，不需要 key 或外部接口；声调以数字显示，避免拼音字体兼容问题。
 
 ## ffmpeg
 

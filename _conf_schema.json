@@ -288,6 +288,23 @@
     "secret": true,
     "hint": "猜地点用 Google 街景。Google Cloud 建项目、绑结算账号、启用 Street View Static API、凭据里建 API 密钥。每题取 3 张图，按张计费，有每月免费额度。不填就不能猜地点"
   },
+  "chengyu_round_seconds": {
+    "description": "猜成语限时（秒）",
+    "type": "int",
+    "default": 300
+  },
+  "chengyu_max_guesses": {
+    "description": "猜成语每人每题最多猜几次",
+    "type": "int",
+    "default": 10,
+    "hint": "只认词表内的完整四字成语，闲聊和全群重复猜测不计次。0 不限"
+  },
+  "chengyu_rows": {
+    "description": "猜成语全群共用的棋盘行数",
+    "type": "int",
+    "default": 10,
+    "hint": "1–10 行，超出范围按边界值处理；填满仍未猜中就按超时公布答案"
+  },
   "wordle_round_seconds": {
     "description": "英文Wordle限时（秒）",
     "type": "int",

@@ -20,6 +20,7 @@ core/
     __init__.py       BLIND：登记了哪些盲猜题型
     jpword.py         猜日语：quiz 文字题分支，不画对比表
     wordle.py         英文Wordle：本地词表、重复字母计分、自定义字母棋盘
+    chengyu.py        猜成语：本地四字成语、重复字计分、自定义汉字棋盘、字形和提示防泄露
     enword.py         猜英文：quiz 分支，完整拼词判定及词形防泄露检查
   sources.py          外部数据源：Wikidata、中文维基浏览量、B 站、AniList（含猜声优的 staff 名单）、AnimeThemes、IGDB、Steam、PokeAPI、
                       Gundam Wiki、vtbs.moe；HttpError
@@ -38,6 +39,7 @@ core/
   jpword_data.py      手写的猜日语题库：题面、答案说法、线索和解析
   jpword_gen.json     JLPT / JMdict 派生的猜日语题库：来源、许可、读音、变形和中译日
   wordle_gen.json     ECDICT 派生的英文Wordle答案池和可猜词表（MIT，含来源和完整许可）
+  chengyu_gen.json    chinese-xinhua / THUOCL 派生的成语答案池和可猜表（MIT，含来源、筛选统计和完整许可）
   enword_data.py      手写的猜英文题库：中文猜词、英文填空、反义近义词
   enword_gen.json     ECDICT 派生的猜英文题库：四六级和考研词汇，含来源和完整 MIT 许可
   sake_data.py        手写的盲猜日本酒资料：銘柄的简称、さけのわ风味标签的中文
@@ -52,6 +54,7 @@ core/
 docs/                 用户文档
 tools/generate_enword.py  离线生成猜英文题库，读取本地 ECDICT CSV（不进插件包）
 tools/generate_wordle.py  离线生成英文Wordle词表，读取本地 ECDICT CSV（不进插件包）
+tools/generate_chengyu.py 离线生成猜成语题库，读取本地 chinese-xinhua JSON / THUOCL 词频（不进插件包）
 ```
 
 `main.py`、`metadata.yaml`、`_conf_schema.json`、`requirements.txt` 必须在根目录，AstrBot 只在那里找；其余代码放 `core/`。
@@ -110,6 +113,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 猜日语的手写题库、答案说法、提示或选题规则（`jpword_data.py`） | `blind/jpword.py` 的 `VERSION` |
   | 猜英文的手写题库、答案说法、提示或选题规则（`enword_data.py`） | `blind/enword.py` 的 `VERSION` |
   | 英文Wordle的选题、词表、条目格式、提示规则 | `blind/wordle.py` 的 `VERSION` |
+  | 猜成语的选题、词表、字形检查、条目格式、提示规则 | `blind/chengyu.py` 的 `VERSION` |
   | 听歌猜番的选曲规则（`sources.anime_themes`） | `bank.ANISONG_VERSION` |
   | 街景取景规则（全景缓存作废重找） | `geo.SAMPLING` |
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |
