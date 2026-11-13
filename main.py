@@ -105,6 +105,10 @@ class Round:
     shown: int = 1
     deadline: float = 0.0
     endless: bool = False  # 特殊文字题不限时、不限每人次数，重启仍按作废收尾
+    solo: str = ""  # 替换局只认开题人的局内消息
+    solo_name: str = ""
+    swapping: bool = False  # 求助换题期间忽略局内消息，指令照常处理
+    last_help: float = 0.0
     last_hint: float = 0.0
     hint_wait_sent: float = -1.0  # 已对哪次揭开后的冷却发过「等一下」，每个冷却窗口只回一次
     timer: asyncio.Task | None = None
@@ -522,6 +526,13 @@ class GuessPlugin(Star):
             return
         if not rnd or rnd.entry is None:
             return
+        if rnd.swapping or (rnd.solo and event.get_sender_id() != rnd.solo):
+            return
+        if rnd.solo and commands.HELP_ME.fullmatch(commands.TAIL.sub("", squash(text))):
+            for chain in await self._jpword_help(gid, rnd):
+                yield event.chain_result(chain)
+            event.stop_event()
+            return
         if rnd.category == "kline":
             if chain := self._kline_vote(gid, rnd, event, text):
                 yield event.chain_result(chain)
@@ -635,7 +646,8 @@ class GuessPlugin(Star):
             if cur.entry is None:
                 yield event.plain_result(say("preparing"))
             else:
-                yield event.plain_result(say("busy_endless" if cur.endless else "busy", kind=MODES[cur.category], left=cur.left()))
+                yield event.plain_result(say("busy_endless" if cur.endless else "busy", kind=MODES[cur.category],
+                                             name=cur.solo_name or say("solo_opener"), left=cur.left()))
             return
         # 先检查额度，替换题免费也不能在额度用完后开题。
         if not admin:
@@ -655,7 +667,11 @@ class GuessPlugin(Star):
             return
 
         # 先占位再下载图片，防止下载期间被重复开题
-        rnd = self.rounds[gid] = Round(cat, event.unified_msg_origin, paid=paid, endless=endless)
+        rnd = self.rounds[gid] = Round(
+            cat, event.unified_msg_origin, paid=paid, endless=endless,
+            solo=event.get_sender_id() if endless else "",
+            solo_name=(event.get_sender_name() or say("solo_opener")) if endless else "",
+        )
         try:
             found = await (self._prepare_member(rnd, event) if cat == "member" else self._prepare(rnd))
         except Exception as e:
@@ -681,7 +697,7 @@ class GuessPlugin(Star):
         self._rounds_save()
         for i, chain in enumerate(self._question(rnd)):
             if rnd.endless and i == 0:
-                chain.insert(0, Comp.Plain(say("jpword_swapped")))
+                chain.insert(0, Comp.Plain(say("jpword_swapped", name=rnd.solo_name)))
             yield event.chain_result(chain)
 
     def _jpword_swap(self, event: AstrMessageEvent, cat: str) -> bool:
@@ -695,7 +711,37 @@ class GuessPlugin(Star):
             and random.random() < self.config.get("jpword_trigger_rate", 0.5)
         )
 
-    async def _prepare(self, rnd: Round) -> bool:
+    async def _jpword_help(self, gid: str, rnd: Round) -> list[list]:
+        """先备新题再更新原局，失败保留原题；冷却内的求助静默忽略，避免刷屏。"""
+        if time.monotonic() - rnd.last_help < self.config.get("hint_cooldown_seconds", 5):
+            return []
+        rnd.swapping = True
+        try:
+            fresh = Round(rnd.category, rnd.umo, endless=rnd.endless, solo=rnd.solo,
+                          solo_name=rnd.solo_name, paid=rnd.paid)
+            if not await self._prepare(fresh, previous=rnd):
+                raise RuntimeError("未能准备新题")
+            fresh.cands = candidates(fresh.entry["names"])
+            chains = self._question(fresh)
+            if self.rounds.get(gid) is not rnd:
+                return []  # 准备期间被管理员暂停，不让旧局复活
+            before = vars(rnd).copy()
+            vars(rnd).update(vars(fresh), swapping=True)
+            try:
+                self._rounds_save()  # 发新题前保存新答案，重启时仍能正确收尾
+            except Exception:
+                vars(rnd).update(before)
+                raise
+            chains[0].insert(0, Comp.Plain(say("jpword_help_swapped")))
+            return chains
+        except Exception as e:
+            logger.error(f"[guess] replacing jpword failed: {e}")
+            return [[Comp.Plain(say("jpword_help_failed"))]] if self.rounds.get(gid) is rnd else []
+        finally:
+            rnd.last_help = time.monotonic()
+            rnd.swapping = False
+
+    async def _prepare(self, rnd: Round, previous: Round | None = None) -> bool:
         """抽题，备好题图、答案卡的图、提示（听歌猜番还有音频）。素材下载失败换一道，最多 3 次。"""
         cat = rnd.category
         for _ in range(3):
@@ -704,6 +750,8 @@ class GuessPlugin(Star):
                 entry = pick(cat, self.bank.entries[cat], self.recent[cat])
             else:
                 entry = self.bank.pick(cat, self.recent[cat], self.used[cat])
+            if previous and (entry["id"] == previous.entry["id"] or candidates(entry["names"]) & previous.cands):
+                continue  # 求助不能换回同一道题或同一个答案
             try:
                 await self._load(rnd, entry)
             except Exception as e:
@@ -715,7 +763,7 @@ class GuessPlugin(Star):
                 self.used[cat].append(entry["id"])
                 save_json(self.data_dir / "recent_ids.json", {c: list(q) for c, q in self.used.items() if q})
             return True
-        raise RuntimeError("连续 3 道题的素材都没下载下来")
+        raise RuntimeError("连续 3 道题都未能备好")
 
     async def _prepare_member(self, rnd: Round, event: AstrMessageEvent) -> bool:
         """猜群友：现拉群成员，开题的人和 bot 不出；本轮出过的先不出，都出过了重来。
@@ -902,7 +950,8 @@ class GuessPlugin(Star):
         """进行中的题只在内存里，另存一份答案和扣的额度，进程被重启打断时下次启动能收尾。"""
         save_json(self.data_dir / "rounds.json", {
             gid: {"umo": rnd.umo, "category": rnd.category, "answer": rnd.entry["answer"], "paid": rnd.paid,
-                  **({"endless": True} if rnd.endless else {})}
+                  **({"endless": True} if rnd.endless else {}),
+                  **({"solo": rnd.solo, "solo_name": rnd.solo_name} if rnd.solo else {})}
             for gid, rnd in self.rounds.items() if rnd.entry
         })
 
