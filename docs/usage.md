@@ -63,6 +63,7 @@ AstrBot 自己的指令只认原样的写法，@机器人 说的话没被指令�
 
 ## 一道题的流程
 
+- 猜游戏也会混入经全年龄发行和安全截图筛选的视觉小说，仍按原名、中文名或收录的简称作答；数量及开关见 `game_galgame_size`，来源和筛选规则见[题库](question-banks.md#全年龄视觉小说)。
 - 每个群同时只有一道题，进行中再开会回「还有一道在进行」和剩余时间。
 - 限时 2 分钟（`round_seconds`），猜地点匹配、猜日本地点匹配 3 分钟（`geomatch_round_seconds`、`jpgeomatch_round_seconds`），盲猜宝可梦、盲猜萝卜、盲猜地点 5 分钟（`blind_round_seconds`），盲猜日本地点、盲猜中国地点、盲猜日本酒、盲猜魔兽Boss、盲猜以撒道具 7 分钟（`jpgeodle_round_seconds`、`cngeodle_round_seconds`、`sakedle_round_seconds`、`bossdle_round_seconds`、`isaacdle_round_seconds`），猜K线 3 分钟（`kline_round_seconds`，凑满人数提前揭晓），英文Wordle 5 分钟（`wordle_round_seconds`，全群棋盘填满也会揭晓），时间到公布答案。答对或超时都会发一张答案卡（整图公开、标题写答案）。
 - `提示` 有 5 秒冷却（`hint_cooldown_seconds`），防止几个人同时喊一下揭开好几格；冷却中喊，每个冷却窗口只回一次「等 N 秒」。

@@ -15,6 +15,7 @@ pyproject.toml        开发工具配置（ruff）
 core/
   bank.py             题库：各题型的构建（Bank._build_*）、定期刷新和重建判断（_settings / _stale）、出题（pick）
   entries.py          题目条目和提示（*_entry、country_basics、scrub），纯函数、不联网
+  galgame.py          猜游戏的全年龄视觉小说补充池：VNDB 正式低龄发行、安全截图、内容过滤和 Bangumi 中文名
   blind/              盲猜系列，一个题型一个模块（对比的列、一行怎么算、题库怎么建），见下文「盲猜系列」
     base.py           盲猜的底层：题型规格 Blind、对比表各格的算法（num、ratio、tiered、away……）、条目 entry
     __init__.py       BLIND：登记了哪些盲猜题型

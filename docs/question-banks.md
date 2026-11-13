@@ -29,6 +29,19 @@
 - 题图：IGDB 截图，IGDB 上没有再用 Steam 的；没配 IGDB 就用 Metacritic 封面。
 - 没配 IGDB 时没有热度数据，退回按 MC 分取前 500 款、不分档。
 
+### 全年龄视觉小说
+
+- 额外从 [VNDB Kana API](https://api.vndb.org/kana) 按投票人数降序补充日语原作的视觉小说 / 恋爱冒险；默认最多 80 款（`game_galgame_size`，0 关闭、上限 150），与 Metacritic 游戏共用「猜游戏」、九宫格和排行榜，不另加指令，也不占 MC 的数量。最多扫描 1200 个至少 50 票、已完成的候选，筛选后可能不足。入选作品按票数分档，前一半大众、其余小众。
+- 必须存在已正式发售的完整发行：`official=true`、`patch=false`、`vns.rtype=complete`、明确 `minage≤15` 且 `has_ero=false`；未知年龄、试玩版、部分版、补丁都不能作为依据。题库的 `age_basis` 记录发行页 URL 和分级依据。低龄分级只证明存在合格版本，还要通过内容检查。
+- 保守排除带任何有效 VNDB `ero` 类标签的作品，包括原作有成人内容、只有移植版全年龄的作品；带 NTR、色情卖点、政治、政府、战争、军事、核、毒品、自残自杀、暴力杀戮等内容标签的也跳过（`core/galgame.py` 的 `BLOCK`）。不会为了凑数量放宽。Bangumi 必须明确 `nsfw=false` 且有中文名；按原名 / 别名与首发年份 ±1 严格匹配，找不到就跳过。
+- 成人主系列的全年龄外传也不收，按系列名及已知 VNDB ID 双重排除：その花びら / 花吻（成人首作发行 [r12265](https://vndb.org/r12265)）、ネコぱら / NEKOPARA（成人首作发行 [r34916](https://vndb.org/r34916)）、D.C. / 初音岛（[CIRCUS 官方系列表](https://circus-co.jp/dc_portal/series_lineup/)标明初代、Ⅱ等多作为 R-18）。对应漏网外传 `v18666`、`v30812`、`v969` 加入 `NO_ANSWER`。不因同一个开发商品牌做过成人作品就整品牌排除。
+- 秋之回忆、心跳回忆、命运石之门不按成人主系列封禁：原始正式发行 [r2196](https://vndb.org/r2196)、[r213](https://vndb.org/r213)、[r3930](https://vndb.org/r3930)分别为 12、12、15 岁且无色情内容；另有 [KONAMI 官方 Girl's Side CERO B](https://www.konami.com/games/girls_side/for_switch/)及 [STEINS;GATE 官方 CERO C](https://steinsgate.jp/ps3_wpack/)依据。仍逐部执行原有内容和图片筛选，不因系列允许而跳过检查。
+- 截图只取 VNDB 原图，每张必须明确 `sexual=0`、`violence=0` 且图片分级投票人数大于零；有性内容、暴力或无人评过的都不用，去重后不足 9 张整部不收。无需 IGDB key，也不从未分级的 Steam / IGDB 截图补图。分级为零仍可能有武器、镜头或文字擦边等，抽查发现不合适的整部加入 `core/galgame.py` 的 `NO_ANSWER`（只能增加不能删）；不把来源评分当作绝对保证。
+- 中文名、原名、常见简称来自 Bangumi 和 VNDB 的别名；与现有题库的名字归一化去重。提示复用 `game_entry`、`TagStats` 和原有防泄露规则，开发商取 VNDB、平台取合格发行，Bangumi 成人标签另过滤；最终提示再检查内容黑名单。
+- 查询串行，VNDB 两次请求至少间隔 5 秒，遇 429 等一分钟再重试；连接失败使用 Bank 的重试。官方另限每 5 分钟 200 次及每分钟 1 秒服务端执行时间，因此仍可能触发限流。候选、匹配和年龄依据缓存 7 天至 `galgame_vndb.json`，截图照旧在出题时下载。没有离线生成 JSON 或生成脚本；同一份缓存和配置生成相同的条目。
+- 补充池的 VNDB / Bangumi 查询失败时，只记录不含 URL 的异常类型，沿用旧游戏题库里仍通过当前黑名单的 `vndb-` 条目；没有旧条目就只提交 Metacritic 部分，一小时后重试补充池。`game_galgame_size=0` 时不恢复旧补充条目。
+- [VNDB 数据许可](https://vndb.org/d17)为 [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/)，单项数据库内容适用 [DbCL 1.0](https://opendatacommons.org/licenses/dbcl/1-0/)；缓存和题目带 `source` / `license`，分享派生数据库应遵守署名和相同方式共享要求。API 仅免费提供非商业使用，商业部署应关闭补充池或先取得许可。截图版权归各游戏原作者，不属于 ODbL 授权；和现有游戏截图一样只引用题图，不随插件分发图片，也不能据数据库许可声称截图可自由再发布。
+
 ## 标签提示（动画、游戏）
 
 只给「年份、类型、评分」这类几百部作品都一样的信息等于没给，所以动画和游戏的提示以 Bangumi 用户标签为主，分两档：

@@ -1,6 +1,6 @@
 """题库：各题型的构建、定期刷新和出题。题目条目怎么拼见 entries.py，数据源见 sources.py 和 geo.py。
 
-动画取 Bangumi 最热门的作品，游戏从 Metacritic 高分游戏里按热度和评分分大众 / 小众两档，宝可梦取 PokeAPI 全图鉴，
+动画取 Bangumi 最热门的作品，游戏从 Metacritic 高分游戏里按热度和评分分档，另补 VNDB 全年龄视觉小说，宝可梦取 PokeAPI 全图鉴，
 地点和日本地点是 Google 街景随机取景，国家是 Natural Earth 轮廓。找不到图的作品不进题库。
 听歌猜番是猜动画题库里在 AnimeThemes 有 OP / ED 的作品；猜萝卜是 Bangumi 上高达系列动画和超级机器人大战里的机体；
 猜Vtuber是 vtbs.moe 名单里 B 站粉丝最多的国内和国外虚拟主播；猜声优是 AniList 和 Bangumi 上的日本女声优（seiyuu.py）；猜K线的题库只是沪深300、日经225、标普500、纳指100 的成分股，K 线出题时现拉（kline.py）。
@@ -21,7 +21,7 @@ import aiohttp
 
 from astrbot.api import logger
 
-from . import audio, cards, geo, kline, seiyuu, teacher, vtuber_data, wow
+from . import audio, cards, galgame, geo, kline, seiyuu, teacher, vtuber_data, wow
 from .answer import candidates, find, norm
 from .blind import BLIND
 from .entries import (
@@ -238,7 +238,7 @@ class Bank:
         return self.config.get(f"{cat}_pool_size", {"anime": 1000, "vtuber": 300}.get(cat, 500))
 
     def _media_on(self, cat: str) -> bool:
-        """动画、宝可梦、国家轮廓免 key，游戏要 IGDB 的 key，地点要 Google 街景的 key，听歌猜番要 ffmpeg。"""
+        """游戏的 IGDB 来源要 key，VNDB 补充池免 key；地点要 Google 街景 key，听歌猜番要 ffmpeg。"""
         if cat == "anisong":
             return audio.available()
         if cat in ("geo", "jpgeo"):
@@ -279,6 +279,7 @@ class Bank:
         return [
             self._size("game"), c.get("game_niche_size", 300), c.get("game_min_score", 75),
             c.get("game_min_reviews", 10), WORK_HINTS_VERSION, GAME_VERSION,
+            galgame.size(c),
         ]
 
     def _stale(self, cat: str) -> bool:
@@ -700,6 +701,7 @@ class Bank:
 
         没配 IGDB 就没有热度数据，退回按 MC 分取前 N、不分档。
         """
+        old_galgame = [e for e in self.entries["game"] if e.get("id", "").startswith("vndb-")]
         size = self._size("game")
         niche_size = self.config.get("game_niche_size", 300)
         min_score = self.config.get("game_min_score", 75)
@@ -776,7 +778,16 @@ class Bank:
             entry = game_entry(it, b or None, wd.get(slug), media.get(slug), stats, info.get("dev"), cast,
                                info.get("platforms"))
             entries.append({**entry, "tier": tier})
-        self.commit("game", entries, use_media)
+        complete = True
+        try:
+            extra = await galgame.build(self, entries, found)
+        except Exception as exc:
+            # 底层网络异常可能带 URL，只记类型；补充池故障不能挡住 MC 刷新。
+            logger.warning(f"[guess] 视觉小说补充池构建失败（{type(exc).__name__}），沿用旧条目")
+            extra = [e for e in old_galgame if galgame.allowed_entry(e)] if galgame.size(self.config) else []
+            complete = False
+        entries.extend(extra)
+        self.commit("game", entries, use_media, complete=complete)
 
     async def _build_pokemon(self) -> None:
         """前 pokemon_main_gen 个世代算大众题，之后的算小众题。"""

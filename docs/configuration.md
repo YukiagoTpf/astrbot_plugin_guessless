@@ -50,6 +50,7 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `niche_ratio` | 0.2 | 每道题出小众题的概率，0.2 大约五题一道；0 只出大众题（声优用 `seiyuu_niche_ratio`）。游戏、宝可梦、萝卜、Vtuber、魔兽、老师、声优、盲猜地点、盲猜日本地点、盲猜日本酒、盲猜魔兽Boss、盲猜以撒道具、猜日语、猜英文分档，动画、地点、盲猜中国地点不分档。每个题型最近出过的 200 道（存在 `recent.json`，重启不清）先不出，这一档都出过了从最久没出的里挑；猜地点一国有几个全景，同一国挑最久没出过的那个（`recent_ids.json`） |
 | `game_pool_size` | 500 | 游戏大众题数量 |
 | `game_niche_size` | 300 | 游戏小众题数量 |
+| `game_galgame_size` | 80 | 额外补充的全年龄视觉小说数量，0 关闭，上限 150；有低龄正式完整发行、中文名、非 NSFW 和至少 9 张已评安全截图才收，实际可能不足。按 VNDB 投票数选，前一半大众、其余小众；不占 MC 数量，无需 IGDB key。VNDB API 限非商业使用，规则及许可见[题库](question-banks.md#全年龄视觉小说) |
 | `game_min_score` | 75 | 游戏最低 Metacritic 分 |
 | `game_min_reviews` | 10 | 游戏最少媒体评测数 |
 | `pokemon_main_gen` | 4 | 第 1 到第 N 世代的宝可梦算大众题 |
@@ -64,7 +65,9 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 
 ## IGDB
 
-不填时，游戏题图退回 Metacritic 封面（常印着标题，揭开那一格基本就露馅了），也没有热度数据，题库只按 MC 分取、不分大众 / 小众。
+不填时，Metacritic 游戏题图退回封面（常印着标题，揭开那一格基本就露馅了），也没有 IGDB 热度数据，这部分题库只按 MC 分取、不分大众 / 小众。
+
+`game_galgame_size` 补充的视觉小说独立使用 VNDB 安全截图和投票数，不需要 IGDB key，仍分大众 / 小众。
 
 1. 在 [dev.twitch.tv/console](https://dev.twitch.tv/console) 注册应用：OAuth 重定向填 `http://localhost`，类别选 Application Integration。
 2. 把 Client ID 填进 `igdb_client_id`；在同一个应用里点「新密码」生成 secret，填进 `igdb_client_secret`。
@@ -99,6 +102,7 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | 文件 | 内容 |
 |---|---|
 | `bank_*.json` | 各题型的题库 |
+| `galgame_vndb.json` | VNDB 候选、正式低龄发行和经 NSFW 检查的 Bangumi 匹配，缓存 7 天，带来源和 ODbL 许可；不含截图文件 |
 | `media_*.json`（含听歌猜番的 `media_anisong.json`）、`bgm_game_match.json`、`bgm_characters.json`、`bgm_mecha.json`、`gundam_wiki.json`、`geo_*.json`、`jp_panos.json`、`country_shapes.json` | 各数据源的查询缓存，删掉会在下次重建时重新查 |
 | `images/` | 题图缓存 |
 | `scores.json` | 排行榜 |

@@ -227,6 +227,12 @@
     "default": 300,
     "hint": "热度没进大众题的游戏里，按「MC 分排名 + 热度排名」取前 N 款：高分、又不至于完全没人听过"
   },
+  "game_galgame_size": {
+    "description": "全年龄视觉小说补充数量",
+    "type": "int",
+    "default": 80,
+    "hint": "0 关闭，最多 150 款。额外加入猜游戏，不占 MC 大众/小众数量；按 VNDB 投票人数筛选，有正式完整的 15 岁及以下无色情发行、Bangumi 中文名且非 NSFW、至少 9 张已评安全截图才收。筛选后可能不足；无需 IGDB key。首次构建需数分钟，VNDB API 限非商业使用"
+  },
   "game_min_score": {
     "description": "游戏最低 MC 分",
     "type": "int",

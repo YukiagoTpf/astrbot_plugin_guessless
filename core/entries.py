@@ -49,7 +49,7 @@ NOT_PEOPLE = {
 # 整个题库里超过这个比例的作品都有的标签算大类标签（「日常」「开放世界」），其余算特色标签
 COMMON_TAG_RATIO = 0.04
 WORK_HINTS_VERSION = "tags-v1"  # 动画、游戏的提示规则改了就换个名字，这两个题库会重建
-GAME_VERSION = "platforms-v1"  # 游戏独有的提示规则（平台）改了就换个名字，只重建游戏题库
+GAME_VERSION = "galgame-v2"  # 游戏独有的选题、提示规则改了就换个名字，只重建游戏题库
 GAME_INFO = ("游戏类型", "开发", "开发商", "导演", "游玩人数", "游戏引擎")
 # Metacritic 和 IGDB 的平台名 → 提示里的叫法
 PLATFORMS = {
