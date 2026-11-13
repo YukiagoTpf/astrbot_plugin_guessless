@@ -4,7 +4,7 @@
 from .base import Blind, num
 
 COLUMNS = ("世代", "属性1", "属性2", "颜色", "进化阶段", "种族值")
-CLUES = ("分类", "进化", "首字")
+CLUES = ("分类", "特性", "首字")
 
 
 def row(guess: dict, answer: dict) -> list[list[str]]:

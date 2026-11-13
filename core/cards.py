@@ -11,6 +11,8 @@ from functools import cache
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageStat
 
+from .lines import say
+
 SIZE = 1080
 PIC_H = 608  # 16:9
 BAR = (SIZE - PIC_H) // 2
@@ -334,6 +336,44 @@ class WorldMap:
             ImageDraw.Draw(out).rectangle((box[0] - 1, box[1] - 1, box[0] + w, box[1] + h), outline=MARK, width=2)
         out.info["grid"] = None
         return out
+
+
+def quiz(question: str, answer: str = "", explanation: str = "") -> Image.Image:
+    """文字题的 16:9 题面；按实际字宽换行，答案和解析仅在揭晓时传入。"""
+    width = SIZE - PAD * 3
+
+    def wrap(text, face):
+        lines = []
+        for paragraph in text.split("\n"):
+            line = ""
+            for ch in paragraph:
+                if line and face.getlength(line + ch) > width:
+                    lines.append(line)
+                    line = ""
+                line += ch
+            lines.append(line)
+        return lines
+
+    # 题面不截断，长句连同答案解析一起缩小到图区内。
+    for size in range(42, 17, -2):
+        face = font(size)
+        sections = [(wrap(question.replace("（　）", "（　　　）"), face), TEXT)]
+        if answer:
+            sections += [(wrap(say("quiz_answer", answer=answer), face), KEY),
+                         (wrap(say("quiz_explanation", text=explanation), face), DIM)]
+        height = sum(len(lines) * (size + 18) for lines, _ in sections) + 24 * (len(sections) - 1)
+        if height <= PIC_H - PAD * 2:
+            break
+    out = Image.new("RGB", (SIZE, PIC_H), MAP_BG)
+    draw = ImageDraw.Draw(out)
+    y = max(PAD, (PIC_H - height) / 2)
+    for lines, color in sections:
+        for line in lines:
+            draw.text((PAD * 1.5, y), line, fill=color, font=face, anchor="lt")
+            y += size + 18
+        y += 24
+    out.info["grid"] = None
+    return out
 
 
 def compare_table(name: str, columns: tuple, rows: list, empty: str = "", inset: Image.Image | None = None) -> Image.Image:

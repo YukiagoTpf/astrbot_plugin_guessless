@@ -13,6 +13,11 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `bossdle_round_seconds` | 420 | 盲猜魔兽Boss限时（秒），能猜的有一千多个首领 |
 | `isaacdle_round_seconds` | 420 | 盲猜以撒道具限时（秒），能猜的有七百多个道具 |
 | `blind_round_seconds` | 300 | 其他盲猜的限时（秒），要一个个推，比其他题型久 |
+| `jpword_round_seconds` | 120 | 猜日语普通局限时（秒） |
+| `jpword_max_guesses` | 3 | 猜日语普通局每人最多猜几次；0 不限 |
+| `jpword_trigger_uids` | 空 | 每行一个用户 ID；名单内用户开指定题型时，有概率替换为不限时、不限次数的猜日语。空列表关闭 |
+| `jpword_trigger_modes` | `["jpgeodle", "jpgeo"]` | 可替换的题型键，默认盲猜日本地点、猜日本地点；直接开猜日语仍为普通限时局 |
+| `jpword_trigger_rate` | 0.75 | 替换概率（0–1）；0 关闭，1 每次触发。日语题库就绪才替换，暂停、宵禁、同群一题和开题额度照旧。答对结束，管理员可暂停作废；重启仍作废、退额度并公布答案 |
 | `hint_cooldown_seconds` | 5 | 两次「提示」的最短间隔（秒） |
 | `max_guesses` | 5 | 每人每题最多猜几次，怎么算一次见[玩法](usage.md#猜的次数和距离)；0 为不限 |
 | `mechadle_max_guesses` | 10 | 盲猜萝卜每人每题最多猜几次；0 为不限 |
@@ -34,7 +39,7 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `help_extra` | 空 | @机器人 说「帮助」时追加在猜题玩法后面的话（比如别的插件的用法），每行一条；写成「群号:文字」只在那个群加 |
 | `board_interval_hours` | 1 | 每隔几小时在玩过的群里播报一张各题型排行榜的图，这段时间没人答对就不发；0 关闭，见[玩法](usage.md#整点排行榜) |
 | `anime_pool_size` | 1000 | 动画题库大小 |
-| `niche_ratio` | 0.2 | 每道题出小众题的概率，0.2 大约五题一道；0 只出大众题（声优用 `seiyuu_niche_ratio`）。游戏、宝可梦、萝卜、Vtuber、魔兽、老师、声优、盲猜地点、盲猜日本地点、盲猜日本酒、盲猜魔兽Boss、盲猜以撒道具分档，动画、地点、盲猜中国地点不分档。每个题型最近出过的 200 道（存在 `recent.json`，重启不清）先不出，这一档都出过了从最久没出的里挑；猜地点一国有几个全景，同一国挑最久没出过的那个（`recent_ids.json`） |
+| `niche_ratio` | 0.2 | 每道题出小众题的概率，0.2 大约五题一道；0 只出大众题（声优用 `seiyuu_niche_ratio`）。游戏、宝可梦、萝卜、Vtuber、魔兽、老师、声优、盲猜地点、盲猜日本地点、盲猜日本酒、盲猜魔兽Boss、盲猜以撒道具、猜日语分档，动画、地点、盲猜中国地点不分档。每个题型最近出过的 200 道（存在 `recent.json`，重启不清）先不出，这一档都出过了从最久没出的里挑；猜地点一国有几个全景，同一国挑最久没出过的那个（`recent_ids.json`） |
 | `game_pool_size` | 500 | 游戏大众题数量 |
 | `game_niche_size` | 300 | 游戏小众题数量 |
 | `game_min_score` | 75 | 游戏最低 Metacritic 分 |

@@ -103,6 +103,7 @@ class Round:
     order: list = field(default_factory=list)  # 九宫格揭开顺序，开题时按图片排（cards.reveal_order）
     shown: int = 1
     deadline: float = 0.0
+    endless: bool = False  # 特殊文字题不限时、不限每人次数，重启仍按作废收尾
     last_hint: float = 0.0
     hint_wait_sent: float = -1.0  # 已对哪次揭开后的冷却发过「等一下」，每个冷却窗口只回一次
     timer: asyncio.Task | None = None
@@ -473,7 +474,8 @@ class GuessPlugin(Star):
         save_json(self.data_dir / "paused.json", sorted(self.paused))
         text = say("pause")
         if (rnd := self.rounds.pop(gid, None)) and rnd.entry:
-            rnd.timer.cancel()
+            if rnd.timer:
+                rnd.timer.cancel()
             self._rounds_save()
             text += "\n" + say("pause_void", answer=rnd.entry["answer"])
         yield event.plain_result(text)
@@ -546,7 +548,10 @@ class GuessPlugin(Star):
             else:
                 rnd.last_hint = now
                 cat = rnd.category
-                key = "hint_exhausted" if cat in GRID else "hint_exhausted_blind" if cat in BLIND else f"hint_exhausted_{cat}"
+                b = BLIND.get(cat)
+                key = "hint_exhausted" if cat in GRID else "hint_exhausted_blind" if b and not b.quiz else f"hint_exhausted_{cat}"
+                if rnd.endless:
+                    key = "hint_exhausted_endless"
                 yield event.plain_result(say(key if key in LINES else "hint_exhausted_clue", left=rnd.left()))
             event.stop_event()
             return
@@ -561,7 +566,7 @@ class GuessPlugin(Star):
         if cat == "member" and uid == rnd.key:
             return  # 被猜的群友本人说什么都不算
         wrong = rnd.wrong.setdefault(uid, set())
-        limit = self._limit(cat)
+        limit = self._limit(rnd)
         if limit and len(wrong) >= limit:
             return  # 次数用完了，说对了也不算
         key, item = self._match(rnd, event, text)
@@ -585,6 +590,8 @@ class GuessPlugin(Star):
         if key in wrong:
             return
         wrong.add(key)
+        if (b := BLIND.get(cat)) and b.quiz:
+            return  # 文字题猜错只计次，连次数用完也不打断群聊
         name = event.get_sender_name() or uid
         reply, card = self._feedback(rnd, key, item)
         if reply and limit and len(wrong) < limit:
@@ -617,8 +624,11 @@ class GuessPlugin(Star):
             if cur.entry is None:
                 yield event.plain_result(say("preparing"))
             else:
-                yield event.plain_result(say("busy", kind=MODES[cur.category], left=cur.left()))
+                yield event.plain_result(say("busy_endless" if cur.endless else "busy", kind=MODES[cur.category], left=cur.left()))
             return
+        endless = self._jpword_swap(event, cat)
+        if endless:
+            cat = "jpword"
         if cat != "member" and not self.bank.ready(cat):
             yield event.plain_result(say("not_ready", kind=MODES[cat], status=self.bank.status[cat]))
             return
@@ -628,7 +638,7 @@ class GuessPlugin(Star):
             return
 
         # 先占位再下载图片，防止下载期间被重复开题
-        rnd = self.rounds[gid] = Round(cat, event.unified_msg_origin, paid=paid)
+        rnd = self.rounds[gid] = Round(cat, event.unified_msg_origin, paid=paid, endless=endless)
         try:
             found = await (self._prepare_member(rnd, event) if cat == "member" else self._prepare(rnd))
         except Exception as e:
@@ -644,14 +654,28 @@ class GuessPlugin(Star):
             return
 
         # 盲猜要一个个推，两分钟不够；日本的市町村有一千七百多个、中国的地级行政区三百多个，单独设了更长的
-        shared, default = ("blind_round_seconds", 300) if cat in BLIND else ("round_seconds", 120)
+        b = BLIND.get(cat)
+        shared, default = ("blind_round_seconds", 300) if b and not b.quiz else ("round_seconds", 120)
         seconds = self._setting(cat, "round_seconds", shared, default)
         rnd.cands = candidates(rnd.entry["names"])
-        rnd.deadline = time.monotonic() + seconds
-        rnd.timer = asyncio.create_task(self._expire(gid, rnd, seconds))
+        if not rnd.endless:
+            rnd.deadline = time.monotonic() + seconds
+            rnd.timer = asyncio.create_task(self._expire(gid, rnd, seconds))
         self._rounds_save()
-        for chain in self._question(rnd):
+        for i, chain in enumerate(self._question(rnd)):
+            if rnd.endless and i == 0:
+                chain.insert(0, Comp.Plain(say("jpword_swapped")))
             yield event.chain_result(chain)
+
+    def _jpword_swap(self, event: AstrMessageEvent, cat: str) -> bool:
+        """仅名单内的人开指定题型时替换，直接开猜日语仍是普通限时局。"""
+        return (
+            cat != "jpword"
+            and str(event.get_sender_id()) in {str(uid) for uid in self.config.get("jpword_trigger_uids", [])}
+            and cat in self.config.get("jpword_trigger_modes", ["jpgeodle", "jpgeo"])
+            and self.bank.ready("jpword")
+            and random.random() < self.config.get("jpword_trigger_rate", 0.75)
+        )
 
     async def _prepare(self, rnd: Round) -> bool:
         """抽题，备好题图、答案卡的图、提示（听歌猜番还有音频）。素材下载失败换一道，最多 3 次。"""
@@ -708,13 +732,16 @@ class GuessPlugin(Star):
         cat = rnd.category
         rnd.hints, rnd.image, rnd.reveal = entry["hints"], None, None
         if b := BLIND.get(cat):
-            # 不给图；「提示」只给表里比不出来的线索，一开始一条都没有
+            # 对比型只给表里比不出来的线索，文字题只给题面；一开始都没有提示
             rnd.hints, rnd.shown = b.hints(entry), 0
-            if entry.get("images"):  # 盲猜地点没有图，答案卡用对比表，见 _finish
-                rnd.reveal = cards.load(await self.bank.image(entry), contain=True)
-            if b.peek:
-                rnd.peek = cards.peek(rnd.reveal)
-            rnd.image = b.table([], say(f"{cat}_empty"), rnd.peek)
+            if b.quiz:
+                rnd.image, rnd.reveal = b.quiz(entry), b.quiz(entry, True)
+            else:
+                if entry.get("images"):  # 盲猜地点没有图，答案卡用对比表，见 _finish
+                    rnd.reveal = cards.load(await self.bank.image(entry), contain=True)
+                if b.peek:
+                    rnd.peek = cards.peek(rnd.reveal)
+                rnd.image = b.table([], say(f"{cat}_empty"), rnd.peek)
         elif cat == "kline":
             bars = await kline.load(self.bank.http(), entry, self.bank.dir)
             rnd.image = cards.kline(bars, kline.WARM, kline.SHOWN, reveal=False)
@@ -854,7 +881,8 @@ class GuessPlugin(Star):
     def _rounds_save(self) -> None:
         """进行中的题只在内存里，另存一份答案和扣的额度，进程被重启打断时下次启动能收尾。"""
         save_json(self.data_dir / "rounds.json", {
-            gid: {"umo": rnd.umo, "category": rnd.category, "answer": rnd.entry["answer"], "paid": rnd.paid}
+            gid: {"umo": rnd.umo, "category": rnd.category, "answer": rnd.entry["answer"], "paid": rnd.paid,
+                  **({"endless": True} if rnd.endless else {})}
             for gid, rnd in self.rounds.items() if rnd.entry
         })
 
@@ -893,16 +921,16 @@ class GuessPlugin(Star):
             return 1 + len(rnd.entry["clues"])
         return len(rnd.hints)
 
-    def _limit(self, cat: str) -> int:
+    def _limit(self, rnd: Round) -> int:
         """每人每题最多猜几次，0 不限。盲猜萝卜、盲猜日本 / 中国地点要多猜几个才推得出来，单独设了。"""
-        return self._setting(cat, "max_guesses", "max_guesses", 5)
+        return 0 if rnd.endless else self._setting(rnd.category, "max_guesses", "max_guesses", 5)
 
     def _setting(self, cat: str, name: str, shared: str, default):
         """题型自己的设置 {cat}_{name}（_conf_schema.json 里写了才有），没有就用共用的 shared。"""
         return self.config.get(f"{cat}_{name}", self.config.get(shared, default))
 
     def _card(self, rnd: Round, image, status: str, hints: list) -> list:
-        limit = self._limit(rnd.category)
+        limit = self._limit(rnd)
         tries = say("tries", limit=limit) if limit else say("tries_free")
         note = f"card_note_{rnd.category}" if f"card_note_{rnd.category}" in LINES else "card_note"
         if rnd.category in geomatch.PAIRS:
@@ -913,16 +941,17 @@ class GuessPlugin(Star):
 
     def _question(self, rnd: Round) -> list[list]:
         """出题和提示发的消息：一张卡片，标题、进度和提示都画在图上；听歌猜番再加一条语音。"""
-        image, status = rnd.image, f"{rnd.shown}/{self._steps(rnd)} · 剩 {rnd.left()} 秒"
-        if rnd.category in BLIND:
-            status = f"已猜 {len(rnd.history)} 次 · 剩 {rnd.left()} 秒"
+        left = say("time_endless") if rnd.endless else say("time_left", left=rnd.left())
+        image, status = rnd.image, f"{rnd.shown}/{self._steps(rnd)} · {left}"
+        if (b := BLIND.get(rnd.category)) and not b.quiz:
+            status = f"已猜 {len(rnd.history)} 次 · {left}"
         if rnd.category == "kline":
-            status = f"满 {self._kline_players()} 人揭晓 · 剩 {rnd.left()} 秒"
+            status = f"满 {self._kline_players()} 人揭晓 · {left}"
         if rnd.category in geomatch.PAIRS:
-            status = f"到点公布 · 剩 {rnd.left()} 秒"
+            status = f"到点公布 · {left}"
         if rnd.category == "member":
             image = cards.mosaic(rnd.avatar, *rnd.plan[rnd.shown - 1])
-            status = f"露出 {members.LABELS[rnd.shown - 1]} · 剩 {rnd.left()} 秒"
+            status = f"露出 {members.LABELS[rnd.shown - 1]} · {left}"
         if rnd.category == "teacher":
             image = cards.blur(rnd.avatar, teacher.STAGES[rnd.shown - 1])
             if rnd.shown == len(teacher.STAGES):
@@ -995,8 +1024,8 @@ class GuessPlugin(Star):
             "help",
             grid=" ".join(MODES[c] for c in live if c in GRID or c in ("member", "teacher", "seiyuu")),
             street=" ".join(MODES[c] for c in live if c in ("geo", "jpgeo", "geomatch", "jpgeomatch")),
-            other=" ".join(MODES[c] for c in live if c in ("anisong", "kline")),
-            blind=" ".join(MODES[c] for c in live if c in BLIND),
+            other=" ".join(MODES[c] for c in live if c in ("anisong", "kline") or (c in BLIND and BLIND[c].quiz)),
+            blind=" ".join(MODES[c] for c in live if c in BLIND and not BLIND[c].quiz),
         )
         for item in self.config.get("help_extra") or []:
             m = re.fullmatch(r"\s*(\d+)\s*[:：](.+)", str(item), re.S)
@@ -1040,7 +1069,7 @@ class GuessPlugin(Star):
 
     def _progress(self, rnd: Round) -> tuple[str, str]:
         """答对文案的档位和「用了多少」：九宫格按格数，听歌猜番按段数，盲猜按全群猜了几次，其他按线索数。"""
-        if rnd.category in BLIND:
+        if (b := BLIND.get(rnd.category)) and not b.quiz:
             n = len(rnd.history) + 1
             return ("correct_fast" if n <= 3 else "correct_slow" if n >= 10 else "correct"), f"{n} 次"
         if rnd.category in MATCH:  # 按要了几条线索
@@ -1065,7 +1094,8 @@ class GuessPlugin(Star):
         elif rnd.category in geomatch.PAIRS:
             text = self._geomatch_result(gid, rnd)
         elif uid:
-            rnd.timer.cancel()
+            if rnd.timer:
+                rnd.timer.cancel()
             name = name or uid
             count = self._add_score(gid, rnd.category, uid, name)
             tier, progress = self._progress(rnd)
@@ -1090,7 +1120,7 @@ class GuessPlugin(Star):
             return None
         uid = event.get_sender_id()
         name = event.get_sender_name() or uid
-        wrong, limit = rnd.wrong.setdefault(uid, set()), self._limit(rnd.category)
+        wrong, limit = rnd.wrong.setdefault(uid, set()), self._limit(rnd)
         if limit and len(wrong) >= limit:
             return None  # 次数用完了，说对了也不算
         if guess == rnd.entry["key"]:
@@ -1144,7 +1174,8 @@ class GuessPlugin(Star):
         rnd.votes[uid] = (name, value)
         if (n := len(rnd.votes)) < (total := self._kline_players()):
             return [Comp.Plain(say("kline_vote", name=name, guess=kline.fmt(value), n=n, total=total))]
-        rnd.timer.cancel()
+        if rnd.timer:
+            rnd.timer.cancel()
         return self._finish(gid, rnd)
 
     def _kline_result(self, gid: str, rnd: Round) -> str:
@@ -1210,6 +1241,7 @@ class GuessPlugin(Star):
                 self._slot, self._due = slot, set(self.scores)
             for gid in list(self._due):
                 if gid in self.rounds:
+                    # 不限时局也等结束再播，可能一直推迟。
                     continue
                 self._due.discard(gid)
                 try:

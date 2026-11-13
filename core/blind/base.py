@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 class Blind:
     """一个盲猜题型。cat 是题型键，这些都按它找：题库文件 bank_{cat}.json、分数、文案（core/lines.py 里的
     {cat}_empty、card_note_{cat}、timeout_{cat}、board_empty_{cat}）、配置项（{cat}_round_seconds、
-    {cat}_max_guesses，_conf_schema.json 里没有就用共用的 blind_round_seconds、max_guesses）。"""
+    {cat}_max_guesses，_conf_schema.json 里没有就用共用的 blind_round_seconds、max_guesses）。
+    quiz 是不做对比、只出一道文字题的分支：(条目, 是否揭晓) -> 题面 / 答案图，仍由同一套流程管理。"""
 
     cat: str
     command: str  # 开题指令，也是卡片标题；排行榜指令是「{command}排行榜」
@@ -31,6 +32,7 @@ class Blind:
     exact: bool = False  # 只认完整说出的名字（Bank.match）：能猜的上千个，按一段算会把闲聊当成猜
     peek: bool = False  # 对比表旁边放一格题图，整道题不变、不揭开（盲猜萝卜的资料列多，只看表太难）
     aliases: tuple[str, ...] = ()  # 开题指令的别名
+    quiz: Callable | None = None
 
     def table(self, rows: list, empty: str = "", inset=None):
         """对比表，rows 是 [(猜的名字, row 的结果), ...]，新猜的在上面。"""
@@ -112,9 +114,9 @@ def size(guess: dict, answer: dict) -> list[list[str]]:
 
 
 def entry(prefix: str, key: str, title: str, original: str, answer: str, names: list[str], hints: list,
-          attrs: dict, main: bool) -> dict:
+          attrs: dict | None, main: bool) -> dict:
     """一个地方一道题、不要图的条目。id 是「{prefix}-{key}」，group 是 key（Bank.match 认的键，同 places 的键）；
-    hints 是 [[名, 值], ...]，main 是不是大众题。"""
+    hints 是 [[名, 值], ...]，main 是不是大众题；文字题传 attrs=None，不存对比属性。"""
     return finish_entry({
         "id": f"{prefix}-{key}",
         "group": key,
@@ -124,5 +126,5 @@ def entry(prefix: str, key: str, title: str, original: str, answer: str, names: 
         "names": names,
         "tier": "main" if main else "niche",
         "hints": hints,
-        "attrs": attrs,
+        **({"attrs": attrs} if attrs is not None else {}),
     })

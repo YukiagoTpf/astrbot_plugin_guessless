@@ -10,6 +10,38 @@
     "default": 300,
     "hint": "要一个个猜、看表推理，比其他题型久"
   },
+  "jpword_round_seconds": {
+    "description": "猜日语限时（秒）",
+    "type": "int",
+    "default": 120
+  },
+  "jpword_max_guesses": {
+    "description": "猜日语每人每题最多猜几次",
+    "type": "int",
+    "default": 3,
+    "hint": "只说出题库里的完整答案才算一次，闲聊和重复答案不算。0 不限"
+  },
+  "jpword_trigger_uids": {
+    "description": "猜日语替换触发用户",
+    "type": "list",
+    "default": [],
+    "hint": "每行一个用户 ID；名单中的用户开指定题型时按概率改出不限时、不限次数的猜日语。空列表关闭"
+  },
+  "jpword_trigger_modes": {
+    "description": "允许被猜日语替换的题型",
+    "type": "list",
+    "default": [
+      "jpgeodle",
+      "jpgeo"
+    ],
+    "hint": "填写题型键。默认盲猜日本地点、猜日本地点；直接开猜日语仍是普通限时局"
+  },
+  "jpword_trigger_rate": {
+    "description": "猜日语替换概率",
+    "type": "float",
+    "default": 0.75,
+    "hint": "0 到 1；0 关闭，1 每次触发。只有猜日语题库就绪才替换，仍照常扣开题额度"
+  },
   "hint_cooldown_seconds": {
     "description": "两次「提示」的最短间隔（秒）",
     "type": "int",
