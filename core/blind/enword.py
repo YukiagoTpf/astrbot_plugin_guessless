@@ -11,7 +11,7 @@ from ..answer import norm
 from ..enword_data import QUESTIONS
 from .base import Blind, entry
 
-VERSION = "enword-v2"  # 数据、答案说法、提示或选题规则改了就换
+VERSION = "enword-v3"  # 数据、答案说法、提示或选题规则改了就换
 CLUES = ("词性", "释义", "例句", "首字母", "字母数")
 
 

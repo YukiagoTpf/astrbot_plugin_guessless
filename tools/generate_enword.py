@@ -7,17 +7,65 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
 import hashlib
 import json
 import re
-from collections import defaultdict
+import unicodedata
+from collections import Counter, defaultdict
 from pathlib import Path
 
 SOURCE = "https://github.com/skywind3000/ECDICT"
 BASIC = {"cet4"}
 CORE = {"cet4", "cet6", "ky"}
 POS = {"n": "名词", "pl": "名词", "a": "形容词", "adj": "形容词", "adv": "副词", "v": "动词", "vt": "动词", "vi": "动词"}
+POS.update({"ad": "副词", "prep": "介词", "pron": "代词", "conj": "连词", "num": "数词",
+            "art": "冠词", "aux": "助动词", "interj": "感叹词", "int": "感叹词"})
+PROPER = re.compile(r"人名|地名|男子名|女子名|缩写|缩略|简写|简称|音译")
+ABBREVIATION = re.compile(r"trade\s*mark|abbreviation|acronym|initialism|short(?:ened)? (?:form|for)", re.I)
+# 本义触线而 Wordle 名单尚未收录的词；中性多义词仍按义项过滤。
+EXCLUDED = {"war", "army", "parliament", "police", "minister", "marshal", "revolt", "rebellion", "bureaucracy",
+            "scout", "propaganda", "martial", "bourgeois", "commonwealth", "legislation", "spy", "fort",
+            "intercourse", "radioactive", "radioactivity", "radium", "retard", "idiot", "cripple", "conqueror",
+            "aggression", "invasion", "imperial", "reign", "pope", "ballot", "sovereign", "chancellor", "presidency"}
+ABBREVIATIONS = {"auto", "biotech", "memo", "phone", "maths", "kilo", "xerox"}
+QUALITY_BLOCK = {"equipe", "fense", "reservior", "turkey", "uptodate", "vitamine"}
+WORD_FIXES = {"CORE": "core"}
+# 补足源词典漏标、错释或过于偏门的常用义；不把被过滤的义项改写后放回。
+MEANINGS = {"stale": ("形容词", ["不新鲜的", "陈旧的"]), "hasty": ("形容词", ["匆忙的", "轻率的"]),
+            "gender": ("名词", ["性别"]), "hamburger": ("名词", ["汉堡包"]),
+            "agent": ("名词", ["代理人", "代理商", "媒介"]),
+            "marine": ("形容词", ["海的", "海产的"]), "affection": ("名词", ["喜爱", "感情"]),
+            "mankind": ("名词", ["人类"]), "inlet": ("名词", ["小海湾"]),
+            "specific": ("形容词", ["特定的", "具体的"]), "radial": ("形容词", ["径向的", "放射状的"]),
+            "substitute": ("名词", ["代用品", "代替者"]), "datum": ("名词", ["单个数据", "已知数"]),
+            "hearing": ("名词", ["听觉"]), "hateful": ("形容词", ["可恨的", "可恶的"]),
+            "independent": ("形容词", ["独立的", "自主的"]), "invalid": ("形容词", ["无效的"]),
+            "tough": ("形容词", ["坚韧的", "困难的"]), "infinite": ("形容词", ["无限的", "无穷的"]),
+            "supreme": ("形容词", ["最高的", "至高的"]), "loose": ("形容词", ["松的", "宽松的"]),
+            "aggressive": ("形容词", ["进取的", "爱挑衅的"]), "friction": ("名词", ["摩擦", "摩擦力"]),
+            "cheese": ("名词", ["奶酪", "干酪"]), "cream": ("名词", ["奶油"]),
+            "anonymous": ("形容词", ["身份不明的", "未署名的"]), "surname": ("名词", ["姓氏"]),
+            "abbreviation": ("名词", ["缩写形式", "缩略语"]), "practise": ("动词", ["练习", "实践"]),
+            "practice": ("动词", ["练习", "实践"]), "race": ("名词", ["赛跑"]),
+            "poll": ("名词", ["轮询"]), "cartridge": ("名词", ["墨盒"]),
+            "spoil": ("动词", ["损坏", "糟蹋"]), "noodle": ("名词", ["面条"]),
+            "worthy": ("形容词", ["可敬的", "值得的"]), "sin": ("名词", ["罪孽"]),
+            "bore": ("动词", ["钻孔"]), "saw": ("名词", ["锯子"]),
+            "coherent": ("形容词", ["连贯的", "条理清楚的"]), "genetic": ("形容词", ["遗传的"]),
+            "foreigner": ("名词", ["外国人"]), "layer": ("名词", ["层", "层次"]),
+            "normal": ("形容词", ["正常的", "标准的"]), "pour": ("动词", ["倾泻", "倾倒"]),
+            "plenty": ("名词", ["充足", "丰富"]), "dread": ("动词", ["惧怕将要发生的事"]),
+            "arrow": ("名词", ["箭头", "箭头记号"]), "bow": ("名词", ["鞠躬", "船头"]),
+            "enlist": ("动词", ["参与", "谋取"]), "expedition": ("名词", ["探险队", "探险"]),
+            "virgin": ("形容词", ["初始的", "纯的"])}
+WORD_ALIASES = {"genetic": ("形容词", ["hereditary"]), "dread": ("动词", ["fear"])}
+INDEPENDENT = {"means": {"名词"}, "mechanics": {"名词"}, "bowling": {"名词"}}
+# 补充本轮审读发现的敏感义项，按具体词过滤，避免误伤挑战、战栗、核实等。
+SENSE_BLOCK = (r"行政|官僚|内政|市政|政策|党派|无党|共和国|统治|战术|战略|战胜|堡垒|征服|侦察|间谍|射手|"
+               r"放射性|放射能|扳机|弓箭|箭筒|军需|军饷|远征|征募|矮子|侏儒|残废|白痴|笨蛋|蠢货|同性恋|人种|"
+               r"处女|贿赂|受贿|行贿|麻药|麻醉药|殴打|赃物")
 
 # 释义题的常见六级词经人工审读分档，其余题型仍按考试标签分档。
 DEFINITION_TIERS = {
@@ -115,7 +163,7 @@ DEFINITION_TIERS = {
     'wavelength': True,
 }
 
-# 人工选题清单只决定考点；释义、候选答案与词形仍从 CSV 取出并核对。
+# 旧题经审读的名词义项优先沿用；新增词遍历整个核心词表。
 DEFINITIONS = """
 abbreviation|缩写词
 acre|英亩
@@ -496,6 +544,13 @@ DEFINITION_ALIASES = {
     'volume': ['loudness'],
     'wagon': ['waggon'],
     'wrench': ['spanner'],
+    'bin': ['box'],
+    'footpath': ['footway', 'walkway', 'sidewalk', 'pavement'],
+    'courageous': ['brave', 'bold'],
+    'code': ['cipher', 'cypher'],
+    'pillar': ['column'],
+    'inlet': ['bay', 'cove'],
+    'hypothesis': ['assumption', 'supposition'],
 }
 
 # p 过去式，d 过去分词，s 复数，r 比较级，t 最高级，i 现在分词，3 第三人称单数。
@@ -869,19 +924,46 @@ warehouse,storehouse,depot|名词|仓库|The goods are stored in a large （　�
 """.strip().splitlines()
 
 
-def senses(row):
-    """只取有明确词性的一般中文义项；领域行、英文和括注全部不进题面。"""
-    result = defaultdict(set)
+def exchange(row):
+    return {kind: value.split(",") for part in row["exchange"].split("/")
+            for kind, sep, value in [part.partition(":")] if sep}
+
+
+def lemma_positions(row):
+    """回指别词时，只保留有自身变形可佐证的独立词性，避免误删 saw、found。"""
+    forms = exchange(row)
+    word = row["word"]
+    if word in INDEPENDENT:
+        return INDEPENDENT[word]
+    if not set(forms.get("0", [])) - {word}:
+        return set(POS.values())
+    positions = set()
+    if any(set(forms.get(code, [])) - {word} for code in ("p", "d")):
+        positions.add("动词")
+    if set(forms.get("s", [])) - {word}:
+        positions.add("名词")
+    return positions
+
+
+def senses(row, blocked):
+    """保持源顺序，只取完整的常用中文短义项；不截断、不去括注后猜意思。"""
+    result = defaultdict(list)
     text = row["translation"].replace(r"\n", "\n")
     for line in text.splitlines():
-        matched = re.match(r"^(n|pl|a|adj|adv|vt|vi|v)\.\s*(.*)$", line)
+        matched = re.match(r"^([a-z]+)\.\s*(.*)$", line)
         if not matched:
             continue
         pos, body = matched.groups()
+        if pos not in POS or pos == "pl" or POS[pos] not in lemma_positions(row):
+            continue
         for sense in re.split(r"[,，;；]", body):
             sense = sense.strip()
-            if re.fullmatch(r"[\u4e00-\u9fff]{1,9}", sense):
-                result[POS[pos]].add(sense)
+            if (re.fullmatch(r"[\u4e00-\u9fff]{1,18}", sense) and not blocked.search(sense)
+                    and not PROPER.search(sense) and sense not in result[POS[pos]]):
+                result[POS[pos]].append(sense)
+    if row["word"] in MEANINGS:
+        pos, meanings = MEANINGS[row["word"]]
+        result = {pos: meanings}
     return result
 
 
@@ -889,15 +971,61 @@ def load(path):
     rows = {}
     with path.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
-        if not {"word", "translation", "tag", "exchange"} <= set(reader.fieldnames or ()):
+        if not {"word", "translation", "definition", "tag", "exchange"} <= set(reader.fieldnames or ()):
             raise ValueError("ECDICT CSV 缺少必需字段")
         for row in reader:
-            word = row["word"]
+            word = row["word"] = WORD_FIXES.get(row["word"], row["word"])
             if re.fullmatch(r"[a-z]+", word):
                 if word in rows:
                     raise ValueError(f"ECDICT 单词重复：{word}")
                 rows[word] = row
     return rows
+
+
+def rules(root):
+    """离线读取仓库里的红线常量，复用运行时泄露检查；不导入 AstrBot。"""
+    tree = ast.parse((root / "core/blind/wordle.py").read_text(encoding="utf-8"))
+    values = {node.targets[0].id: ast.literal_eval(node.value) for node in tree.body
+              if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+              and node.targets[0].id in {"NO_ANSWER", "ANSWER_BLOCK"}}
+    tree = ast.parse((root / "core/blind/enword.py").read_text(encoding="utf-8"))
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in {"forms", "leaks"}]
+    namespace = {"re": re, "unicodedata": unicodedata}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), "enword-leaks", "exec"), namespace)
+    return values["NO_ANSWER"] | EXCLUDED, re.compile(values["ANSWER_BLOCK"] + "|" + SENSE_BLOCK), namespace["leaks"]
+
+
+def excluded(row, forbidden):
+    word = row["word"]
+    if word in forbidden:
+        return "红线词"
+    if len(word) < 3:
+        return "少于三个字母"
+    # “缩写词”“姓氏”“商标”也可能是普通词的释义，不能据此排除整个词条。
+    if (word in ABBREVIATIONS or (ABBREVIATION.match(row["definition"])
+                                 and word not in {"abbreviation", "acronym", "initialism"})):
+        return "专名或缩写"
+    if word in QUALITY_BLOCK:
+        return "错拼或词义质量"
+    if not lemma_positions(row):
+        return "屈折形式"
+    return ""
+
+
+def variants(word, rows):
+    """只补词典收录的常见英美拼写；要求双方有相同的完整中文义项。"""
+    result = set()
+    for pair in ({"gray", "grey"}, {"jewelry", "jewellery"}, {"practice", "practise"}):
+        if word in pair:
+            result.update(pair - {word})
+    for british, american in (("our", "or"), ("re", "er"), ("ise", "ize"), ("isation", "ization"),
+                              ("yse", "yze"), ("ence", "ense"), ("ogue", "og")):
+        for before, after in ((british, american), (american, british)):
+            if word.endswith(before):
+                other = word[:-len(before)] + after
+                if other in rows:
+                    result.add(other)
+    return result
 
 
 def require(rows, word, pos=""):
@@ -917,13 +1045,20 @@ def main():
     notice = args.license.read_text(encoding="utf-8")
     if "MIT License" not in notice or "Permission is hereby granted" not in notice:
         raise ValueError("需要 ECDICT 的完整 MIT LICENSE")
+    root = Path(__file__).resolve().parents[1]
+    forbidden, blocked, leaks = rules(root)
     rows = load(args.ecdict)
+    core = {word: row for word, row in rows.items() if CORE.intersection(row["tag"].split())}
+    omissions = {word: excluded(row, forbidden) for word, row in core.items()}
+    eligible = {word: senses(row, blocked) for word, row in core.items() if not omissions[word]}
     reverse = defaultdict(set)
-    for word, row in sorted(rows.items()):
-        if CORE.intersection(row["tag"].split()) and len(word) >= 3:
-            for pos, meanings in senses(row).items():
-                for meaning in meanings:
-                    reverse[pos, meaning].add(word)
+    for word, positions in sorted(eligible.items()):
+        for pos, meanings in positions.items():
+            for meaning in meanings:
+                reverse[pos, meaning].add(word)
+    tree = ast.parse((root / "core/enword_data.py").read_text(encoding="utf-8"))
+    handwritten = next(ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name) and target.id == "QUESTIONS" for target in node.targets))
     questions = []
 
     def add(key, tested, question, names, pos="", meaning="", example="", explanation="", main_tier=None):
@@ -934,27 +1069,9 @@ def main():
         basic = bool(BASIC.intersection(row["tag"].split()))
         if main_tier is not None:
             basic = main_tier
+        if any(leaks(value, names) for value in (question, pos, meaning, example)):
+            raise ValueError(f"题面或提示泄露答案及变形：{key}")
         questions.append([key, basic, question, list(names), pos, meaning, example, explanation])
-
-    for value in sorted(DEFINITIONS):
-        word, meaning = value.split("|")
-        row = require(rows, word, "名词")
-        tags = set(row["tag"].split())
-        if "zk" in tags:
-            raise ValueError(f"释义题不能新增中考词：{word}")
-        if word in DEFINITION_TIERS and not tags.intersection({"cet6", "ky"}):
-            raise ValueError(f"替换释义题必须使用六级或考研词：{word}")
-        names = sorted(reverse["名词", meaning])
-        if word not in names or len(names) > 3:
-            raise ValueError(f"释义不在源词条或超过三个核心词：{word} / {meaning} / {names}")
-        names = list(dict.fromkeys([word, *[name for name in names if name != word], *DEFINITION_ALIASES.get(word, [])]))
-        for name in names:
-            require(rows, name, "名词")
-        if len(names) > 3:
-            raise ValueError(f"补齐常见答案后仍有歧义：{word} / {names}")
-        label = DEFINITION_LABELS.get(word, meaning)
-        add(f"def-{word}", word, f"根据中文释义写出一个英文单词：\n名词：{label}。", names,
-            explanation=f"这里考查名词义项“{label}”，可写 {'、'.join(names)}。", main_tier=DEFINITION_TIERS.get(word))
 
     labels = {"p": "过去式", "d": "过去分词", "s": "复数", "r": "比较级", "t": "最高级", "i": "现在分词", "3": "第三人称单数形式"}
     seen_stems = set()
@@ -1008,23 +1125,111 @@ def main():
         add(f"cloze-{names[0]}", names[0], f"用一个英文单词填空：\n{sentence}\n（{meaning}）", names, pos=pos,
             explanation=f"{'、'.join(names)} 在这里表示{meaning}，符合句中的用法。")
 
+    preferred = dict(value.split("|") for value in DEFINITIONS)
+    existing = [*handwritten, *questions]
+    primary = Counter(q[3][0] for q in existing)
+    seen_names = {tuple(sorted(q[3])) for q in handwritten if "中文释义" in q[2]}
+    seen_questions = {re.sub(r"\W", "", q[2]).casefold() for q in existing}
+    hand_definitions = {q[3][0] for q in handwritten if "中文释义" in q[2]}
+    for word, positions in sorted(eligible.items()):
+        if word in hand_definitions:
+            continue
+        if not any(positions.values()):
+            unfiltered = senses(core[word], re.compile(r"(?!)"))
+            omissions[word] = "红线义项过滤" if any(unfiltered.values()) else "缺少可用的常用短释义"
+            continue
+        if primary[word] >= 3:
+            omissions[word] = "主答案次数上限"
+            continue
+        candidates = []
+        for pos, meanings in positions.items():
+            # 保留审读过的旧释义，其余优先源词条前几个常用义项。
+            options = [tuple(meanings[:size]) for size in range(min(2, len(meanings)), min(3, len(meanings)) + 1)]
+            if pos == "名词" and preferred.get(word) in meanings:
+                options.insert(0, (preferred[word],))
+            for parts in options:
+                shared = set.intersection(*(reverse[pos, part] for part in parts))
+                names = {word, *shared}
+                spellings = variants(word, rows)
+                aliases = set(DEFINITION_ALIASES.get(word, [])) if pos == "名词" else set()
+                if word in WORD_ALIASES and WORD_ALIASES[word][0] == pos:
+                    aliases.update(WORD_ALIASES[word][1])
+                for other in spellings | aliases:
+                    if excluded(rows[other], forbidden):
+                        continue
+                    other_senses = senses(rows[other], blocked).get(pos, [])
+                    if (other in aliases or set(parts) <= set(other_senses)
+                            or other in spellings and set(meanings) & set(other_senses)):
+                        names.add(other)
+                if len(names) > 3:
+                    continue
+                label = "；".join(parts)
+                if len(parts) == 1 and parts[0] == preferred.get(word):
+                    label = DEFINITION_LABELS.get(word, label)
+                if len(label) > 32:
+                    continue
+                candidates.append((pos, parts, label, [word, *sorted(names - {word})]))
+        if not candidates:
+            omissions[word] = "释义冲突或题面过长"
+            continue
+        # 优先前面的常用词性和义项；多义题明确要求同时符合，防止把任一义当作充分条件。
+        pos, parts, label, names = candidates[0]
+        if (word not in names or any(excluded(rows[name], forbidden) for name in names)
+                or blocked.search(label) or any(pos not in lemma_positions(rows[name]) for name in names)):
+            raise ValueError(f"释义题答案不是合规原形或题面触线：{word}")
+        prefix = "根据中文释义写出一个英文单词：" if len(parts) == 1 else "写出同时符合下列中文释义的英文单词："
+        question = f"{prefix}\n{pos}：{label}。"
+        fingerprint = tuple(sorted(names))
+        normalized = re.sub(r"\W", "", question).casefold()
+        if fingerprint in seen_names or normalized in seen_questions:
+            omissions[word] = "合并相同释义答案"
+            continue
+        seen_names.add(fingerprint)
+        seen_questions.add(normalized)
+        primary[word] += 1
+        add(f"def-{word}", word, question, names,
+            explanation=f"这里考查{pos}义项“{label}”，可写 {'、'.join(names)}。", main_tier=DEFINITION_TIERS.get(word))
+
     questions.sort(key=lambda record: record[0])
     if len({q[0] for q in questions}) != len(questions):
         raise ValueError("生成题号重复")
     if len({q[2] for q in questions}) != len(questions):
         raise ValueError("生成题面重复")
+    covered = {name for q in [*handwritten, *questions] for name in q[3]} & core.keys()
+    definition_words = {name for q in [*handwritten, *questions] if "中文释义" in q[2] for name in q[3]} & core.keys()
+    lemmas = {word for word, row in core.items() if lemma_positions(row)}
+    tag_coverage = {tag: {"words": sum(tag in row["tag"].split() for row in core.values()),
+                          "lemma_words": sum(tag in core[word]["tag"].split() for word in lemmas),
+                          "covered_lemmas": sum(tag in core[word]["tag"].split() for word in covered & lemmas)}
+                    for tag in sorted(CORE)}
+    missing = defaultdict(list)
+    for word in sorted(core.keys() - covered):
+        missing[omissions[word] or "原有手写释义已覆盖同考点"].append(word)
+    for record in [*handwritten, *questions]:
+        key, _, question, names, pos, meaning, example, _ = record
+        if any(leaks(value, names) for value in (question, pos, meaning, example)):
+            raise ValueError(f"题面或提示泄露答案及变形：{key}")
+    if len(handwritten) + len(questions) < 5000:
+        raise ValueError("英文题库不足 5000 道")
     data = {"source": {"name": "ECDICT", "url": SOURCE,
                        "sha256": hashlib.sha256(args.ecdict.read_bytes()).hexdigest(),
-                       "fields": ["translation", "tag", "exchange"], "scope": ["cet4", "cet6", "ky"],
-                       "definition_exclude_tags": ["zk"],
-                       "notes": "中文释义及词形取自 ECDICT；词性转换、反义关系经人工选择并以 ECDICT 核对；例句和解析原创。"},
+                       "fields": ["translation", "definition", "tag", "exchange"], "scope": ["cet4", "cet6", "ky"],
+                       "notes": "遍历全部四六级、考研词，包括兼有中考标签的词；释义题只选原形，排除专名、缩写和触线词，按 Wordle 红线逐义过滤。"
+                                "同义项的核心词全部接受，超过三个时用多个常用义项共同限定，否则跳过；原有词形等题型保留。"
+                                "中文释义及词形取自 ECDICT；词性转换、反义关系经人工选择并以 ECDICT 核对；例句和解析原创。",
+                       "coverage": {"tagged_words": len(core), "covered_words": len(covered),
+                                    "lemma_words": len(lemmas), "covered_lemmas": len(covered & lemmas),
+                                    "definition_words": len(definition_words), "by_tag": tag_coverage,
+                                    "missing": dict(sorted(missing.items()))}},
             "license": {"spdx": "MIT", "notice": notice.strip(), "original_text": "例句和解析随本仓库按 MIT 提供。"},
             "questions": questions}
     encoded = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
-    if len(encoded.encode("utf-8")) > 1_000_000:
-        raise ValueError("英文生成题库超过 1 MB")
+    if len(encoded.encode("utf-8")) > 3_000_000:
+        raise ValueError("英文生成题库超过 3 MB")
     args.output.write_text(encoded, encoding="utf-8")
     print(f"生成 {len(questions)} 道；大众 {sum(q[1] for q in questions)}，小众 {sum(not q[1] for q in questions)}")
+    print(f"合计 {len(handwritten) + len(questions)} 道；核心词覆盖 {len(covered)}/{len(core)}，其中释义题覆盖 {len(definition_words)}")
+    print("未覆盖：" + "，".join(f"{reason} {len(words)}" for reason, words in sorted(missing.items())))
 
 
 if __name__ == "__main__":
