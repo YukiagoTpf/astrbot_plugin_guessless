@@ -378,6 +378,42 @@ def quiz(question: str, answer: str = "", explanation: str = "") -> Image.Image:
     return out
 
 
+def wordle(length: int, rows: list, total: int = 6, answer: str = "") -> Image.Image:
+    """从上往下排列的字母棋盘；键盘取同一字母出现过的最高状态，灰格与普通盲猜的红格分开。"""
+    out = Image.new("RGB", (SIZE, PIC_H), MAP_BG)
+    draw = ImageDraw.Draw(out)
+    colors = {"hit": CELL["hit"], "near": CELL["near"], "miss": (72, 76, 84), "unused": COVER}
+    priority = {"unused": 0, "miss": 1, "near": 2, "hit": 3}
+    keyboard = dict.fromkeys("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "unused")
+    total = max(1, min(10, total))
+    gap = 7
+    side = min(70, (SIZE - 100 - gap * (length - 1)) // length, (PIC_H - 192 - gap * (total - 1)) // total)
+    left = (SIZE - (side * length + gap * (length - 1))) / 2
+    draw.text((SIZE / 2, 24), say("wordle_length", n=length), fill=TEXT, font=font(28), anchor="mm")
+    letter_font = font(max(20, side * 3 // 5), bold=True)
+    for i in range(total):
+        cells = rows[i][1] if i < len(rows) else []
+        for j in range(length):
+            char, state, _ = cells[j] if j < len(cells) else ("", "unused", "")
+            x, y = left + j * (side + gap), 50 + i * (side + gap)
+            draw.rounded_rectangle((x, y, x + side, y + side), 5, fill=colors[state], outline=MARK if not char else None)
+            if char:
+                draw.text((x + side / 2, y + side / 2), char, fill=TEXT, font=letter_font, anchor="mm")
+                if priority[state] > priority[keyboard[char]]:
+                    keyboard[char] = state
+    # 一条完整字母键盘，即使答案很长也留出独立区域。
+    key_w, key_gap, key_h = 32, 6, 40
+    key_left = (SIZE - 26 * key_w - 25 * key_gap) / 2
+    for i, (char, state) in enumerate(keyboard.items()):
+        x, y = key_left + i * (key_w + key_gap), PIC_H - 68
+        draw.rounded_rectangle((x, y, x + key_w, y + key_h), 4, fill=colors[state])
+        draw.text((x + key_w / 2, y + key_h / 2), char, fill=TEXT, font=font(23, bold=True), anchor="mm")
+    label = say("wordle_reveal", answer=answer) if answer else say("wordle_legend")
+    draw.text((SIZE / 2, PIC_H - 100), label, fill=KEY if answer else DIM, font=font(26), anchor="mm")
+    out.info["grid"] = None
+    return out
+
+
 def compare_table(name: str, columns: tuple, rows: list, empty: str = "", inset: Image.Image | None = None) -> Image.Image:
     """盲猜的对比表：name 是第一列的表头，columns 是其余各列；rows 是 [(猜的名字, Blind.row 的结果), ...]，
     新猜的在上面，最多 9 行。还没人猜时表下写 empty。inset 是放在表右边的一小块图（peek 切出来的一格设定图）。"""

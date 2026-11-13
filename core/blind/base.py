@@ -33,6 +33,10 @@ class Blind:
     peek: bool = False  # 对比表旁边放一格题图，整道题不变、不揭开（盲猜萝卜的资料列多，只看表太难）
     aliases: tuple[str, ...] = ()  # 开题指令的别名
     quiz: Callable | None = None
+    board: Callable | None = None  # (条目, 按时间排列的行, 总行数, 是否揭晓) -> 自定义棋盘
+    fits: Callable[[dict, dict], bool] | None = None  # 不适合本题的猜测当闲聊，不扣次
+    rows: int = 0  # 全群总行数，0 沿用普通盲猜；配置 {cat}_rows 可覆盖
+    default_guesses: int | None = None  # 没加载配置默认值时也保持题型自己的次数
 
     def table(self, rows: list, empty: str = "", inset=None):
         """对比表，rows 是 [(猜的名字, row 的结果), ...]，新猜的在上面。"""

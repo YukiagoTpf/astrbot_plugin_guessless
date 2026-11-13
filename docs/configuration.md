@@ -15,6 +15,9 @@ AstrBot WebUI → 插件 → Guessless → 配置。所有配置都有默认值�
 | `blind_round_seconds` | 300 | 其他盲猜的限时（秒），要一个个推，比其他题型久 |
 | `jpword_round_seconds` | 120 | 猜日语普通局限时（秒） |
 | `jpword_max_guesses` | 3 | 猜日语普通局每人最多猜几次；0 不限 |
+| `wordle_round_seconds` | 300 | 英文Wordle限时（秒） |
+| `wordle_max_guesses` | 3 | 每人每题最多猜几次；0 不限，词表外、异长和全群重复猜测不计次 |
+| `wordle_rows` | 6 | 全群共用棋盘行数，1–10；超出范围按边界值处理，填满仍未猜中就公布答案 |
 | `enword_round_seconds` | 120 | 猜英文限时（秒） |
 | `enword_max_guesses` | 3 | 猜英文每人最多猜几次；0 不限，完整说出题库内其他题的答案才计错一次 |
 | `jpword_trigger_uids` | 空 | 每行一个用户 ID；名单内用户开指定题型时，有概率替换为不限时、不限次数的猜日语。空列表关闭 |

@@ -1,6 +1,6 @@
 # 数据来源
 
-仓库里不带任何图片和题库，全部在运行时从下面这些地方拉取，版权归原作者和各数据源所有。
+仓库里不带图片；除猜日语、猜英文、英文Wordle 的离线题库和词表外，题库都在运行时从下面这些地方拉取，版权归原作者和各数据源所有。
 
 | 来源 | 用途 | 说明 |
 |---|---|---|
@@ -28,6 +28,9 @@
 | [External Item Descriptions](https://github.com/wofsauge/External-Item-Descriptions) | 盲猜以撒道具的官方简中名（`descriptions/names/zh_cn.lua`，按道具编号） | GitHub 上的模组文件，免 key |
 | [warcraft.wiki.gg](https://warcraft.wiki.gg) | 猜魔兽地图：游戏内的风景截图（「Zone screenshots」分类） | MediaWiki API，免 key；截图版权归暴雪，出题时才下 |
 | [PokeAPI](https://pokeapi.co) | 宝可梦资料；立绘取自 GitHub 上的 PokeAPI/sprites | GraphQL，免 key |
+| [tanos JLPT 词表](https://www.tanos.co.uk/jlpt/)（Jonathan Waller），经 [open-anki-jlpt-decks](https://github.com/jamsinclair/open-anki-jlpt-decks) 取得 | 猜日语按 JLPT 等级挑词 | CC BY（open-anki-jlpt-decks 为 MIT）；离线生成进 `core/jpword_gen.json`，不联网 |
+| [JMdict](https://www.edrdg.org/jmdict/j_jmdict.html)（EDRDG） | 猜日语的读音、词性（动词类别）和常用标记 | CC BY-SA 4.0；`core/jpword_gen.json` 按 CC BY-SA 4.0 提供 |
+| [ECDICT](https://github.com/skywind3000/ECDICT) | 猜英文的中文释义、词形变化、四六级 / 考研标记；英文Wordle 的答案池、可猜词表和提示 | MIT；离线生成进 `core/enword_gen.json`、`core/wordle_gen.json`，不联网 |
 | [GeoNames](https://www.geonames.org) | 城市坐标、一级行政区、国家主要语言、陆上邻国 | CC BY 4.0 |
 | [Natural Earth](https://www.naturalearthdata.com) | 国家轮廓、邻国底图和世界地图（10m，CHN 视角版本） | 公有领域 |
 | Google Street View Static API | 街景图片；找全景用免费的元数据接口 | 图片按张计费，遵守 Google Maps Platform 条款，图片不落盘 |

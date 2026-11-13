@@ -168,9 +168,17 @@ class Bank:
         if not cached or cached[0] is not src or cached[1] != len(src):
             items = list(src.items()) if self.places[src_cat] else [(e.get("group", e["id"]), e) for e in src]
             index = [(k, candidates(item["names"])) for k, item in items]
-            cached = self._index[src_cat] = (src, len(src), index, dict(items))
+            exact = defaultdict(list)
+            for key, names in index:
+                for name in names:
+                    exact[name].append(key)
+            cached = self._index[src_cat] = (src, len(src), index, dict(items), exact)
         # Vtuber 的 B 站昵称常带日常用语（「嘉然今天吃什么」「喵西早点睡」），说出一段就算会误伤闲聊，只认全名
-        key = find(text, cached[2], prefer, loose=cat not in EXACT_ONLY)
+        if cat in EXACT_ONLY:
+            keys = cached[4].get(norm(text), ())
+            key = prefer if prefer in keys else next(iter(keys), None)
+        else:
+            key = find(text, cached[2], prefer)
         return key, cached[3].get(key)
 
     async def image(self, entry: dict, url: str = "") -> bytes:

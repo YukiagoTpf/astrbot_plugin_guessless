@@ -34,7 +34,7 @@ GRID = {"game", "anime", "pokemon", "mecha", "vtuber", "wow"}  # 九宫格逐格
 # 按「说的是哪一个」判对错的题型（地点类之外）：机体名互相包含（「自由高达」和「强袭自由高达」），不能按一大段算对；
 # Vtuber 的名字也常互相包含；魔兽地图也是（东、西瘟疫之地）；群友按 @、QQ 号、名片认人；老师、声优的名字也常互相包含
 # 英文拼词必须说全，不能用 is_correct 的子串规则（unhappy 不能算 happy）。
-BY_KEY = {"mecha", "mechadle", "vtuber", "wow", "member", "teacher", "seiyuu", "enword"}
+BY_KEY = {"mecha", "mechadle", "vtuber", "wow", "member", "teacher", "seiyuu", "enword", "jpword"}
 GEO_ALIASES = {"猜街景"}
 JPGEO_ALIASES = {"猜日本街景"}
 GEOMATCH_ALIASES = {"地点匹配", "猜街景匹配", "街景匹配", "地点连连看", "街景连连看"}
@@ -571,6 +571,9 @@ class GuessPlugin(Star):
         if limit and len(wrong) >= limit:
             return  # 次数用完了，说对了也不算
         key, item = self._match(rnd, event, text)
+        b = BLIND.get(cat)
+        if item and b and b.fits and not b.fits(item["attrs"], rnd.entry["attrs"]):
+            return
         # 地点类按「说的是哪个地方」判，「几内亚」不算「赤道几内亚」；萝卜同理；其他题型按答案的各种说法判
         if (key == rnd.key) if self.bank.places.get(cat) or cat in BY_KEY else is_correct(text, rnd.cands):
             chain = self._finish(gid, rnd, uid, event.get_sender_name())
@@ -595,6 +598,13 @@ class GuessPlugin(Star):
             return  # 文字题猜错只计次，连次数用完也不打断群聊
         name = event.get_sender_name() or uid
         reply, card = self._feedback(rnd, key, item)
+        if b and b.rows and len(rnd.history) >= self._board_rows(cat):
+            if rnd.timer:
+                rnd.timer.cancel()
+            if chain := self._finish(gid, rnd, reason=f"{cat}_rows_used"):
+                yield event.chain_result(chain)
+            event.stop_event()
+            return
         if reply and limit and len(wrong) < limit:
             reply += "。" + say("guess_left", name=name, left=limit - len(wrong))
         if limit and len(wrong) >= limit:
@@ -737,6 +747,8 @@ class GuessPlugin(Star):
             rnd.hints, rnd.shown = b.hints(entry), 0
             if b.quiz:
                 rnd.image, rnd.reveal = b.quiz(entry), b.quiz(entry, True)
+            elif b.board:
+                rnd.image = b.board(entry, [], self._board_rows(cat), False)
             else:
                 if entry.get("images"):  # 盲猜地点没有图，答案卡用对比表，见 _finish
                     rnd.reveal = cards.load(await self.bank.image(entry), contain=True)
@@ -924,7 +936,13 @@ class GuessPlugin(Star):
 
     def _limit(self, rnd: Round) -> int:
         """每人每题最多猜几次，0 不限。盲猜萝卜、盲猜日本 / 中国地点要多猜几个才推得出来，单独设了。"""
+        if not rnd.endless and (b := BLIND.get(rnd.category)) and b.default_guesses is not None:
+            return self.config.get(f"{rnd.category}_max_guesses", b.default_guesses)
         return 0 if rnd.endless else self._setting(rnd.category, "max_guesses", "max_guesses", 5)
+
+    def _board_rows(self, cat: str) -> int:
+        """有限棋盘最多十行，保证字母在卡片上仍然清楚。"""
+        return max(1, min(10, int(self.config.get(f"{cat}_rows", BLIND[cat].rows))))
 
     def _setting(self, cat: str, name: str, shared: str, default):
         """题型自己的设置 {cat}_{name}（_conf_schema.json 里写了才有），没有就用共用的 shared。"""
@@ -946,6 +964,8 @@ class GuessPlugin(Star):
         image, status = rnd.image, f"{rnd.shown}/{self._steps(rnd)} · {left}"
         if (b := BLIND.get(rnd.category)) and not b.quiz:
             status = f"已猜 {len(rnd.history)} 次 · {left}"
+            if b.rows:
+                status = say("board_rows", n=len(rnd.history), total=self._board_rows(rnd.category), left=left)
         if rnd.category == "kline":
             status = f"满 {self._kline_players()} 人揭晓 · {left}"
         if rnd.category in geomatch.PAIRS:
@@ -1045,6 +1065,10 @@ class GuessPlugin(Star):
         cat = rnd.category
         if (b := BLIND.get(cat)) and (attrs := item.get("attrs")):
             rnd.history.insert(0, {"key": key, "title": item["title"], "row": b.row(attrs, rnd.entry["attrs"])})
+            if b.board:
+                rows = [(h["title"], h["row"]) for h in reversed(rnd.history)]
+                rnd.image = b.board(rnd.entry, rows, self._board_rows(cat), False)
+                return say(f"{cat}_wrong", place=item["title"]), self._question(rnd)[0]
             rnd.image = b.table([(h["title"], h["row"]) for h in rnd.history], inset=rnd.peek)
             return say("blind_wrong", place=item["title"]), self._question(rnd)[0]
         spot = rnd.entry.get("spot")
@@ -1083,7 +1107,7 @@ class GuessPlugin(Star):
             rnd.category, "格" if rnd.category in GRID else "条线索")
         return tier, f"{n} {unit}"
 
-    def _finish(self, gid: str, rnd: Round, uid: str | None = None, name: str = "") -> list | None:
+    def _finish(self, gid: str, rnd: Round, uid: str | None = None, name: str = "", reason: str = "") -> list | None:
         if self.rounds.get(gid) is not rnd:
             return None  # 答对和超时撞在一起，已经结算过
         del self.rounds[gid]
@@ -1102,13 +1126,19 @@ class GuessPlugin(Star):
             tier, progress = self._progress(rnd)
             text = say(tier, name=name, progress=progress) + "\n" + say("score", answer=answer, count=count)
         else:
-            text = say(f"timeout_{rnd.category}") + "\n" + say("answer", answer=answer)
+            text = say(reason or f"timeout_{rnd.category}") + "\n" + say("answer", answer=answer)
         # 答案卡：整图公开，标题写答案，右上角写原名；猜国家这时才画邻国，听歌猜番写上歌名；
         # 没有图的盲猜（盲猜地点）用对比表，最上面加一行答案自己的资料
         original = entry.get("original", "")
         hints = [["歌曲", rnd.song], *entry["hints"]] if rnd.song else entry["hints"]
         image = rnd.reveal or rnd.image
-        if (b := BLIND.get(rnd.category)) and rnd.reveal is None:
+        b = BLIND.get(rnd.category)
+        if b and b.board:
+            rows = [(h["title"], h["row"]) for h in reversed(rnd.history)]
+            if uid:
+                rows.append((entry["title"], b.row(entry["attrs"], entry["attrs"])))
+            image = b.board(entry, rows, self._board_rows(rnd.category), True)
+        elif b and rnd.reveal is None:
             rows = [(h["title"], h["row"]) for h in rnd.history]
             image = b.table([(entry["title"], b.row(entry["attrs"], entry["attrs"])), *rows])
         card = cards.render(image, None, entry["title"], original if original != entry["title"] else "答案", hints)

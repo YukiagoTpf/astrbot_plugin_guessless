@@ -19,6 +19,7 @@ core/
     base.py           盲猜的底层：题型规格 Blind、对比表各格的算法（num、ratio、tiered、away……）、条目 entry
     __init__.py       BLIND：登记了哪些盲猜题型
     jpword.py         猜日语：quiz 文字题分支，不画对比表
+    wordle.py         英文Wordle：本地词表、重复字母计分、自定义字母棋盘
     enword.py         猜英文：quiz 分支，完整拼词判定及词形防泄露检查
   sources.py          外部数据源：Wikidata、中文维基浏览量、B 站、AniList（含猜声优的 staff 名单）、AnimeThemes、IGDB、Steam、PokeAPI、
                       Gundam Wiki、vtbs.moe；HttpError
@@ -35,7 +36,10 @@ core/
   hint_data.py        手写的特产、名胜、美食提示
   cn_data.py          手写的盲猜中国地点资料：城市线级、2025 年 GDP、拆成区出题的市（北上广深）
   jpword_data.py      手写的猜日语题库：题面、答案说法、线索和解析
+  jpword_gen.json     JLPT / JMdict 派生的猜日语题库：来源、许可、读音、变形和中译日
+  wordle_gen.json     ECDICT 派生的英文Wordle答案池和可猜词表（MIT，含来源和完整许可）
   enword_data.py      手写的猜英文题库：中文猜词、英文填空、反义近义词
+  enword_gen.json     ECDICT 派生的猜英文题库：四六级和考研词汇，含来源和完整 MIT 许可
   sake_data.py        手写的盲猜日本酒资料：銘柄的简称、さけのわ风味标签的中文
   mecha_data.py       手写的 Gundam Wiki 资料中译（世界观、阵营、机型、机械设计）和机体外号
   vtuber_data.py      手写的猜Vtuber不出题名单（品牌号、搬运号、成人向、有争议的）
@@ -46,6 +50,8 @@ core/
                       Yahoo 的 adjclose）、揭晓的统计、认群友说的涨跌幅
   lines.py            所有发到群里的文案
 docs/                 用户文档
+tools/generate_enword.py  离线生成猜英文题库，读取本地 ECDICT CSV（不进插件包）
+tools/generate_wordle.py  离线生成英文Wordle词表，读取本地 ECDICT CSV（不进插件包）
 ```
 
 `main.py`、`metadata.yaml`、`_conf_schema.json`、`requirements.txt` 必须在根目录，AstrBot 只在那里找；其余代码放 `core/`。
@@ -103,6 +109,7 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
   | 盲猜以撒道具的选题（`NO_ANSWER`、`MAIN_QUALITY`）、条目格式、提示、叫法规则 | `blind/isaacdle.py` 的 `VERSION` |
   | 猜日语的手写题库、答案说法、提示或选题规则（`jpword_data.py`） | `blind/jpword.py` 的 `VERSION` |
   | 猜英文的手写题库、答案说法、提示或选题规则（`enword_data.py`） | `blind/enword.py` 的 `VERSION` |
+  | 英文Wordle的选题、词表、条目格式、提示规则 | `blind/wordle.py` 的 `VERSION` |
   | 听歌猜番的选曲规则（`sources.anime_themes`） | `bank.ANISONG_VERSION` |
   | 街景取景规则（全景缓存作废重找） | `geo.SAMPLING` |
   | 国界处理（`country_shapes.json` 重新生成） | `geo.OUTLINE_VERSION` |
@@ -126,6 +133,12 @@ print(answer.is_correct("旷野之息", answer.candidates(["塞尔达传说 旷�
 4. 要和其他盲猜不一样的限时、次数，就在 `_conf_schema.json` 加 `{cat}_round_seconds`、`{cat}_max_guesses`，
    没有就用 `blind_round_seconds`、`max_guesses`。
 5. 文档：README 的题型列表，`docs/usage.md`（指令、对比规则）、`docs/question-banks.md`（题库怎么来的）各加一节。
+
+`Blind.board` 可选自定义棋盘，签名 `(entry, rows, total, reveal)`，其中 rows 是按时间排列的 `(title, row结果)`；
+`Blind.fits(guess_attrs, answer_attrs)` 返回 False 时当闲聊；`Blind.rows=0` 默认无全群总次数上限，非零时读 `{cat}_rows`（1–10），
+填满仍未猜中按超时结算，文案用 `{cat}_rows_used`。自定义棋盘猜错文案用 `{cat}_wrong`。
+`Blind.default_guesses=None` 默认沿用共享次数，非空时作为该题型未加载配置的每人次数默认值；新字段都不影响现有题型。
+英文Wordle 用这几个字段；词表由 `tools/generate_wordle.py` 确定性生成，只在线下运行，CSV 用 `python3 -I` 读取。
 
 `Blind.quiz` 是不做对比的文字题分支（猜日语、猜英文）：传入 `(entry, reveal=False)` 画题面，`reveal=True` 画答案和解析。
 条目用 `base.entry(..., attrs=None, ...)` 拼，不放 `attrs`，题面另存 `question`；`_load` 保存两张图并从零条提示开始，
@@ -154,6 +167,7 @@ AstrBot 按模块和函数名认指令的处理函数，盲猜的是 `main._blin
 - 盲猜日本酒不出名字带「皇国」「尊皇」「旭日」「戦勝」「軍」这些的銘柄（`blind/sakedle.py` 的 `NO_ANSWER`），只能加不能删；用さけのわ的数据要注明出处（卡片角注、答案卡的「数据」），不能去掉。
 - 盲猜以撒道具不出涉黄、擦边、自残自杀、毒品、战争的道具（`blind/isaacdle.py` 的 `NO_ANSWER`），只能加不能删。
 - 猜K线不出军工、核相关的股票（`kline.BLOCK_INDUSTRIES`、`NUCLEAR`、`BLOCK_NAME`，日股的 `JP_BLOCK_SECTORS`、`JP_BLOCK_NAME`，美股的 `US_BLOCK_INDUSTRY`、`US_BLOCK_NAME`），只能加不能删。
+- 英文Wordle的 `blind/wordle.py` 中，`NO_ANSWER` 只收本义明确涉政（政治、政党、政体、政府机关、领导人头衔）、战争 / 军事 / 武器、核、色情擦边、脏话、歧视性蔑称、毒品、自残自杀、暴力杀戮的词，只能加不能删；中性多义词不进永久名单，按 `ANSWER_BLOCK` 逐项过滤中文释义，展示时只使用合规义项。核相关按核武、核能、核电等具体词判断，军事也匹配具体词，不能因「核」「军」误伤果核、核实、冠军。王室头衔（king / queen / prince 等）不算红线，可以出题；不出题的词仍能作为猜测。
 - 猜国家、盲猜以撒道具、猜群友暂时下线（`main.OFFLINE`）：开题和排行榜都只回「好危险，不踩啦」，也不进整点播报。
 
 ## 外部接口

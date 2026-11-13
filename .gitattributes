@@ -4,3 +4,4 @@ CLAUDE.md export-ignore
 pyproject.toml export-ignore
 .gitignore export-ignore
 .gitattributes export-ignore
+tools/ export-ignore

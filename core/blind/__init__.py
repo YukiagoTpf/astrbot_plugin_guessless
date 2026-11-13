@@ -7,10 +7,10 @@
 quiz 分支只画文字题面和答案解析，不回对比表，见 jpword.py。
 """
 
-from . import bossdle, cngeodle, enword, geodle, isaacdle, jpgeodle, jpword, mechadle, pokedle, sakedle
+from . import bossdle, cngeodle, enword, geodle, isaacdle, jpgeodle, jpword, mechadle, pokedle, sakedle, wordle
 from .base import Blind
 
 # 题型 -> Blind，顺序就是指令列表和排行榜里的顺序，题库也按这个顺序建
 BLIND: dict[str, Blind] = {m.MODE.cat: m.MODE for m in (
-    pokedle, mechadle, geodle, jpgeodle, cngeodle, sakedle, bossdle, isaacdle, jpword, enword,
+    pokedle, mechadle, geodle, jpgeodle, cngeodle, sakedle, bossdle, isaacdle, jpword, enword, wordle,
 )}
