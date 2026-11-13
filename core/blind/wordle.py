@@ -91,7 +91,8 @@ async def build(bank) -> None:
                 or not isinstance(main, bool) or not re.search(r"[\u4e00-\u9fff]", meaning)):
             raise ValueError(f"Wordle 答案无效或被排除：{word}")
         seen.add(word)
-        hints = [[key, value] for key, value in (("词性", pos), ("释义", meaning)) if value and not leaks(value, [word])]
+        values = {"词性": pos, "释义": meaning}
+        hints = [[key, values[key]] for key in CLUES if values[key] and not leaks(values[key], [word])]
         item = entry("wordle", word, word, "", word, [word], [], {"word": word}, main)
         # 英文提示按词边界过滤，不能沿用通用的子串过滤和自动首字提示。
         item["hints"] = hints
@@ -101,6 +102,6 @@ async def build(bank) -> None:
 
 MODE = Blind(
     cat="wordle", command="英文Wordle", aliases=("猜Wordle", "Wordle", "wordle"),
-    desc="固定五字母，全群共用棋盘，绿对位、黄错位、灰没有", header="英文", columns=(), clues=CLUES,
+    desc="固定五字母，全群共用棋盘，提示先词性后释义", header="英文", columns=(), clues=CLUES,
     row=row, build=build, settings=(VERSION,), exact=True, board=board, fits=fits, rows=6, default_guesses=10,
 )

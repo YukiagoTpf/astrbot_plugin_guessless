@@ -22,7 +22,7 @@ LINES = {
     "card_note_enword": ["只说完整单词，{tries} · 「提示」加线索"],
     "enword_empty": ["看题面，只说一个英文单词"],
     "wordle_empty": ["说一个完整的五字母英文单词"],
-    "card_note_wordle": ["说完整单词，{tries} · 「提示」加线索"],
+    "card_note_wordle": ["{tries} · 提示先词性后释义"],
     "timeout_wordle": ["时间到，公布答案，下次再试"],
     "board_empty_wordle": ["还没人猜中过英文Wordle，先来一局试试"],
     "wordle_rows_used": ["全群棋盘填满了，公布答案，下局再来"],
