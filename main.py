@@ -637,14 +637,20 @@ class GuessPlugin(Star):
             else:
                 yield event.plain_result(say("busy_endless" if cur.endless else "busy", kind=MODES[cur.category], left=cur.left()))
             return
+        # 先检查额度，替换题免费也不能在额度用完后开题。
+        if not admin:
+            limit, used, _ = self._quota_window(gid)
+            if limit and used >= limit and self.bonus.get(gid, 0) <= 0:
+                yield event.plain_result(self._quota_full(gid))
+                return
         endless = self._jpword_swap(event, cat)
         if endless:
             cat = "jpword"
         if cat != "member" and not self.bank.ready(cat):
             yield event.plain_result(say("not_ready", kind=MODES[cat], status=self.bank.status[cat]))
             return
-        paid = "" if admin else self._quota_take(gid)  # 空串：不占额度，没出成也不用退
-        if not admin and not paid:
+        paid = "" if admin or endless else self._quota_take(gid)  # 空串：不占额度，没出成也不用退
+        if not admin and not endless and not paid:
             yield event.plain_result(self._quota_full(gid))
             return
 
